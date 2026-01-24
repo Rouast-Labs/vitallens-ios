@@ -12,19 +12,19 @@ let package = Package(
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
-            name: "vitallens-ios",
-            targets: ["vitallens-ios"]
+            name: "VitalLens",
+            targets: ["VitalLens"]
         ),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "vitallens-ios"
+            name: "VitalLens"
         ),
         .testTarget(
-            name: "vitallens-iosTests",
-            dependencies: ["vitallens-ios"]
+            name: "VitalLensTests",
+            dependencies: ["VitalLens"]
         ),
     ]
 )
