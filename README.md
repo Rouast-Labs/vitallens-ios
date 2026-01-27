@@ -182,6 +182,35 @@ Avoid hardcoding your API key in your shipping app.
 * **On-Device Processing:** This library uses Apple's **Vision Framework** to detect faces locally on the device.
 * **Data Minimization:** Only the cropped region of interest (ROI) containing the face is transmitted to the API. Full-frame video is never uploaded.
 
+## Advanced: Signal Processing Utilities
+
+`vitallens-ios` exposes its high-performance, vDSP-based signal processing engine via `SignalOps`. This allows you to perform physiological signal analysis on your own data arrays (e.g. from local inference models or other sources) without using the API client.
+
+All methods are stateless and use Apple's **Accelerate** framework for efficiency.
+
+### Available Primitives
+
+```swift
+import VitalLens
+
+// 1. Preprocessing
+let cleanSignal = SignalOps.detrend(rawPPG, fs: 30.0)
+let standardized = SignalOps.standardize(cleanSignal)
+
+// 2. Heart Rate Estimation (FFT)
+if let heartRate = SignalOps.estimateRate(from: cleanSignal, fs: 30.0, minRate: 40, maxRate: 240) {
+    print("HR: \(heartRate) bpm")
+}
+
+// 3. HRV Analysis
+// Detect peaks using adaptive Z-score thresholding
+let peaks = SignalOps.findPeaks(in: cleanSignal, fs: 30.0, hr: heartRate)
+
+// Calculate metrics
+if let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: 30.0) {
+    print("SDNN: \(sdnn) ms")
+}
+
 ## License
 
 MIT License. See [LICENSE](https://www.google.com/search?q=LICENSE) for details.
