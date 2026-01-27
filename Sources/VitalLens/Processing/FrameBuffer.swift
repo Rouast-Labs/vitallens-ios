@@ -1,0 +1,116 @@
+import Foundation
+import CoreGraphics
+
+/// Represents a buffer of processed frames tied to a specific Region of Interest (ROI).
+/// It handles the temporal overlap required by the rPPG model (retaining context frames).
+actor FrameBuffer {
+    
+    // MARK: - Properties
+    
+    /// The fixed ROI used for all frames in this buffer.
+    /// If the face moves out of this ROI, a new buffer must be created.
+    let roi: CGRect
+    
+    /// The configuration for the model using this buffer.
+    private let config: ModelConfig
+    
+    /// The accumulated raw RGB data.
+    /// Format: A sequence of flattened frames.
+    private var data: Data
+    
+    /// The number of full frames currently in `data`.
+    private var frameCount: Int = 0
+    
+    /// The size of a single processed frame in bytes.
+    private let frameSizeBytes: Int
+    
+    /// Creation timestamp to prioritize newer buffers.
+    let createdAt: TimeInterval
+    
+    // MARK: - Initialization
+    
+    init(roi: CGRect, config: ModelConfig, timestamp: TimeInterval = Date().timeIntervalSince1970) {
+        self.roi = roi
+        self.config = config
+        self.createdAt = timestamp
+        self.data = Data()
+        
+        // Calculate frame size: width * height * 3 (RGB)
+        // Note: Assumes Input Size is square (e.g. 40x40)
+        self.frameSizeBytes = config.inputSize * config.inputSize * 3
+    }
+    
+    // MARK: - Public API
+    
+    /// Adds processed frame bytes to the buffer.
+    ///
+    /// - Parameter frameData: Raw RGB bytes of a single frame (must match expected size).
+    func append(frameData: Data) {
+        guard frameData.count == frameSizeBytes else {
+            print("FrameBuffer Warning: Dropped frame due to size mismatch. Expected \(frameSizeBytes), got \(frameData.count)")
+            return
+        }
+        
+        data.append(frameData)
+        frameCount += 1
+        
+        // Optimization: Cap buffer size if it gets absurdly large (e.g. network hang)
+        // Max frames from JS config is usually around 900, but let's be safe.
+        if frameCount > 900 {
+            // Drop oldest frames to maintain max size
+            let dropCount = frameCount - 900
+            let dropBytes = dropCount * frameSizeBytes
+            data.removeFirst(dropBytes)
+            frameCount = 900
+        }
+    }
+    
+    /// Checks if the buffer has enough frames to trigger a prediction.
+    var isReady: Bool {
+        // We generally need at least `minWindowLength` frames.
+        // For VitalLens API, this is usually 16 frames initially.
+        // However, if we have state, the requirement might be lower (n_inputs).
+        // For simplicity matching JS `isReady`:
+        // TODO: Modify this
+        return frameCount >= 16 // Default min window
+    }
+    
+    /// Consumes the buffer for API transmission, ensuring temporal context is retained.
+    ///
+    /// - Returns: A `Data` object containing the frames to send, or `nil` if not ready.
+    func consume() -> Data? {
+        guard isReady else { return nil }
+        
+        // We return the *entire* current buffer for processing.
+        let payload = data
+        
+        // --- CRITICAL OVERLAP LOGIC ---
+        // We must RETAIN the last (n_inputs - 1) frames to provide context for the next batch.
+        let framesToRetain = max(0, config.nInputs - 1)
+        
+        if framesToRetain > 0 && frameCount >= framesToRetain {
+            // Calculate bytes to keep
+            let bytesToRetain = framesToRetain * frameSizeBytes
+            
+            // Slice the last N bytes
+            // Note: Data slicing allows efficient access but we need a new Data object for the buffer
+            let retainedData = data.suffix(bytesToRetain)
+            
+            // Reset buffer with retained data
+            self.data = Data(retainedData)
+            self.frameCount = framesToRetain
+        } else {
+            // If we somehow have fewer frames than context (shouldn't happen if isReady is checked), clear all.
+            self.data = Data()
+            self.frameCount = 0
+        }
+        
+        return payload
+    }
+    
+    /// Clears the buffer completely.
+    func clear() {
+        data.removeAll()
+        frameCount = 0
+    }
+}
