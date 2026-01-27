@@ -1,8 +1,8 @@
 # vitallens-ios
 
 <div align="center">
-<a href="[https://www.rouast.com/api/](https://www.rouast.com/api/)">
-<img src="[https://raw.githubusercontent.com/Rouast-Labs/vitallens.js/main/assets/logo.svg](https://raw.githubusercontent.com/Rouast-Labs/vitallens.js/main/assets/logo.svg)" alt="VitalLens API Logo" height="80px" width="80px"/>
+<a href="https://www.rouast.com/api/">
+<img src="https://raw.githubusercontent.com/Rouast-Labs/vitallens.js/main/assets/logo.svg" alt="VitalLens API Logo" height="80px" width="80px"/>
 </a>
 
 <strong>
@@ -10,7 +10,7 @@ Estimate vital signs such as heart rate, HRV, and respiratory rate from face vid
 </strong>
 </div>
 
-`vitallens-ios` is the official Swift SDK for the **[VitalLens API](https://www.rouast.com/api/)**. It allows you to integrate medical-grade physiological sensing into your iOS apps using just the device camera or existing video files.
+`vitallens-ios` is the official Swift SDK for the **[VitalLens API](https://www.rouast.com/api/)**. It allows you to integrate physiological sensing into your iOS apps using just the device camera or existing video files.
 
 > **Note:** This library is a "Pure API" client. It handles the complexity of face detection, video processing, and real-time streaming efficiency on-device, but the core estimation logic runs on the VitalLens Cloud API.
 
@@ -18,7 +18,7 @@ Estimate vital signs such as heart rate, HRV, and respiratory rate from face vid
 
 * **⚡️ Native Performance:** Built with Swift Concurrency (`async`/`await`), **Vision Framework**, and **Accelerate** for highly efficient, battery-friendly face detection and frame processing.
 * **📱 Drop-in UI Components:** Ready-made SwiftUI views for 30-second scans or continuous monitoring.
-* **🛠 Flexible Core API:** Full access to the raw data stream for building custom UIs or background processing logic.
+* **🛠 Flexible Core API:** Full access to the raw data stream for building custom UIs.
 * **📂 File Support:** Process pre-recorded videos from the Photo Library or local file system.
 * **🔒 Privacy-First:** Face detection and cropping happen *on-device*. Only the cropped face region is sent to the API.
 
@@ -48,7 +48,7 @@ import VitalLens
 You can use VitalLens in two ways:
 
 1. **Drop-in UI:** Use our pre-built SwiftUI views for instant integration.
-2. **Core API:** Use the `VitalLensController` to build your own custom interface.
+2. **Core API:** Use `VitalLens` to build your own custom interface.
 
 ### Option 1: Drop-in UI Components
 
@@ -95,39 +95,24 @@ VitalLensMonitorView(
 
 ### Option 2: Core API (Custom UI)
 
-For complete control over the UI, use the `VitalLensController`. This class manages the camera, handles the API connection, and yields results via an async stream.
-
-#### 1. Configuration
+Use the `VitalLens` controller to manage the camera and API connection.
 
 ```swift
-let client = VitalLensController(
+// 1. Configure the client
+let client = VitalLens(
     apiKey: "YOUR_API_KEY",
-    method: .vitalLens2, // Recommended for HRV
-    faceDetectionFrequency: 1.0 // Hz
+    method: .vitalLens2
 )
 
-```
-
-#### 2. Live Streaming (Custom Camera UI)
-
-To run a live measurement, you need to provide a `PreviewView` (UIView) where the camera layer will be rendered.
-
-```swift
-// In your ViewController or Coordinator
+// 2. Start the stream (inside an async context)
+// 'previewView' is a standard UIView in your storyboard or SwiftUI wrapper
 func startSession(in previewView: UIView) async {
     do {
-        // 1. Initialize the stream
         let stream = try await client.startStream(preview: previewView)
         
-        // 2. Consume the results (AsyncSequence)
         for await result in stream {
             if let hr = result.vitalSigns.heartRate {
-                print("Live HR: \(hr.value) bpm (Conf: \(hr.confidence))")
-            }
-            
-            // Check for issues (e.g., "Face not centered")
-            if let message = result.message {
-                print("Status: \(message)")
+                print("Live HR: \(hr.value ?? 0) bpm")
             }
         }
     } catch {
@@ -135,7 +120,7 @@ func startSession(in previewView: UIView) async {
     }
 }
 
-// Stop the session
+// 3. Stop the session
 client.stopStream()
 
 ```

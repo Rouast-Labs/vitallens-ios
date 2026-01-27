@@ -1,8 +1,7 @@
 import Foundation
 import AVFoundation
-import CoreImage
+import UIKit
 
-/// The central coordinator that ties Camera, Face Detection, Image Processing, and Networking together.
 actor StreamProcessor {
     
     // MARK: - Dependencies
@@ -14,7 +13,7 @@ actor StreamProcessor {
     
     // MARK: - Configuration
     private var config: ModelConfig?
-    private let detectionInterval: TimeInterval = 0.5 // More frequent detection to catch drift fast
+    private let detectionInterval: TimeInterval = 1
     
     // MARK: - State
     private var lastFaceRect: CGRect?
@@ -36,15 +35,22 @@ actor StreamProcessor {
     
     // MARK: - Public API
     
-    func start() async throws -> AsyncStream<VitalLensResult> {
+    func start(preview: UIView?) async throws -> AsyncStream<VitalLensResult> {
         // 1. Resolve Config
         let resolution = try await client.resolveModel(requestedModel: nil)
         self.config = resolution.config
         
-        // 2. Start Camera
+        // 2. Setup Preview (Main Thread required for UI)
+        if let view = preview {
+            await MainActor.run {
+                camera.showPreview(on: view)
+            }
+        }
+        
+        // 3. Start Camera
         try await camera.start()
         
-        // 3. Output Stream
+        // 4. Output Stream
         return AsyncStream { continuation in
             self.outputContinuation = continuation
             Task { await self.processStream() }
@@ -68,28 +74,22 @@ actor StreamProcessor {
             let now = Date()
             
             // 1. Run Face Detection (Periodic)
-            // We update 'lastFaceRect' which drives the buffer logic
             if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
                 if let rect = try? await detector.detectFace(in: buffer) {
                     self.lastFaceRect = rect
                     self.lastDetectionTime = now
                 }
-                // If detection fails, we keep the old rect for a bit (smoothing) or let it persist
             }
             
-            // 2. Buffer Management: Get Active ROIs
-            // We pass the current face rect. BufferManager decides if we need new buffers
-            // and returns a list of ALL buffers that need data from this frame.
+            // 2. Buffer Management
             let activeROIs = await bufferManager.updateAndGetActiveROIs(
                 faceRect: lastFaceRect,
                 config: config
             )
             
-            // If no buffers are active (no face ever found), skip
             if activeROIs.isEmpty { continue }
             
-            // 3. Process Frame for EACH Active Buffer
-            // This ensures each buffer gets the frame cropped to ITS specific ROI.
+            // 3. Process Frame
             for item in activeROIs {
                 if let rawBytes = try? processor.process(
                     pixelBuffer: buffer,
@@ -108,8 +108,6 @@ actor StreamProcessor {
         }
     }
     
-    // MARK: - Network Loop
-    
     private func checkAndSend() async {
         guard let config = self.config else { return }
         
@@ -118,7 +116,7 @@ actor StreamProcessor {
             return
         }
         
-        // 2. Consume Data (this keeps the overlap context in the buffer)
+        // 2. Consume Data
         guard let payload = await buffer.consume() else { return }
         
         self.isSending = true

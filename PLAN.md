@@ -1,152 +1,125 @@
 # VitalLens iOS SDK: Architecture & Implementation Plan
 
-**Status:** Planning / Pre-Alpha
+**Status:** Alpha / Developer Preview
 **Goal:** Create a native Swift iOS SDK for the VitalLens API with feature parity to `vitallens.js`.
-**Constraint:** "Pure API" client (no local inference models).
+**Constraint:** "Pure API" client (no local inference models), but **Client-Side Signal Processing** (DSP) for vitals estimation.
 
 ---
 
 ## 1. High-Level Strategy
 
-The `vitallens-ios` SDK is a **thin, high-performance client** that offloads heavy inference to the VitalLens Cloud API but performs critical pre-processing (Face Detection, ROI Cropping, Image Stabilization) on-device to minimize bandwidth and latency.
+The `vitallens-ios` SDK is a **thin, high-performance client** that offloads heavy inference to the VitalLens Cloud API but performs critical pre-processing (Face Detection, ROI Cropping) and post-processing (Vitals Estimation) on-device.
 
 ### Core Principles
 
-1. **Native First:** Use Apple's first-party frameworks (`Vision`, `CoreImage`, `Accelerate`, `AVFoundation`) instead of porting web dependencies (like `tfjs` or `ffmpeg.wasm`).
-2. **Concurrency:** Built strictly on Swift Concurrency (`async`/`await`, `AsyncStream`, `Actors`) targeting iOS 15+.
-3. **Privacy:** Face detection happens locally. Only the cropped face ROI is transmitted to the cloud.
-4. **Parity:** Exact functional match with `vitallens.js` (Live Streaming, File Processing, UI Widgets).
+1.  **Native First:** Use Apple's first-party frameworks (`Vision`, `CoreImage`, `Accelerate`, `AVFoundation`).
+2.  **Concurrency:** Built strictly on Swift 6 Concurrency (`async`/`await`, `AsyncStream`, `Actors`).
+3.  **Privacy:** Face detection happens locally. Only the cropped face ROI is transmitted to the cloud.
+4.  **Parity:** Exact functional match with `vitallens.js` (Live Streaming, File Processing, UI Widgets).
 
 ---
 
 ## 2. Technical Stack
 
-| Component | Web (`vitallens.js`) | iOS (`vitallens-ios`) | Reason |
-| --- | --- | --- | --- |
-| **Language** | TypeScript | **Swift 6** | Native performance & type safety. |
-| **Face Detection** | TensorFlow.js (BlazeFace) | **Vision Framework** (`VNSequenceRequestHandler`) | Hardware-accelerated (Neural Engine), zero download size. |
-| **Image Proc** | Canvas / WebGL | **Core Image** (`CIContext`) / **Accelerate** (`vImage`) | Zero-copy pixel buffer manipulation. |
-| **Video Decoding** | `ffmpeg.wasm` | **AVFoundation** (`AVAssetReader`) | Hardware decoding of local video files. |
-| **Math/Stats** | Custom JS / `mathjs` | **Accelerate** (`vDSP`) | Vectorized math for signal smoothing/FFTs. |
-| **Networking** | `fetch` / `WebSocket` | **URLSession** (`async`/`await`) | Native networking with robust connection handling. |
+| Component | Web (`vitallens.js`) | iOS (`vitallens-ios`) | Status |
+| :--- | :--- | :--- | :--- |
+| **Language** | TypeScript | **Swift 6** | ✅ |
+| **Face Detection** | TensorFlow.js | **Vision Framework** (`VNSequenceRequestHandler`) | ✅ |
+| **Image Proc** | Canvas / WebGL | **Core Image** / **Accelerate** | ✅ |
+| **Video Decoding** | `ffmpeg.wasm` | **AVFoundation** (`AVAssetReader`) | ⏳ Pending |
+| **Math/Stats** | `mathjs` / `fft.js` | **Accelerate** (`vDSP`) | 🚧 **Missing** |
+| **Networking** | `fetch` | **URLSession** | ✅ |
 
 ---
 
-## 3. Architecture Overview: "Everything is a Stream"
+## 3. Architecture Overview: "The Hybrid Pipeline"
 
-To maintain DRY (Don't Repeat Yourself) principles between Live Camera and File Analysis modes, the architecture relies on an abstraction of the video source.
+The architecture splits responsibility: The **Cloud** provides the raw rPPG waveform signals, and the **Client** performs the physiological estimation (FFT/Peak Detection).
 
 ### A. The Data Pipeline
 
-1. **Source:** Emits `CMSampleBuffer` (Camera) or `CGImage` (File).
-2. **Face Detection:** Vision framework analyzes the full frame to find face bounds.
-3. **Normalization:** Logic converts Vision coordinates (bottom-left origin) to API-standard normalized coordinates (top-left origin).
-4. **Cropping:** Core Image crops the frame to the Face ROI + Padding.
-5. **Scaling:** Image is resized to the API input requirement (e.g., 72x72).
-6. **Network:** Scaled frame is sent to API (HTTP POST /stream).
-7. **State Management:** The API returns a `state` tensor (RNN context). The client caches this and injects it into the *next* request.
-8. **Smoothing:** Raw API results are aggregated into sliding windows (smoothing heart rate, calculating HRV).
-9. **Output:** Clean `VitalLensResult` yielded to the UI.
+1.  **Source:** Emits `CMSampleBuffer` (Camera) or `CGImage` (File). **[DONE]**
+2.  **Face Detection:** Vision framework analyzes frames to find face bounds. **[DONE]**
+3.  **Normalization:** Convert Vision coordinates (bottom-left) to API normalized (top-left). **[DONE]**
+4.  **Cropping:** Core Image crops/scales frame to Face ROI + Padding (e.g., 40x40). **[DONE]**
+5.  **Network:** Scaled frame batch is sent to API (`/stream`). **[DONE]**
+6.  **State Management:** API returns `state` tensor. Client caches and injects it into next request. **[DONE]**
+7.  **Waveform Stitching:** **(NEW)** Client receives short waveform chunks and stitches them into a continuous history buffer.
+8.  **Estimation (DSP):** **(NEW)** Client runs FFT (for HR/RR) and Peak Detection (for HRV) on the stitched waveforms.
+9.  **Output:** Clean `VitalLensResult` yielded to the UI.
 
-### B. Core Components (Proposed Class Structure)
+### B. Core Components Structure
 
 #### 1. The Pipeline Core (`Sources/VitalLens/Pipeline`)
-
-* **`FrameSource` (Protocol):** Defines an `AsyncStream<CMSampleBuffer>` interface.
-* *Implementations:* `CameraSource` (wraps `AVCaptureSession`), `FileSource` (wraps `AVAssetReader`).
-
-
-* **`FaceDetector` (Actor):** Wraps `VNSequenceRequestHandler`. optimized for tracking faces across temporal sequences.
-* **`ImageProcessor` (Struct):** Stateless helper. Takes a buffer + ROI → returns a cropped/scaled buffer.
+* **`FrameSource` (Protocol):** Defines stream interface.
+    * *Impl:* `CameraSource` (AVFoundation) ✅, `FileSource` (AVAssetReader) ⏳.
+* **`FaceDetector` (Actor):** Wraps `VNSequenceRequestHandler`. ✅
+* **`ImageProcessor` (Struct):** CoreImage helper. ✅
 
 #### 2. The Brain (`Sources/VitalLens/Processing`)
-
-* **`VitalLensController`:** The main facade. Coordinates the pipeline.
-* **`VitalsEstimateManager`:** **(CRITICAL)** A direct port of the JS logic.
-* Maintains circular buffers of raw API outputs.
-* Uses `vDSP` (Accelerate) to calculate rolling averages.
-* Performs client-side FFTs if raw waveforms need frequency analysis.
-* *Responsibility:* Ensures the HR value doesn't "jump" erratically.
-
-
+* **`StreamProcessor`:** The main coordinator Actor. ✅
+* **`BufferManager`:** Handles sliding windows and ROI context. ✅
+* **`VitalsEstimateManager`:** **(CRITICAL MISSING)**
+    * *Responsibility:* Stitches incoming waveform chunks into a circular buffer.
+    * *Logic:* Calls `SignalOps` to derive scalars from waveforms.
+* **`SignalOps` (Struct):** **(CRITICAL MISSING)**
+    * *Tech:* `Accelerate` framework (`vDSP`).
+    * *Methods:* `estimateHeartRate(waveform)`, `estimateRespiratoryRate(waveform)`, `findPeaks(ppg)`.
 
 #### 3. Networking (`Sources/VitalLens/Networking`)
-
-* **`APIClient`:** Handles the REST endpoints (`/stream`, `/file`).
-* **State Injection:** Must automatically handle the `X-State` header (or multipart field) to maintain the RNN context between frames.
+* **`APIClient`:** Handles REST endpoints and `X-State` injection. ✅
 
 ---
 
 ## 4. Feature Implementation Details
 
-### Scenario A & B: Live Scanning (Custom UI)
-
+### Scenario A: Live Scanning (Custom UI)
 * **Input:** `CameraSource`.
 * **Logic:**
-1. Start `AVCaptureSession`.
-2. Feed frames to `FaceDetector`.
-3. If `FaceConfidence > Threshold`, start sending cropped frames to API.
-4. Receive streaming JSON.
-5. Pass JSON to `VitalsEstimateManager`.
-6. Publish `VitalLensResult` via `AsyncStream` or `Combine` publisher.
+    1.  Start `AVCaptureSession`.
+    2.  Feed frames to `FaceDetector`.
+    3.  If `FaceConfidence > Threshold`, start sending cropped frames.
+    4.  Receive raw waveforms (JSON).
+    5.  **Append** waveforms to `VitalsEstimateManager`.
+    6.  **Calculate** HR/RR/HRV on the updated buffer.
+    7.  Publish `VitalLensResult` to `AsyncStream`.
 
-
-
-### Scenario C & D: Pre-built UI Widgets
-
+### Scenario B: Pre-built UI Widgets
 * **Tech:** **SwiftUI**.
-* **`VitalLensScanView`:**
-* Displays camera preview (`AVCaptureVideoPreviewLayer` wrapped in `UIViewRepresentable`).
-* Overlays a "Face Guide" (oval).
-* Handles the 30-second countdown timer.
-* Auto-stops when results are high confidence.
+* **`VitalLensScanView`:** ⏳
+    * Displays camera preview.
+    * Overlays a "Face Guide" (oval).
+    * Handles 30-second countdown.
+* **`VitalLensMonitorView`:** ⏳
+    * Continuous graph rendering using **Swift Charts**.
+    * Displays real-time PPG waveform.
 
-
-* **`VitalLensMonitorView`:**
-* Continuous graph rendering using **Swift Charts** (iOS 16+) or simple `Path` drawing (iOS 15).
-* Displays real-time PPG waveform.
-
-
-
-### Scenario E: File Analysis
-
-* **Input:** `FileSource` (URL).
+### Scenario C: File Analysis
+* **Input:** `FileSource` (URL). ⏳
 * **Logic:**
-1. Use `AVAssetReader` to pull frames as fast as possible (faster than real-time).
-2. Run `FaceDetector` on specific intervals (e.g., every 0.5s) and interpolate ROI for frames in between (Optimization).
-3. Batch frames into chunks (e.g., 30 frames).
-4. Send `multipart/form-data` requests to `/file` endpoint.
-5. Return a single aggregated `VitalLensResult`.
-
-
+    1.  Use `AVAssetReader` to pull frames faster than real-time.
+    2.  Batch frames (e.g., 30 at a time).
+    3.  Send to `/file` (or `/stream` with manual state management).
+    4.  **Stitch** all resulting waveforms into one massive array.
+    5.  Run global FFT/Peak Detection on the full array for maximum accuracy.
 
 ---
 
 ## 5. Critical Technical Challenges & Solutions
 
 ### 1. The "State" Tensor (RNN Loop)
+* **Challenge:** The API is stateless; client must persist the "memory".
+* **Solution:** `APIClient` parses `state` (Base64 Float32), caches it, and re-sends it. **[DONE]**
 
-* **Challenge:** The VitalLens API is stateless, but the model is Recurrent (RNN). The client *must* persist the "memory" of the model.
-* **Solution:** The `APIClient` must parse the `state` field from every API response (Base64 encoded Float32 array), cache it in memory, and send it back in the header/body of the *next* request. If this loop breaks, accuracy drops to zero.
+### 2. Client-Side DSP (Digital Signal Processing)
+* **Challenge:** API returns waveforms, not values. Raw calculation is math-heavy.
+* **Solution:** Use Apple's **Accelerate (vDSP)**.
+    * **FFT:** Use `vDSP_fft_zrip` for Heart Rate (0.7-4Hz) and Resp Rate (0.1-1Hz).
+    * **Peak Detection:** Implement a robust peak finding algorithm for HRV (SDNN/RMSSD).
 
-### 2. Coordinate Systems
-
-* **Challenge:**
-* Apple Vision: Origin is **Bottom-Left**.
-* UIKit / CoreImage: Origin is **Top-Left**.
-* API Expectation: Normalized Top-Left.
-
-
-* **Solution:** The `FaceDetector` class must explicitly flip the Y-axis when converting Vision results to the normalized ROI used for cropping.
-
-### 3. Client-Side Smoothing (`VitalsEstimateManager`)
-
-* **Challenge:** The API returns raw frame-by-frame estimates which can be noisy. `vitallens.js` smooths this heavily.
-* **Solution:** We must port the `smoothing` logic.
-* JS: `movingAverage(data, windowSize)`
-* Swift: `vDSP_meanv` (Accelerate framework) over a sliding window buffer.
-
-
+### 3. Waveform Continuity
+* **Challenge:** API responses come in chunks. Naive concatenation causes "clicks" or jumps at boundaries.
+* **Solution:** `VitalsEstimateManager` must handle "overlap-add" or careful stitching to ensure the PPG signal remains continuous for the FFT.
 
 ---
 
@@ -156,26 +129,26 @@ To maintain DRY (Don't Repeat Yourself) principles between Live Camera and File 
 Sources/
   VitalLens/
     ├── Core/
-    │   ├── VitalLens.swift           // Main Configuration & Entry Point
-    │   ├── VitalLensResult.swift     // Codable Data Models
-    │   └── Errors.swift
+    │   ├── VitalLens.swift           // Main Entry Point ✅
+    │   ├── VitalLensResult.swift     // Data Models ✅
+    │   └── Errors.swift              // Error Handling ✅
     ├── Pipeline/
-    │   ├── FrameSource.swift         // Protocol
-    │   ├── CameraSource.swift        // AVFoundation implementation
-    │   ├── FileSource.swift          // AVAssetReader implementation
-    │   ├── FaceDetector.swift        // Vision Framework wrapper
-    │   └── ImageProcessor.swift      // CoreImage cropping/scaling
+    │   ├── CameraSource.swift        // AVFoundation + Preview ✅
+    │   ├── FileSource.swift          // AVAssetReader ⏳
+    │   ├── FaceDetector.swift        // Vision Wrapper ✅
+    │   └── ImageProcessor.swift      // CoreImage Ops ✅
     ├── Processing/
-    │   ├── StreamProcessor.swift     // The Coordinator Actor
-    │   ├── VitalsEstimateManager.swift // Smoothing & Aggregation Logic
-    │   └── SignalOps.swift           // vDSP/Accelerate Math Helpers
+    │   ├── StreamProcessor.swift     // Coordinator Actor ✅
+    │   ├── BufferManager.swift       // Input Frame Buffering ✅
+    │   ├── VitalsEstimateManager.swift // Waveform Stitching 🚧
+    │   └── SignalOps.swift           // vDSP/FFT Logic 🚧
     ├── Networking/
-    │   ├── APIClient.swift           // HTTP Client
-    │   └── Endpoint.swift
+    │   ├── APIClient.swift           // URLSession Actor ✅
+    │   └── NetworkModels.swift       // JSON Parsing ✅
     └── UI/ (SwiftUI)
-        ├── VitalLensScanView.swift   // 30s Scan Widget
-        ├── VitalLensMonitorView.swift// Continuous Monitor Widget
-        └── Components/               // Shared UI (Progress Rings, Graphs)
+        ├── VitalLensScanView.swift   // 30s Scan Widget ⏳
+        ├── VitalLensMonitorView.swift// Continuous Monitor ⏳
+        └── Components/               // Shared UI ⏳
 
 ```
 
@@ -183,10 +156,14 @@ Sources/
 
 ## 7. Next Steps (Execution Order)
 
-1. **Foundation:** Implement `VitalLensResult` models and `APIClient` (Networking).
-2. **Pipeline:** Implement `FaceDetector` (Vision) and `ImageProcessor`.
-3. **Source:** Implement `CameraSource` to get live bytes.
-4. **Integration:** Wire Camera -> FaceDetect -> API -> Result (The "Hello World" of streaming).
-5. **Smoothing:** Port `VitalsEstimateManager` to stabilize results.
-6. **UI:** Build the SwiftUI Views.
-7. **Files:** Implement `FileSource` for video analysis.
+1. ~~**Foundation:** Data Models and Networking.~~ **[DONE]**
+2. ~~**Pipeline:** FaceDetect, ImageProcessor, Camera.~~ **[DONE]**
+3. ~~**Integration:** Wire Camera -> API -> Facade.~~ **[DONE]**
+4. **Signal Processing (IMMEDIATE):**
+* Create `SignalOps.swift` (vDSP FFT & Peak Detection).
+* Create `VitalsEstimateManager.swift` (Waveform stitching).
+* Integrate into `StreamProcessor`.
+
+
+5. **UI Components:** Build `VitalLensScanView`.
+6. **Files:** Implement `FileSource` and `processVideoFile`.

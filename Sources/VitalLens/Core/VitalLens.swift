@@ -1,27 +1,16 @@
 import Foundation
-import CoreGraphics
+import UIKit
 
 /// The primary client for the VitalLens API.
-///
-/// Use this class to configure your session, manage real-time scanning, or process video files.
-///
-///     let client = VitalLens(apiKey: "your_key", method: .vitalLens2)
 public final class VitalLens: @unchecked Sendable {
     
     // MARK: - Types
-    
-    /// The estimation method to use.
     public enum Method: String, Sendable, CaseIterable {
-        /// The recommended method. Automatically selects the best model for your plan.
         case vitalLens = "vitallens"
-        /// Forces the use of the VitalLens 2.0 model (High accuracy, HRV).
         case vitalLens2 = "vitallens-2.0"
-        /// Forces the use of the VitalLens 1.1 model (Standard accuracy).
         case vitalLens1_1 = "vitallens-1.1"
-        /// Forces the use of the VitalLens 1.0 model.
         case vitalLens1 = "vitallens-1.0"
         
-        /// Returns true if this method supports Heart Rate Variability (HRV).
         public var supportsHRV: Bool {
             switch self {
             case .vitalLens, .vitalLens2: return true
@@ -31,25 +20,15 @@ public final class VitalLens: @unchecked Sendable {
     }
     
     // MARK: - Configuration
-    
-    /// The API key for authentication.
-    /// Not required if using a `proxyURL`.
     public let apiKey: String?
-    
-    /// The estimation method to use.
     public let method: Method
-    
-    /// The URL of your backend proxy (if used to hide the API Key).
-    /// If set, the client will send requests here instead of `api.rouast.com`.
     public let proxyURL: URL?
-    
-    /// The frequency (in Hz) at which face detection should be performed during live streams.
-    /// Default is 1.0 Hz.
     public let faceDetectionFrequency: Double
-    
-    /// Optional global region of interest (ROI) to skip face detection.
-    /// If set, this region is used for every frame (normalized coordinates 0.0 - 1.0).
     public let globalROI: CGRect?
+    
+    // MARK: - Internal Dependencies
+    // We keep the processor alive as long as the client exists or until stopped.
+    private var streamProcessor: StreamProcessor?
     
     // MARK: - Initialization
     
@@ -75,6 +54,37 @@ public final class VitalLens: @unchecked Sendable {
         self.proxyURL = proxyURL
     }
     
-    // MARK: - internal
-    // Future: StreamProcessor and APIClient properties will live here.
+    // MARK: - Public API
+    
+    /// Starts the live camera stream and returns an async sequence of results.
+    ///
+    /// - Parameter preview: An optional UIView where the camera feed should be rendered.
+    /// - Returns: An AsyncStream of `VitalLensResult` updates.
+    public func startStream(preview: UIView? = nil) async throws -> AsyncStream<VitalLensResult> {
+        // Initialize the processor if needed
+        if streamProcessor == nil {
+            streamProcessor = StreamProcessor(apiKey: apiKey, proxyURL: proxyURL)
+        }
+        
+        guard let processor = streamProcessor else {
+            throw VitalLensError.processingError("Failed to initialize StreamProcessor")
+        }
+        
+        return try await processor.start(preview: preview)
+    }
+    
+    /// Stops the live camera stream and releases resources.
+    public func stopStream() {
+        Task {
+            await streamProcessor?.stop()
+            streamProcessor = nil
+        }
+    }
+    
+    /// Processes a video file from a URL.
+    /// Note: Implementation pending FileSource logic.
+    public func processVideoFile(at url: URL) async throws -> VitalLensResult {
+        // TODO: Implement FileSource and connect to StreamProcessor or separate FileProcessor
+        throw VitalLensError.processingError("File processing not yet implemented")
+    }
 }
