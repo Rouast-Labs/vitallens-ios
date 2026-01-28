@@ -10,6 +10,7 @@ actor StreamProcessor {
     private let processor: ImageProcessor
     private let client: APIClient
     private let bufferManager: BufferManager
+    private let vitalsEstimator: VitalsEstimateManager
     
     // MARK: - Configuration
     private var config: ModelConfig?
@@ -31,6 +32,7 @@ actor StreamProcessor {
         self.processor = ImageProcessor()
         self.client = APIClient(apiKey: apiKey, proxyURL: proxyURL)
         self.bufferManager = BufferManager()
+        self.vitalsEstimator = VitalsEstimateManager()
     }
     
     // MARK: - Public API
@@ -40,7 +42,7 @@ actor StreamProcessor {
         let resolution = try await client.resolveModel(requestedModel: nil)
         self.config = resolution.config
         
-        // 2. Setup Preview (Main Thread required for UI)
+        // 2. Setup Preview
         if let view = preview {
             await MainActor.run {
                 camera.showPreview(on: view)
@@ -61,7 +63,12 @@ actor StreamProcessor {
         camera.stop()
         outputContinuation?.finish()
         outputContinuation = nil
-        Task { await bufferManager.reset() }
+        
+        // Reset stateful components
+        Task {
+            await bufferManager.reset()
+            await vitalsEstimator.reset() 
+        }
         isSending = false
     }
     
@@ -125,15 +132,15 @@ actor StreamProcessor {
         let state = await bufferManager.getState()
         
         do {
-            // 4. Send
-            let result = try await client.sendStreamBatch(
+            // 4. Send to Cloud
+            let rawResult = try await client.sendStreamBatch(
                 rawRGBBytes: payload,
                 state: state,
                 model: nil
             )
             
             // 5. Update State
-            if let stateData = result.state?.data,
+            if let stateData = rawResult.state?.data,
                let decodedData = Data(base64Encoded: stateData) {
                 let newState = decodedData.withUnsafeBytes {
                     Array($0.bindMemory(to: Float.self))
@@ -141,7 +148,11 @@ actor StreamProcessor {
                 await bufferManager.updateState(newState)
             }
             
-            outputContinuation?.yield(result)
+            // 6. Estimate Vitals
+            let refinedResult = await vitalsEstimator.process(chunk: rawResult, config: config)
+            
+            // 7. Yield Refined Result
+            outputContinuation?.yield(refinedResult)
             
         } catch {
             print("VitalLens Stream Error: \(error)")
