@@ -134,4 +134,67 @@ final class BufferManagerTests: XCTestCase {
             XCTAssertGreaterThan(bestROI.origin.x, 0.5, "Should pick the new buffer (Right side)")
         }
     }
+
+    // MARK: - Robustness & Lifecycle
+
+    func testNilFacePreservesBuffers() async {
+        let manager = BufferManager()
+        let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
+        
+        // 1. Establish a buffer with a valid face
+        let rois1 = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
+        XCTAssertEqual(rois1.count, 1)
+        let originalID = rois1.first?.id
+        
+        // 2. Simulate detection failure (nil face)
+        // This happens often in real streams (blurry frames, extreme angles)
+        let rois2 = await manager.updateAndGetActiveROIs(faceRect: nil, config: config)
+        
+        // Assertion: We must NOT lose the buffer. We should keep processing the last known ROI.
+        XCTAssertEqual(rois2.count, 1, "Existing buffers should persist even if face detection misses a frame")
+        XCTAssertEqual(rois2.first?.id, originalID, "The ID should remain consistent")
+        XCTAssertEqual(rois2.first?.roi.origin.x, rois1.first?.roi.origin.x, "The ROI should not change")
+    }
+
+    func testResetClearsState() async {
+        let manager = BufferManager()
+        let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
+        
+        // 1. Create state
+        _ = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
+        await manager.updateState([0.1, 0.2])
+        
+        // 2. Reset
+        await manager.reset()
+        
+        // 3. Verify
+        let rois = await manager.updateAndGetActiveROIs(faceRect: nil, config: config)
+        XCTAssertTrue(rois.isEmpty, "Buffers should be empty after reset")
+        
+        let state = await manager.getState()
+        XCTAssertNil(state, "RNN state should be nil after reset")
+    }
+    
+    // MARK: - Edge Case: Buffer Accumulation
+    // This documents the current behavior: We accumulate buffers on drift. 
+    // In V2, we might want to test that old buffers eventually expire.
+    func testBufferAccumulationOnMovement() async {
+        let manager = BufferManager()
+        let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
+        
+        // Move face to 3 distinct positions (Left -> Center -> Right)
+        let positions = [0.1, 0.5, 0.9]
+        
+        for x in positions {
+            let face = CGRect(x: x, y: 0.1, width: 0.2, height: 0.2)
+            _ = await manager.updateAndGetActiveROIs(faceRect: face, config: trackConfig)
+        }
+        
+        // We expect 3 distinct buffers because we moved far enough to trigger new ones,
+        // and we haven't implemented pruning yet.
+        // Checking this ensures our "ActiveBufferROI" list correctly reports all of them 
+        // so the StreamProcessor keeps them fed.
+        let finalROIs = await manager.updateAndGetActiveROIs(faceRect: nil, config: trackConfig)
+        XCTAssertEqual(finalROIs.count, 3)
+    }
 }
