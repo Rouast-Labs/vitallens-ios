@@ -1,5 +1,5 @@
 import XCTest
-@testable import VitalLens
+@testable import VitalLensCore
 
 final class SignalOpsTests: XCTestCase {
 
