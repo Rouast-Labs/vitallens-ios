@@ -21,7 +21,7 @@ final class ROICalculatorTests: XCTestCase {
             height: inputRect.height / frameSize.height
         )
         
-        // 2. Run Logic (Method string is ignored now)
+        // 2. Run Logic
         let normalizedResult = ROICalculator.calculateROI(
             from: normalizedInput,
             method: "upper_body_cropped", 
@@ -37,10 +37,10 @@ final class ROICalculatorTests: XCTestCase {
         )
         
         // 4. Assert
-        XCTAssertEqual(resultPixels.origin.x, expectedRect.origin.x, accuracy: 0.5, "X mismatch", file: file, line: line)
-        XCTAssertEqual(resultPixels.origin.y, expectedRect.origin.y, accuracy: 0.5, "Y mismatch", file: file, line: line)
-        XCTAssertEqual(resultPixels.width, expectedRect.width, accuracy: 0.5, "Width mismatch", file: file, line: line)
-        XCTAssertEqual(resultPixels.height, expectedRect.height, accuracy: 0.5, "Height mismatch", file: file, line: line)
+        XCTAssertEqual(resultPixels.origin.x, expectedRect.origin.x, accuracy: 0.01, "X mismatch", file: file, line: line)
+        XCTAssertEqual(resultPixels.origin.y, expectedRect.origin.y, accuracy: 0.01, "Y mismatch", file: file, line: line)
+        XCTAssertEqual(resultPixels.width, expectedRect.width, accuracy: 0.01, "Width mismatch", file: file, line: line)
+        XCTAssertEqual(resultPixels.height, expectedRect.height, accuracy: 0.01, "Height mismatch", file: file, line: line)
     }
 
     // MARK: - Tests
@@ -49,12 +49,7 @@ final class ROICalculatorTests: XCTestCase {
         assertROI(
             inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
             frameSize: CGSize(width: 220, height: 300),
-            // Expected calculation based on [0.19, 0.1455, 0.19, 0.2769] insets
-            // Left shift: 0.19 * 80 = 15.2 -> 15. X becomes 85.
-            // Top shift: 0.1455 * 120 = 17.46 -> 17. Y becomes 83.
-            // Right shift: 0.19 * 80 = 15.2 -> 15. Width adds 15+15 = 30. Total 110.
-            // Bottom shift: 0.2769 * 120 = 33.2 -> 33. Height adds 17+33 = 50. Total 170.
-            expectedRect: CGRect(x: 85, y: 83, width: 110, height: 170)
+            expectedRect: CGRect(x: 84.8, y: 82.54, width: 110.4, height: 170.688)
         )
     }
     

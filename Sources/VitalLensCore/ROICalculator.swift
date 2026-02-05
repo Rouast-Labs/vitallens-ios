@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 
 /// Helper utilities for calculating Region of Interest (ROI) from face detections.
+/// Operates exclusively in normalized coordinates (0.0 - 1.0).
 public struct ROICalculator {
     
     /// The relative coordinate changes required to convert a Face Box into the
@@ -13,23 +14,22 @@ public struct ROICalculator {
     ///
     /// - Parameters:
     ///   - faceRect: The normalized face bounding box (Top-Left origin).
-    ///   - method: The ROI method string from config (Ignored in iOS as we only support API models).
-    ///   - frameSize: The dimension of the video frame (width, height).
+    ///   - method: (Ignored) Defaults to API standard.
+    ///   - frameSize: (Ignored) Kept for API compatibility, but unused as math is resolution-independent.
     /// - Returns: A normalized ROI rect suitable for processing.
     public static func calculateROI(
         from faceRect: CGRect,
-        method: String,
-        frameSize: CGSize
+        method: String = "upper_body_cropped",
+        frameSize: CGSize = .zero 
     ) -> CGRect {
-        // We ignore 'method' here because the iOS client exclusively uses VitalLens API models,
-        // which rely on the "upper_body_cropped" strategy defined by `upperBodyInsets`.
-        return applyRelativeChange(to: faceRect, change: upperBodyInsets, frameSize: frameSize)
+        // We perform pure float math on normalized coordinates.
+        // We do NOT round to pixels here; that is the responsibility of the ImageProcessor.
+        return applyRelativeChange(to: faceRect, change: upperBodyInsets)
     }
     
     // MARK: - ROI Math
     
     /// Checks if a face is sufficiently contained within an existing ROI.
-    /// Used to decide if we need to switch ROIs (and thus buffers).
     public static func isFace(
         _ face: CGRect,
         sufficientlyInsideROI roi: CGRect,
@@ -53,29 +53,23 @@ public struct ROICalculator {
     /// Applies relative coordinate changes to a rect and clamps to 0.0-1.0.
     private static func applyRelativeChange(
         to rect: CGRect,
-        change: [CGFloat],
-        frameSize: CGSize
+        change: [CGFloat]
     ) -> CGRect {
         let w = rect.width
         let h = rect.height
         
-        // Calculate absolute pixel shifts (rounded)
-        // We use frameSize to ensure we are thinking in pixels before normalizing back,
-        // matching the JS integer rounding logic which is important for consistency.
-        let pixelW = w * frameSize.width
-        let pixelH = h * frameSize.height
+        // Calculate shifts in normalized space
+        let chLeft = change[0] * w
+        let chTop = change[1] * h
+        let chRight = change[2] * w
+        let chBottom = change[3] * h
         
-        let absChLeft = round(change[0] * pixelW) / frameSize.width
-        let absChTop = round(change[1] * pixelH) / frameSize.height
-        let absChRight = round(change[2] * pixelW) / frameSize.width
-        let absChBottom = round(change[3] * pixelH) / frameSize.height
+        var newX = rect.minX - chLeft
+        var newY = rect.minY - chTop
+        var newMaxX = rect.maxX + chRight
+        var newMaxY = rect.maxY + chBottom
         
-        var newX = rect.minX - absChLeft
-        var newY = rect.minY - absChTop
-        var newMaxX = rect.maxX + absChRight
-        var newMaxY = rect.maxY + absChBottom
-        
-        // Clamp to 0.0 - 1.0
+        // Clamp to 0.0 - 1.0 to ensure ROI stays within frame
         newX = max(0, min(newX, 1.0))
         newY = max(0, min(newY, 1.0))
         newMaxX = max(0, min(newMaxX, 1.0))
