@@ -94,15 +94,15 @@ public actor BufferManager {
     /// Retrieves the *best* buffer that is ready to send to the API.
     /// Prioritizes the most recently created buffer (the one matching the newest ROI).
     public func getReadyBuffer() async -> FrameBuffer? {
+        let hasState = (rnnState != nil && !rnnState!.isEmpty)
         var readyBuffers: [FrameBuffer] = []
         
         for wrapper in buffers.values {
-            if await wrapper.buffer.isReady {
+            // Pass the state knowledge down to the buffer
+            if await wrapper.buffer.isReady(hasState: hasState) {
                 readyBuffers.append(wrapper.buffer)
             }
         }
-        
-        // Return the newest ready buffer
         return readyBuffers.sorted { $0.createdAt > $1.createdAt }.first
     }
     

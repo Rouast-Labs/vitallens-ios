@@ -34,9 +34,6 @@ public actor FrameBuffer {
         self.config = config
         self.createdAt = timestamp
         self.data = Data()
-        
-        // Calculate frame size: width * height * 3 (RGB)
-        // Note: Assumes Input Size is square (e.g. 40x40)
         self.frameSizeBytes = config.inputSize * config.inputSize * 3
     }
     
@@ -54,10 +51,8 @@ public actor FrameBuffer {
         data.append(frameData)
         frameCount += 1
         
-        // Optimization: Cap buffer size if it gets absurdly large (e.g. network hang)
-        // Max frames from JS config is usually around 900, but let's be safe.
+        // Cap buffer to prevent overflow
         if frameCount > 900 {
-            // Drop oldest frames to maintain max size
             let dropCount = frameCount - 900
             let dropBytes = dropCount * frameSizeBytes
             data.removeFirst(dropBytes)
@@ -65,23 +60,21 @@ public actor FrameBuffer {
         }
     }
     
-    /// Checks if the buffer has enough frames to trigger a prediction.
-    public var isReady: Bool {
-        // We generally need at least `minWindowLength` frames.
-        // For VitalLens API, this is usually 16 frames initially.
-        // However, if we have state, the requirement might be lower (n_inputs).
-        // For simplicity matching JS `isReady`:
-        // TODO: Modify this
-        return frameCount >= 16 // Default min window
+    /// Checks if the buffer is ready, given the current system state.
+    /// - Parameter hasState: Whether the client currently holds a valid RNN state.
+    public func isReady(hasState: Bool) -> Bool {
+        // If we have state, we only need nInputs (e.g. 4) frames to continue the sequence.
+        // If we DON'T have state, we need a full 16 frames to start a new sequence.
+        let threshold = hasState ? config.nInputs : 16
+        return frameCount >= threshold
     }
     
     /// Consumes the buffer for API transmission, ensuring temporal context is retained.
     ///
     /// - Returns: A `Data` object containing the frames to send, or `nil` if not ready.
-    public func consume() -> Data? {
-        guard isReady else { return nil }
+    public func consume() -> Data? {       
+        if frameCount < config.nInputs { return nil }
         
-        // We return the *entire* current buffer for processing.
         let payload = data
         
         // --- CRITICAL OVERLAP LOGIC ---
