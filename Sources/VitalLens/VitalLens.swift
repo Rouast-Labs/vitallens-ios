@@ -1,5 +1,9 @@
 import Foundation
+import VitalLensCore
+
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// The primary client for the VitalLens API.
 public final class VitalLens: @unchecked Sendable {
@@ -56,6 +60,7 @@ public final class VitalLens: @unchecked Sendable {
     
     // MARK: - Public API
     
+    #if canImport(UIKit)
     /// Starts the live camera stream and returns an async sequence of results.
     ///
     /// - Parameter preview: An optional UIView where the camera feed should be rendered.
@@ -72,6 +77,12 @@ public final class VitalLens: @unchecked Sendable {
         
         return try await processor.start(preview: preview)
     }
+    #else
+    /// macOS Stub: Video streaming is not supported on macOS in this version.
+    public func startStream() async throws -> AsyncStream<VitalLensResult> {
+        throw VitalLensError.processingError("Live camera streaming is only supported on iOS/iPadOS.")
+    }
+    #endif
     
     /// Stops the live camera stream and releases resources.
     public func stopStream() {

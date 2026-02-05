@@ -1,6 +1,7 @@
 import Foundation
 import Vision
 import CoreImage
+import VitalLensCore
 
 /// An actor responsible for detecting faces in video frames using the Vision framework.
 /// It handles the coordinate space conversion (Vision Bottom-Left -> Normalized Top-Left).

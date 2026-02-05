@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 /// Helper utilities for calculating Region of Interest (ROI) from face detections.
-struct ROICalculator {
+public struct ROICalculator {
     
     enum ROIMethod: String {
         case face
@@ -17,7 +17,7 @@ struct ROICalculator {
     ///   - method: The ROI method to use (e.g. "face", "upper_body_cropped").
     ///   - frameSize: The dimension of the video frame (width, height).
     /// - Returns: A normalized ROI rect suitable for processing.
-    static func calculateROI(
+    public static func calculateROI(
         from faceRect: CGRect,
         method: String,
         frameSize: CGSize
@@ -67,7 +67,7 @@ struct ROICalculator {
     /// Checks if a face is sufficiently contained within an existing ROI.
     /// Used to decide if we need to switch ROIs (and thus buffers).
     /// Matches `checkFaceInROI`.
-    static func isFace(
+    public static func isFace(
         _ face: CGRect,
         sufficientlyInsideROI roi: CGRect,
         thresholds: (width: CGFloat, height: CGFloat) = (0.5, 0.5)

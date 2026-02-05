@@ -3,6 +3,8 @@ import CoreGraphics
 
 // MARK: - Top Level Result
 
+// TODO: Adopt dynamic model/vital agnostic structure with vital registry
+
 /// The result returned by the VitalLens API.
 public struct VitalLensResult: Codable, Sendable {
     
@@ -33,6 +35,28 @@ public struct VitalLensResult: Codable, Sendable {
     
     /// Additional information or warnings from the API.
     public let message: String?
+
+    public init(
+        face: FaceData,
+        vitalSigns: VitalSigns,
+        time: [Double],
+        displayTime: Double? = nil,
+        fps: Double? = nil,
+        estFps: Double? = nil,
+        modelUsed: String? = nil,
+        state: StateData? = nil,
+        message: String? = nil
+    ) {
+        self.face = face
+        self.vitalSigns = vitalSigns
+        self.time = time
+        self.displayTime = displayTime
+        self.fps = fps
+        self.estFps = estFps
+        self.modelUsed = modelUsed
+        self.state = state
+        self.message = message
+    }
     
     enum CodingKeys: String, CodingKey {
         case face
@@ -51,13 +75,19 @@ public struct VitalLensResult: Codable, Sendable {
 
 public struct FaceData: Codable, Sendable {
     /// Raw coordinates from JSON: [[x0, y0, x1, y1], ...]
-    private let coordinates: [[Double]]?
+    public let coordinates: [[Double]]?
     
     /// Confidence values for the face detection per frame (0.0 - 1.0).
     public let confidence: [Double]?
     
     /// Explanatory note regarding face detection.
     public let note: String?
+
+    public init(coordinates: [[Double]]?, confidence: [Double]?, note: String?) {
+        self.coordinates = coordinates
+        self.confidence = confidence
+        self.note = note
+    }
     
     /// Computed property to get coordinates as clean CGRects.
     public var boundingBoxes: [CGRect] {
@@ -85,6 +115,24 @@ public struct VitalSigns: Codable, Sendable {
     // MARK: Waveforms
     public let ppgWaveform: WaveformMetric?
     public let respiratoryWaveform: WaveformMetric?
+
+    public init(
+        heartRate: ScalarMetric?,
+        respiratoryRate: ScalarMetric?,
+        hrvSdnn: ScalarMetric?,
+        hrvRmssd: ScalarMetric?,
+        hrvLfhf: ScalarMetric?,
+        ppgWaveform: WaveformMetric?,
+        respiratoryWaveform: WaveformMetric?
+    ) {
+        self.heartRate = heartRate
+        self.respiratoryRate = respiratoryRate
+        self.hrvSdnn = hrvSdnn
+        self.hrvRmssd = hrvRmssd
+        self.hrvLfhf = hrvLfhf
+        self.ppgWaveform = ppgWaveform
+        self.respiratoryWaveform = respiratoryWaveform
+    }
     
     enum CodingKeys: String, CodingKey {
         case heartRate = "heart_rate"
@@ -102,9 +150,13 @@ public struct VitalSigns: Codable, Sendable {
 /// Represents the Recurrent Neural Network (RNN) state returned by the API.
 /// This must be persisted and sent back in the next request for streaming.
 public struct StateData: Codable, Sendable {
-    /// Base64 encoded Float32 array string.
     public let data: String
     public let note: String?
+    
+    public init(data: String, note: String?) {
+        self.data = data
+        self.note = note
+    }
 }
 
 /// Represents a single scalar vital sign value (e.g., Heart Rate: 72 bpm).
@@ -113,6 +165,13 @@ public struct ScalarMetric: Codable, Sendable {
     public let unit: String
     public let confidence: Double?
     public let note: String?
+    
+    public init(value: Double?, unit: String, confidence: Double?, note: String?) {
+        self.value = value
+        self.unit = unit
+        self.confidence = confidence
+        self.note = note
+    }
 }
 
 /// Represents a waveform series (e.g. PPG signal).
@@ -121,4 +180,11 @@ public struct WaveformMetric: Codable, Sendable {
     public let unit: String
     public let confidence: [Double]
     public let note: String?
+    
+    public init(data: [Double], unit: String, confidence: [Double], note: String?) {
+        self.data = data
+        self.unit = unit
+        self.confidence = confidence
+        self.note = note
+    }
 }

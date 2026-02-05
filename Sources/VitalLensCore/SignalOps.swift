@@ -3,7 +3,7 @@ import Accelerate
 
 /// A collection of stateless signal processing primitives using vDSP.
 /// These functions are public and can be used independently of the API client.
-struct SignalOps {
+public struct SignalOps {
 
     // MARK: - Constants
 
@@ -11,7 +11,7 @@ struct SignalOps {
     public static let nfft = 4096
 
     // Shared FFT Setup. Thread-safe if used read-only.
-    static let fftSetup: vDSP.FFT<DSPSplitComplex>? = {
+    nonisolated(unsafe) static let fftSetup: vDSP.FFT<DSPSplitComplex>? = {
         let log2n = vDSP_Length(floor(log2(Float(nfft))))
         return vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self)
     }()

@@ -1,4 +1,7 @@
 import SwiftUI
+import VitalLens
+import VitalLensCore
+#if canImport(UIKit)
 
 public struct VitalLensScanView: View {
     
@@ -42,7 +45,6 @@ public struct VitalLensScanView: View {
             VStack {
                 Spacer()
                 
-                // Status Text
                 Text(statusMessage)
                     .font(.headline)
                     .foregroundColor(.white)
@@ -57,7 +59,7 @@ public struct VitalLensScanView: View {
                     // Guide Oval
                     Ellipse()
                         .strokeBorder(faceDetected ? Color.green : Color.white, lineWidth: 3)
-                        .background(Color.black.opacity(0.01)) // Hit test
+                        .background(Color.black.opacity(0.01))
                         .frame(width: 250, height: 320)
                     
                     // Progress Ring
@@ -105,14 +107,12 @@ public struct VitalLensScanView: View {
                 var startTime: Date?
                 
                 for await result in stream {
-                    // Update Face Status
                     let hasFace = !(result.face.boundingBoxes.isEmpty)
                     
                     await MainActor.run {
                         self.faceDetected = hasFace
                         
                         if !isScanning && hasFace {
-                            // Start Scan Logic
                             isScanning = true
                             startTime = Date()
                             statusMessage = "Measuring..."
@@ -123,16 +123,13 @@ public struct VitalLensScanView: View {
                             return
                         }
                         
-                        // Update Progress
                         let elapsed = Date().timeIntervalSince(start)
                         self.progress = min(elapsed / scanDuration, 1.0)
                         
-                        // Update Live Vitals
                         if let hr = result.vitalSigns.heartRate?.value {
                             self.currentHeartRate = Int(hr)
                         }
                         
-                        // Check Completion
                         if elapsed >= scanDuration {
                             newClient.stopStream()
                             onComplete(result)
@@ -148,3 +145,4 @@ public struct VitalLensScanView: View {
         }
     }
 }
+#endif

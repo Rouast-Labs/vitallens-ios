@@ -1,6 +1,7 @@
 import Foundation
 import CoreImage
 import CoreVideo
+import VitalLensCore
 
 /// A stateless helper to handle image manipulation: Cropping, Resizing, and Raw Byte extraction.
 struct ImageProcessor {
@@ -23,15 +24,12 @@ struct ImageProcessor {
         targetSize: Int
     ) throws -> Data {
         
-        // 1. Create CIImage from the pixel buffer
-        // Core Image handles the color conversion from YUV/BGRA automatically.
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         
         let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
         
-        // 2. Convert Normalized Top-Left ROI to Absolute CoreImage Coordinates
-        // Core Image uses a Bottom-Left origin system.
+        // 1. Convert Normalized Top-Left ROI to Absolute CoreImage Coordinates (Bottom-Left)
         // ROI (Top-Left): x, y, w, h
         // CI (Bottom-Left): x, height - y - h, w, h
         let cropRect = CGRect(
@@ -41,45 +39,65 @@ struct ImageProcessor {
             height: roi.height * height
         )
         
-        // 3. Crop and Clamp
-        // We clamp to extent to avoid crashing if the ROI slips slightly outside due to rounding
+        // 2. Crop (clamped to extent)
         let croppedImage = ciImage.cropped(to: cropRect)
         
-        // 4. Translate to Origin (0,0) for scaling
-        // If we don't translate, the image retains its original coordinates and scaling won't work as expected
+        // 3. Translate to Origin (0,0) for scaling
         let translatedImage = croppedImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
         
-        // 5. Scale to Target Size (e.g. 40x40)
+        // 4. Scale to Target Size (e.g. 40x40)
         let scaleX = CGFloat(targetSize) / cropRect.width
         let scaleY = CGFloat(targetSize) / cropRect.height
-        
-        // Use Lanczos or high-quality scaling for better signal preservation
         let scaledImage = translatedImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
         
-        // 6. Render to Raw Bytes (RGB)
-        // Format: 3 bytes per pixel (R, G, B). No Alpha.
-        let bytesPerPixel = 3
-        let rowBytes = targetSize * bytesPerPixel
-        let totalBytes = rowBytes * targetSize
+        // 5. Render to Intermediate RGBA Buffer (4 bytes per pixel)
+        // CIContext requires 32-bit alignment (RGBA8)
+        let rgbaBytesPerPixel = 4
+        let rgbaRowBytes = targetSize * rgbaBytesPerPixel
+        let rgbaTotalBytes = rgbaRowBytes * targetSize
         
-        // Allocate buffer
-        var rawData = Data(count: totalBytes)
+        var rgbaData = Data(count: rgbaTotalBytes)
         
-        try rawData.withUnsafeMutableBytes { ptr in
+        rgbaData.withUnsafeMutableBytes { (ptr: UnsafeMutableRawBufferPointer) in
             guard let baseAddress = ptr.baseAddress else { return }
             
-            // Render the scaled image into the buffer.
-            // CIContext will perform the actual resize/sampling here.
             context.render(
                 scaledImage,
                 toBitmap: baseAddress,
-                rowBytes: rowBytes,
-                bounds: CGRect(x: 0, y: 0, width: targetSize, height: targetSize),
-                format: .RGB8, // 8 bits per channel, Red-Green-Blue order
+                rowBytes: rgbaRowBytes,
+                bounds: CGRect(x: 0, y: 0, width: CGFloat(targetSize), height: CGFloat(targetSize)),
+                format: .RGBA8, // Use standard 32-bit format
                 colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!
             )
         }
         
-        return rawData
+        // 6. Compact to RGB (3 bytes per pixel) for API
+        // Strip the Alpha channel
+        let rgbBytesPerPixel = 3
+        let rgbTotalBytes = targetSize * targetSize * rgbBytesPerPixel
+        var rgbData = Data(count: rgbTotalBytes)
+        
+        rgbData.withUnsafeMutableBytes { rgbPtr in
+            rgbaData.withUnsafeBytes { rgbaPtr in
+                guard let src = rgbaPtr.bindMemory(to: UInt8.self).baseAddress,
+                      let dst = rgbPtr.bindMemory(to: UInt8.self).baseAddress else { return }
+                
+                let pixelCount = targetSize * targetSize
+                var srcOffset = 0
+                var dstOffset = 0
+                
+                for _ in 0..<pixelCount {
+                    dst[dstOffset]     = src[srcOffset]     // R
+                    dst[dstOffset + 1] = src[srcOffset + 1] // G
+                    dst[dstOffset + 2] = src[srcOffset + 2] // B
+                    // Skip Alpha (src[srcOffset + 3])
+                    
+                    srcOffset += 4
+                    dstOffset += 3
+                }
+            }
+        }
+        
+        return rgbData
     }
 }

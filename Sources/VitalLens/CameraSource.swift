@@ -1,5 +1,7 @@
 import Foundation
 import AVFoundation
+
+#if canImport(UIKit)
 import UIKit
 
 /// A wrapper around AVCaptureSession that exposes a video stream as an AsyncStream.
@@ -10,8 +12,8 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unc
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "com.vitallens.camera", qos: .userInitiated)
-    private var previewLayer: AVCaptureVideoPreviewLayer?
-    
+    private var previewLayer: AVCaptureVideoPreviewLayer?    
+
     /// The stream of video frames.
     var stream: AsyncStream<CMSampleBuffer> {
         AsyncStream { continuation in
@@ -70,7 +72,7 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unc
             self?.continuation = nil
         }
     }
-    
+
     /// Attaches the camera preview to a UIView.
     /// Must be called on the Main Thread.
     @MainActor
@@ -137,3 +139,4 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unc
         continuation?.yield(sampleBuffer)
     }
 }
+#endif

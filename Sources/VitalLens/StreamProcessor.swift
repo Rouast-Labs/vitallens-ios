@@ -1,11 +1,18 @@
 import Foundation
 import AVFoundation
+import VitalLensCore
+
+#if canImport(UIKit)
 import UIKit
+#endif
 
 actor StreamProcessor {
+
+    #if canImport(UIKit)
+    private let camera: CameraSource
+    #endif
     
     // MARK: - Dependencies
-    private let camera: CameraSource
     private let detector: FaceDetector
     private let processor: ImageProcessor
     private let client: APIClient
@@ -27,7 +34,10 @@ actor StreamProcessor {
     // MARK: - Initialization
     
     init(apiKey: String?, proxyURL: URL?) {
+        #if canImport(UIKit)
         self.camera = CameraSource()
+        #endif
+
         self.detector = FaceDetector()
         self.processor = ImageProcessor()
         self.client = APIClient(apiKey: apiKey, proxyURL: proxyURL)
@@ -37,6 +47,7 @@ actor StreamProcessor {
     
     // MARK: - Public API
     
+    #if canImport(UIKit)
     func start(preview: UIView?) async throws -> AsyncStream<VitalLensResult> {
         // 1. Resolve Config
         let resolution = try await client.resolveModel(requestedModel: nil)
@@ -58,22 +69,7 @@ actor StreamProcessor {
             Task { await self.processStream() }
         }
     }
-    
-    func stop() {
-        camera.stop()
-        outputContinuation?.finish()
-        outputContinuation = nil
-        
-        // Reset stateful components
-        Task {
-            await bufferManager.reset()
-            await vitalsEstimator.reset() 
-        }
-        isSending = false
-    }
-    
-    // MARK: - Processing Loop
-    
+
     private func processStream() async {
         guard let config = self.config else { return }
         
@@ -113,6 +109,27 @@ actor StreamProcessor {
                 await checkAndSend()
             }
         }
+    }
+    #else
+    func start() async throws -> AsyncStream<VitalLensResult> {
+        throw VitalLensError.processingError("Not supported on macOS")
+    }
+    #endif
+
+    func stop() {
+        #if canImport(UIKit)
+        camera.stop()
+        #endif
+        
+        outputContinuation?.finish()
+        outputContinuation = nil
+        
+        // Reset stateful components
+        Task {
+            await bufferManager.reset()
+            await vitalsEstimator.reset() 
+        }
+        isSending = false
     }
     
     private func checkAndSend() async {

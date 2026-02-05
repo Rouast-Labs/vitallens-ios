@@ -3,13 +3,13 @@ import CoreGraphics
 
 /// Represents a buffer of processed frames tied to a specific Region of Interest (ROI).
 /// It handles the temporal overlap required by the rPPG model (retaining context frames).
-actor FrameBuffer {
+public actor FrameBuffer {
     
     // MARK: - Properties
     
     /// The fixed ROI used for all frames in this buffer.
     /// If the face moves out of this ROI, a new buffer must be created.
-    let roi: CGRect
+    public let roi: CGRect
     
     /// The configuration for the model using this buffer.
     private let config: ModelConfig
@@ -25,11 +25,11 @@ actor FrameBuffer {
     private let frameSizeBytes: Int
     
     /// Creation timestamp to prioritize newer buffers.
-    let createdAt: TimeInterval
+    public let createdAt: TimeInterval
     
     // MARK: - Initialization
     
-    init(roi: CGRect, config: ModelConfig, timestamp: TimeInterval = Date().timeIntervalSince1970) {
+    public init(roi: CGRect, config: ModelConfig, timestamp: TimeInterval = Date().timeIntervalSince1970) {
         self.roi = roi
         self.config = config
         self.createdAt = timestamp
@@ -45,7 +45,7 @@ actor FrameBuffer {
     /// Adds processed frame bytes to the buffer.
     ///
     /// - Parameter frameData: Raw RGB bytes of a single frame (must match expected size).
-    func append(frameData: Data) {
+    public func append(frameData: Data) {
         guard frameData.count == frameSizeBytes else {
             print("FrameBuffer Warning: Dropped frame due to size mismatch. Expected \(frameSizeBytes), got \(frameData.count)")
             return
@@ -66,7 +66,7 @@ actor FrameBuffer {
     }
     
     /// Checks if the buffer has enough frames to trigger a prediction.
-    var isReady: Bool {
+    public var isReady: Bool {
         // We generally need at least `minWindowLength` frames.
         // For VitalLens API, this is usually 16 frames initially.
         // However, if we have state, the requirement might be lower (n_inputs).
@@ -78,7 +78,7 @@ actor FrameBuffer {
     /// Consumes the buffer for API transmission, ensuring temporal context is retained.
     ///
     /// - Returns: A `Data` object containing the frames to send, or `nil` if not ready.
-    func consume() -> Data? {
+    public func consume() -> Data? {
         guard isReady else { return nil }
         
         // We return the *entire* current buffer for processing.
@@ -109,7 +109,7 @@ actor FrameBuffer {
     }
     
     /// Clears the buffer completely.
-    func clear() {
+    public func clear() {
         data.removeAll()
         frameCount = 0
     }

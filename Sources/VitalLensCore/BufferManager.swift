@@ -2,13 +2,18 @@ import Foundation
 import CoreGraphics
 
 /// Manages multiple `FrameBuffer` instances to handle ROI changes and face movement.
-actor BufferManager {
+public actor BufferManager {
     
     // MARK: - Types
     
-    struct ActiveBufferROI: Sendable {
-        let id: String
-        let roi: CGRect
+    public struct ActiveBufferROI: Sendable {
+        public let id: String
+        public let roi: CGRect
+        
+        public init(id: String, roi: CGRect) {
+            self.id = id
+            self.roi = roi
+        }
     }
     
     private struct ManagedBuffer {
@@ -22,6 +27,8 @@ actor BufferManager {
     
     /// The RNN state from the API. We cache it here to inject it into whichever buffer triggers next.
     private var rnnState: [Float]?
+
+    public init() {}
     
     // MARK: - Core Logic
     
@@ -31,7 +38,7 @@ actor BufferManager {
     ///   - faceRect: The normalized bounding box of the face (Top-Left origin).
     ///   - config: The model configuration.
     /// - Returns: A list of ROIs that the caller must crop/process and feed back to `append`.
-    func updateAndGetActiveROIs(
+    public func updateAndGetActiveROIs(
         faceRect: CGRect?,
         config: ModelConfig
     ) -> [ActiveBufferROI] {
@@ -73,7 +80,7 @@ actor BufferManager {
     }
     
     /// Adds processed data to a specific buffer.
-    func append(bufferId: String, data: Data) async {
+    public func append(bufferId: String, data: Data) async {
         guard let wrapper = buffers[bufferId] else { return }
         await wrapper.buffer.append(frameData: data)
         
@@ -86,7 +93,7 @@ actor BufferManager {
     
     /// Retrieves the *best* buffer that is ready to send to the API.
     /// Prioritizes the most recently created buffer (the one matching the newest ROI).
-    func getReadyBuffer() async -> FrameBuffer? {
+    public func getReadyBuffer() async -> FrameBuffer? {
         var readyBuffers: [FrameBuffer] = []
         
         for wrapper in buffers.values {
@@ -101,15 +108,15 @@ actor BufferManager {
     
     // MARK: - State Management
     
-    func updateState(_ state: [Float]) {
+    public func updateState(_ state: [Float]) {
         self.rnnState = state
     }
     
-    func getState() -> [Float]? {
+    public func getState() -> [Float]? {
         return rnnState
     }
     
-    func reset() {
+    public func reset() {
         buffers.removeAll()
         rnnState = nil
     }

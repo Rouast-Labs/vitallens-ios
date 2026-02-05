@@ -1,7 +1,7 @@
 import Foundation
 
 /// Internal actor to handle network requests.
-actor APIClient {
+public actor APIClient {
     
     private let apiKey: String?
     private let proxyURL: URL?
@@ -16,7 +16,7 @@ actor APIClient {
     
     // MARK: - Initialization
     
-    init(apiKey: String?, proxyURL: URL?, session: URLSession = .shared) {
+    public init(apiKey: String?, proxyURL: URL?, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
         self.session = session
@@ -25,7 +25,7 @@ actor APIClient {
     // MARK: - Configuration
     
     /// Calls /resolve-model to determine the correct configuration (FPS, Input Size) for the user's plan.
-    func resolveModel(requestedModel: String?) async throws -> ResolveModelResponse {
+    public func resolveModel(requestedModel: String?) async throws -> ResolveModelResponse {
         var url = baseURL.appendingPathComponent("resolve-model")
         
         if let model = requestedModel {
@@ -52,7 +52,7 @@ actor APIClient {
     ///   - state: The RNN state vector returned from the *previous* API response.
     ///   - model: The model version identifier.
     /// - Returns: The parsed VitalLensResult containing the updated state.
-    func sendStreamBatch(
+    public func sendStreamBatch(
         rawRGBBytes: Data,
         state: [Float]?,
         model: String?
@@ -72,8 +72,7 @@ actor APIClient {
             request.setValue(model, forHTTPHeaderField: "X-Model")
         }
         
-        // State Injection: Float32 Array -> Raw Data -> Base64
-        // This closes the loop: Backend returns state -> Client caches it -> Client sends it back
+        // State Injection
         if let state = state, !state.isEmpty {
             let stateData = state.withUnsafeBufferPointer { Data(buffer: $0) }
             let base64State = stateData.base64EncodedString()
@@ -91,7 +90,7 @@ actor APIClient {
     // MARK: - File Processing
     
     /// Uploads a video file chunk for processing.
-    func processVideoChunk(
+    public func processVideoChunk(
         rawRGBBytes: Data,
         metadata: [String: String],
         state: [Float]?
