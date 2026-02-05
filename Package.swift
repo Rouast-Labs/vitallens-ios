@@ -38,10 +38,16 @@ let package = Package(
             dependencies: ["VitalLens"]
         ),
         
-        // Tests: Run against Core for fast feedback.
+        // Core Logic Tests
+        .testTarget(
+            name: "VitalLensCoreTests",
+            dependencies: ["VitalLensCore"]
+        ),
+
+        // Integration Tests (Runs on iOS Simulator)
         .testTarget(
             name: "VitalLensTests",
-            dependencies: ["VitalLensCore"]
+            dependencies: ["VitalLens", "VitalLensCore"]
         ),
     ]
 )

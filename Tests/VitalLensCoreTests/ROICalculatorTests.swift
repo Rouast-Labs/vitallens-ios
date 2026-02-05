@@ -3,10 +3,9 @@ import XCTest
 
 final class ROICalculatorTests: XCTestCase {
 
-    // MARK: - Helper for JS Parity
+    // MARK: - Helper
     
-    /// Runs a test case using absolute pixel values (matching vitallens.js tests).
-    /// Internally converts to normalized coordinates (0-1), runs the logic, and converts back for assertion.
+    /// Runs a test case using absolute pixel values
     private func assertROI(
         inputRect: CGRect,
         frameSize: CGSize,
@@ -47,13 +46,9 @@ final class ROICalculatorTests: XCTestCase {
         XCTAssertEqual(resultPixels.height, expectedRect.height, accuracy: 0.5, "Height mismatch", file: file, line: line)
     }
 
-    // MARK: - Ported JS Tests
+    // MARK: - Tests
 
     func testGetFaceROI() {
-        // JS: det = { x0: 100, y0: 100, x1: 180, y1: 220 } -> w: 80, h: 120
-        // JS: clipDims = { width: 220, height: 300 }
-        // JS Result: { x0: 116, y0: 112, x1: 164, y1: 208 } -> w: 48, h: 96
-        
         assertROI(
             inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
             frameSize: CGSize(width: 220, height: 300),
@@ -63,10 +58,6 @@ final class ROICalculatorTests: XCTestCase {
     }
 
     func testGetForeheadROI() {
-        // JS: det = { x0: 100, y0: 100, x1: 180, y1: 220 } -> w: 80, h: 120
-        // JS: clipDims = { width: 220, height: 300 }
-        // JS Result: { x0: 128, y0: 118, x1: 152, y1: 130 } -> w: 24, h: 12
-        
         assertROI(
             inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
             frameSize: CGSize(width: 220, height: 300),
@@ -76,11 +67,6 @@ final class ROICalculatorTests: XCTestCase {
     }
 
     func testGetUpperBodyROI_Cropped() {
-        // JS: det = { x0: 100, y0: 100, x1: 180, y1: 220 } -> w: 80, h: 120
-        // JS: clipDims = { width: 220, height: 300 }
-        // JS Result: { x0: 85, y0: 83, x1: 195, y1: 253 } -> w: 110, h: 170
-        // Note: JS `calculateROI` usually defaults to the "cropped" variant of Upper Body
-        
         assertROI(
             inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
             frameSize: CGSize(width: 220, height: 300),
@@ -92,18 +78,10 @@ final class ROICalculatorTests: XCTestCase {
     // MARK: - Validation Tests (checkFaceInROI)
     
     func testCheckFaceInROI() {
-        // We simulate the normalized logic here directly as the helper is for calculateROI
-        
-        // JS: face = { x0: 10, y0: 10, x1: 19, y1: 19 } (w: 9, h: 9)
-        // JS: roi = { x0: 0, y0: 0, x1: 30, y1: 30 }
-        // JS: expect(true)
         let facePass = CGRect(x: 0.1, y: 0.1, width: 0.09, height: 0.09)
         let roiPass = CGRect(x: 0.0, y: 0.0, width: 0.3, height: 0.3)
         XCTAssertTrue(ROICalculator.isFace(facePass, sufficientlyInsideROI: roiPass))
         
-        // JS: face = { x0: 22, y0: 22, x1: 40, y1: 40 } (w: 18, h: 18)
-        // JS: roi = { x0: 0, y0: 0, x1: 30, y1: 30 }
-        // JS: expect(false) -- Face extends beyond ROI (40 > 30)
         let faceFail = CGRect(x: 0.22, y: 0.22, width: 0.18, height: 0.18)
         let roiFail = CGRect(x: 0.0, y: 0.0, width: 0.3, height: 0.3)
         XCTAssertFalse(ROICalculator.isFace(faceFail, sufficientlyInsideROI: roiFail))
