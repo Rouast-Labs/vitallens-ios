@@ -9,7 +9,6 @@ final class ROICalculatorTests: XCTestCase {
     private func assertROI(
         inputRect: CGRect,
         frameSize: CGSize,
-        method: String,
         expectedRect: CGRect,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -22,15 +21,14 @@ final class ROICalculatorTests: XCTestCase {
             height: inputRect.height / frameSize.height
         )
         
-        // 2. Run Logic
+        // 2. Run Logic (Method string is ignored now)
         let normalizedResult = ROICalculator.calculateROI(
             from: normalizedInput,
-            method: method,
+            method: "upper_body_cropped", 
             frameSize: frameSize
         )
         
         // 3. Denormalize Output (0.0-1.0 -> Pixels)
-        // We round to match the integer-pixel logic of the JS tests
         let resultPixels = CGRect(
             x: (normalizedResult.origin.x * frameSize.width),
             y: (normalizedResult.origin.y * frameSize.height),
@@ -39,7 +37,6 @@ final class ROICalculatorTests: XCTestCase {
         )
         
         // 4. Assert
-        // Accuracy of 0.5 allows for float floating point precision issues during the round-trip
         XCTAssertEqual(resultPixels.origin.x, expectedRect.origin.x, accuracy: 0.5, "X mismatch", file: file, line: line)
         XCTAssertEqual(resultPixels.origin.y, expectedRect.origin.y, accuracy: 0.5, "Y mismatch", file: file, line: line)
         XCTAssertEqual(resultPixels.width, expectedRect.width, accuracy: 0.5, "Width mismatch", file: file, line: line)
@@ -48,29 +45,15 @@ final class ROICalculatorTests: XCTestCase {
 
     // MARK: - Tests
 
-    func testGetFaceROI() {
-        assertROI(
-            inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
-            frameSize: CGSize(width: 220, height: 300),
-            method: "face",
-            expectedRect: CGRect(x: 116, y: 112, width: 48, height: 96)
-        )
-    }
-
-    func testGetForeheadROI() {
-        assertROI(
-            inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
-            frameSize: CGSize(width: 220, height: 300),
-            method: "forehead",
-            expectedRect: CGRect(x: 128, y: 118, width: 24, height: 12)
-        )
-    }
-
     func testGetUpperBodyROI_Cropped() {
         assertROI(
             inputRect: CGRect(x: 100, y: 100, width: 80, height: 120),
             frameSize: CGSize(width: 220, height: 300),
-            method: "upper_body_cropped",
+            // Expected calculation based on [0.19, 0.1455, 0.19, 0.2769] insets
+            // Left shift: 0.19 * 80 = 15.2 -> 15. X becomes 85.
+            // Top shift: 0.1455 * 120 = 17.46 -> 17. Y becomes 83.
+            // Right shift: 0.19 * 80 = 15.2 -> 15. Width adds 15+15 = 30. Total 110.
+            // Bottom shift: 0.2769 * 120 = 33.2 -> 33. Height adds 17+33 = 50. Total 170.
             expectedRect: CGRect(x: 85, y: 83, width: 110, height: 170)
         )
     }

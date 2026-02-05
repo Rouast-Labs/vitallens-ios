@@ -4,17 +4,16 @@ import CoreGraphics
 /// Helper utilities for calculating Region of Interest (ROI) from face detections.
 public struct ROICalculator {
     
-    enum ROIMethod: String {
-        case face
-        case forehead
-        case upperBodyCropped = "upper_body_cropped"
-    }
+    /// The relative coordinate changes required to convert a Face Box into the
+    /// "Upper Body Cropped" ROI expected by the VitalLens API models.
+    /// Format: [Left, Top, Right, Bottom] as percentages of width/height.
+    private static let upperBodyInsets: [CGFloat] = [0.19, 0.1455, 0.19, 0.2769]
     
-    /// Derives the processing ROI based on the method specified by the model config.
+    /// Derives the processing ROI for the VitalLens API.
     ///
     /// - Parameters:
     ///   - faceRect: The normalized face bounding box (Top-Left origin).
-    ///   - method: The ROI method to use (e.g. "face", "upper_body_cropped").
+    ///   - method: The ROI method string from config (Ignored in iOS as we only support API models).
     ///   - frameSize: The dimension of the video frame (width, height).
     /// - Returns: A normalized ROI rect suitable for processing.
     public static func calculateROI(
@@ -22,51 +21,15 @@ public struct ROICalculator {
         method: String,
         frameSize: CGSize
     ) -> CGRect {
-        
-        // Default to 'face' if unknown
-        let roiMethod = ROIMethod(rawValue: method) ?? .face
-        
-        switch roiMethod {
-        case .face:
-            return getFaceROI(from: faceRect, frameSize: frameSize)
-        case .forehead:
-            return getForeheadROI(from: faceRect, frameSize: frameSize)
-        case .upperBodyCropped:
-            return getUpperBodyROI(from: faceRect, frameSize: frameSize, cropped: true)
-        }
-    }
-    
-    // MARK: - Specific Strategies
-    
-    /// Standard Face ROI (reduces width to 60% and height to 80% of detection).
-    /// Matches `getFaceROI` in faceOps.ts.
-    private static func getFaceROI(from face: CGRect, frameSize: CGSize) -> CGRect {
-        // Relative changes: [-0.2, -0.1, -0.2, -0.1]
-        // This effectively shrinks the box.
-        return applyRelativeChange(to: face, change: [-0.2, -0.1, -0.2, -0.1], frameSize: frameSize)
-    }
-    
-    /// Forehead ROI.
-    /// Matches `getForeheadROI` in faceOps.ts.
-    private static func getForeheadROI(from face: CGRect, frameSize: CGSize) -> CGRect {
-        // Relative changes: [-0.35, -0.15, -0.35, -0.75]
-        return applyRelativeChange(to: face, change: [-0.35, -0.15, -0.35, -0.75], frameSize: frameSize)
-    }
-    
-    /// Upper Body ROI.
-    /// Matches `getUpperBodyROI` in faceOps.ts.
-    private static func getUpperBodyROI(from face: CGRect, frameSize: CGSize, cropped: Bool) -> CGRect {
-        // Relative changes for cropped: [0.19, 0.1455, 0.19, 0.2769]
-        // This expands the box to include shoulders/upper chest.
-        let change: [CGFloat] = cropped ? [0.19, 0.1455, 0.19, 0.2769] : [0.25, 0.2, 0.25, 0.4]
-        return applyRelativeChange(to: face, change: change, frameSize: frameSize)
+        // We ignore 'method' here because the iOS client exclusively uses VitalLens API models,
+        // which rely on the "upper_body_cropped" strategy defined by `upperBodyInsets`.
+        return applyRelativeChange(to: faceRect, change: upperBodyInsets, frameSize: frameSize)
     }
     
     // MARK: - ROI Math
     
     /// Checks if a face is sufficiently contained within an existing ROI.
     /// Used to decide if we need to switch ROIs (and thus buffers).
-    /// Matches `checkFaceInROI`.
     public static func isFace(
         _ face: CGRect,
         sufficientlyInsideROI roi: CGRect,
@@ -88,7 +51,6 @@ public struct ROICalculator {
     }
     
     /// Applies relative coordinate changes to a rect and clamps to 0.0-1.0.
-    /// Change format: [left, top, right, bottom] as percentages of width/height.
     private static func applyRelativeChange(
         to rect: CGRect,
         change: [CGFloat],
