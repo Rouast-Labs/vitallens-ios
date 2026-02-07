@@ -1,9 +1,6 @@
 import Foundation
 import Accelerate
 
-/// A collection of stateless signal processing primitives using vDSP.
-/// Optimized for x86_64 and ARM64 to prevent SIGILL by ensuring memory alignment
-/// and avoiding dangerous floating-point instructions in loops.
 public struct SignalOps {
 
     // MARK: - Constants
@@ -25,10 +22,10 @@ public struct SignalOps {
         var stdDev: Float = 0
         var result = [Float](repeating: 0, count: count)
         
-        // Optimization: Calculate stats and write normalized output in a single pass
+        // Optimization: Calculate stats and write normalized output in a single vDSP pass
         vDSP_normalize(signal, 1, &result, 1, &mean, &stdDev, vDSP_Length(count))
         
-        // Safety check for flatlines or NaNs
+        // Safety check for flatlines or NaNs (prevents divide-by-zero propagation)
         if stdDev < 1e-6 || stdDev.isNaN {
             return [Float](repeating: 0.0, count: count)
         }
@@ -38,34 +35,54 @@ public struct SignalOps {
 
     public static func detrend(_ signal: [Float], fs: Float, cutoff: Float = 0.5) -> [Float] {
         guard signal.count > 1 else { return signal }
-        let forward = efficientDetrend(signal, fs: fs, cutoff: cutoff)
-        let backward = efficientDetrend(forward.reversed(), fs: fs, cutoff: cutoff)
-        return Array(backward.reversed())
-    }
-
-    private static func efficientDetrend<S: Sequence>(_ signal: S, fs: Float, cutoff: Float) -> [Float] where S.Element == Float {
+        
+        // Optimization: In-place filtering to reduce memory allocations from 3xN to 1xN.
+        // We act on a copy of the signal.
+        var buffer = signal
+        
         let dt = 1.0 / fs
         let rc = 1.0 / (2.0 * Float.pi * cutoff)
         let alpha = rc / (rc + dt)
         
-        // Optimization: Pre-allocate to avoid resize overhead
-        var output = [Float]()
-        output.reserveCapacity(signal.underestimatedCount)
+        // 1. Forward Pass
+        applyDetrendInPlace(&buffer, alpha: alpha)
         
-        var lastOut: Float = 0.0
-        var lastIn: Float = 0.0
+        // 2. Reverse
+        buffer.reverse()
         
-        for (i, val) in signal.enumerated() {
-            if i == 0 {
-                output.append(0.0)
-            } else {
-                let out = alpha * (lastOut + val - lastIn)
-                output.append(out)
+        // 3. Backward Pass (applied to reversed data)
+        applyDetrendInPlace(&buffer, alpha: alpha)
+        
+        // 4. Reverse back
+        buffer.reverse()
+        
+        return buffer
+    }
+
+    /// High-performance in-place detrending using UnsafeMutableBufferPointer.
+    /// Eliminates array bounds checking overhead in the hot loop.
+    private static func applyDetrendInPlace(_ buffer: inout [Float], alpha: Float) {
+        buffer.withUnsafeMutableBufferPointer { ptr in
+            guard let base = ptr.baseAddress, ptr.count > 1 else { return }
+            
+            var lastOut: Float = 0.0
+            var lastIn: Float = base[0] // Corresponds to x[i-1]
+            
+            // First element is treated as 0 (DC removal starts relative to 0)
+            base[0] = 0.0
+            
+            // Loop starts at 1
+            for i in 1..<ptr.count {
+                let currentIn = base[i]
+                // formula: y[i] = alpha * (y[i-1] + x[i] - x[i-1])
+                let out = alpha * (lastOut + currentIn - lastIn)
+                
+                base[i] = out
+                
                 lastOut = out
+                lastIn = currentIn
             }
-            lastIn = val
         }
-        return output
     }
 
     // MARK: - 2. Rate Estimation (FFT)
@@ -82,79 +99,73 @@ public struct SignalOps {
     public static func findPeaks(in signal: [Float], fs: Float, hr: Float?) -> [Int] {
         guard signal.count > 2 else { return [] }
 
-        // 1. Configuration
-        // Lag: Window size for moving average. Approx 1.5s is standard for rPPG.
+        // Configuration
         let lag = max(1, Int(round(fs * 1.5)))
-        let thresholdSq: Float = 1.5 * 1.5 // Threshold = 1.5 std devs
+        let thresholdSq: Float = 1.5 * 1.5
         let height: Float = 0.0
         
-        // Refractory Period: Minimum distance between peaks based on HR
+        // Refractory Period Logic
         let minDistance: Int
         if let hr = hr, hr >= 40, hr <= 220 {
-            // e.g. HR=60 -> 1s period. minDistance = 0.5s (15 frames @ 30fps)
             minDistance = Int(round((fs * 60.0) / hr * 0.5))
         } else {
-            // Default conservative: assume max HR 220 -> ~270ms period
             minDistance = Int(round((fs * 60.0) / 220.0))
         }
         
         var detectedIndices = [Int]()
         
-        // 2. Sliding Window Initialization (O(N) Approach)
-        // We maintain a running Sum and SumSquares to calculate Mean/StdDev in O(1)
-        var sum: Float = 0
-        var sumSq: Float = 0
-        
-        // We pad the beginning with the first value (or 0) to "warm up" the lag window
-        // For standard inputs (standardized signal), padding with 0 is safe.
-        // To match the original logic exactly (padding with signal[0]), we do:
-        let padVal = signal[0]
-        
-        // Initialize window state as if we processed `lag` frames of `padVal`
-        sum = padVal * Float(lag)
-        sumSq = (padVal * padVal) * Float(lag)
-        
-        let lagF = Float(lag)
-        
-        // 3. Iterate
-        for i in 1..<(signal.count - 1) {
-            let val = signal[i]
+        signal.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress, ptr.count > lag + 2 else { return }
             
-            // A. Update Rolling Stats
-            // The stats correspond to the window ending at i-1 (indices [i-lag ... i-1])
-            // Standard deviation calculation
-            let mean = sum / lagF
-            let variance = max(0, (sumSq / lagF) - (mean * mean))
+            var sum: Float = 0
+            var sumSq: Float = 0
             
-            // B. Peak Check
-            // Must be local maxima AND above Z-score threshold
-            if val > signal[i-1] && val > signal[i+1] && val > height {
-                let diff = val - mean
-                if diff > 0 && (diff * diff) > (thresholdSq * variance) {
-                    // Refractory check
-                    if let last = detectedIndices.last {
-                        if (i - last) >= minDistance {
-                            detectedIndices.append(i)
+            // FIX: Use 0.0 as the padding value for history.
+            // Since signal is standardized (mean 0), assuming past is 0 is safer than 
+            // repeating signal[0], which creates artificial zero-variance windows.
+            let padVal: Float = 0.0
+            
+            // Initialize Rolling Stats with padVal
+            sum = padVal * Float(lag)
+            sumSq = (padVal * padVal) * Float(lag)
+            let lagF = Float(lag)
+            
+            // Iterate
+            for i in 1..<(ptr.count - 1) {
+                let val = base[i]
+                
+                // 1. Calculate stats for window [i-lag ... i-1]
+                let mean = sum / lagF
+                let variance = max(0, (sumSq / lagF) - (mean * mean))
+                
+                // 2. Check Peak
+                // We add a check for variance > epsilon to prevent divide-by-zero sensitivity on flatlines
+                if val > base[i-1] && val > base[i+1] && val > height {
+                    if variance > 1e-6 {
+                        let diff = val - mean
+                        if diff > 0 && (diff * diff) > (thresholdSq * variance) {
+                            // Refractory Check
+                            if let last = detectedIndices.last {
+                                if (i - last) >= minDistance {
+                                    detectedIndices.append(i)
+                                }
+                            } else {
+                                detectedIndices.append(i)
+                            }
                         }
-                    } else {
-                        detectedIndices.append(i)
                     }
                 }
+                
+                // 3. Slide Window
+                let leavingIndex = i - lag
+                // Use the same padVal (0.0) for virtual history indices < 0
+                let leavingValue = (leavingIndex < 0) ? padVal : base[leavingIndex]
+                
+                sum = sum - leavingValue + val
+                sumSq = sumSq - (leavingValue * leavingValue) + (val * val)
             }
-            
-            // C. Slide Window for Next Iteration (i+1)
-            // Window moves from [i-lag...i-1] to [i-lag+1...i]
-            // We remove the element at (i - lag) and add the element at (i)
-            let leavingIndex = i - lag
-            let leavingValue = (leavingIndex < 0) ? padVal : signal[leavingIndex]
-            
-            sum = sum - leavingValue + val
-            sumSq = sumSq - (leavingValue * leavingValue) + (val * val)
         }
         
-        // Removed the "minSequenceLength >= 3" logic.
-        // A low-level signal op should return what it finds. 
-        // Higher-level logic can filter short sequences if needed.
         return detectedIndices
     }
 
@@ -162,18 +173,14 @@ public struct SignalOps {
 
     public static func calculateSDNN(peaks: [Int], fs: Float) -> Double? {
         let intervals = calculateNNIntervals(peaks: peaks, fs: fs)
-        // SDNN requires at least 2 intervals (3 peaks) to have a variance? 
-        // Actually, stdDev requires N >= 2 data points. 
-        // 2 peaks -> 1 interval. StdDev of 1 point is 0 (or undefined).
-        // 3 peaks -> 2 intervals. StdDev is valid.
+        // SDNN requires at least 2 intervals (3 peaks) to calculate variance
         guard intervals.count >= 2 else { return nil }
         
         var mean: Float = 0
         var stdDev: Float = 0
-        // We use vDSP to calculate stdDev of the intervals
         vDSP_normalize(intervals, 1, nil, 1, &mean, &stdDev, vDSP_Length(intervals.count))
         
-        return Double(stdDev * 1000.0) // Convert s to ms
+        return Double(stdDev * 1000.0)
     }
 
     public static func calculateRMSSD(peaks: [Int], fs: Float) -> Double? {
@@ -181,8 +188,7 @@ public struct SignalOps {
         guard intervals.count >= 2 else { return nil }
         
         var sumSqDiff: Float = 0
-        // RMSSD is root mean square of SUCCESSIVE differences
-        // If we have 2 intervals, we have 1 diff. Valid.
+        // Standard loop is efficient enough for small interval arrays (< 50 items)
         for i in 0..<(intervals.count - 1) {
             let diff = intervals[i+1] - intervals[i]
             sumSqDiff += (diff * diff)
@@ -194,7 +200,7 @@ public struct SignalOps {
 
     private static func calculateNNIntervals(peaks: [Int], fs: Float) -> [Float] {
         guard peaks.count >= 2 else { return [] }
-        var intervals: [Float] = []
+        var intervals = [Float]()
         intervals.reserveCapacity(peaks.count - 1)
         
         for i in 0..<(peaks.count - 1) {
@@ -204,13 +210,12 @@ public struct SignalOps {
     }
 
     private static func filterNNIntervals(_ intervals: [Float], threshold: Float = 0.3) -> [Float] {
-        // Need at least 3 intervals to establish a meaningful median for filtering
         guard intervals.count >= 3 else { return intervals }
         
         let sorted = intervals.sorted()
         let median = sorted[sorted.count / 2]
         
-        // Reject intervals that deviate by >30% from median
+        // Filter outliers (> 30% deviation from median)
         return intervals.filter { abs($0 - median) <= (median * threshold) }
     }
 
@@ -219,43 +224,40 @@ public struct SignalOps {
     private static func powerSpectrum(_ input: [Float], fs: Float, nfft: Int, fftSetUp: vDSP.FFT<DSPSplitComplex>) -> (magnitudes: [Float], frequencies: [Float]) {
         let count = input.count
         
-        // Optimization: Cache window if possible, or use stack buffer for small N
+        // Generate Window
         var window = [Float](repeating: 0, count: count)
         vDSP_hann_window(&window, vDSP_Length(count), Int32(vDSP_HANN_NORM))
         
+        // Apply Window
         var windowedInput = [Float](repeating: 0, count: count)
         vDSP_vmul(input, 1, window, 1, &windowedInput, 1, vDSP_Length(count))
         
+        // Pad to NFFT
         let nhalf = nfft / 2
-        var real = [Float](repeating: 0, count: nhalf)
-        var imag = [Float](repeating: 0, count: nhalf)
-        
         var paddedInput = windowedInput
         if count < nfft {
             paddedInput.append(contentsOf: [Float](repeating: 0.0, count: nfft - count))
         }
 
+        // FFT Calculation
+        // Using withUnsafeBufferPointer avoids copying data when binding memory
+        var real = [Float](repeating: 0, count: nhalf)
+        var imag = [Float](repeating: 0, count: nhalf)
+        
         return real.withUnsafeMutableBufferPointer { rPtr in
             imag.withUnsafeMutableBufferPointer { iPtr in
                 var complex = DSPSplitComplex(realp: rPtr.baseAddress!, imagp: iPtr.baseAddress!)
                 
-                // Pack real input into split complex format
                 paddedInput.withUnsafeBufferPointer { buffer in
                     let ptr = UnsafeRawPointer(buffer.baseAddress!).bindMemory(to: DSPComplex.self, capacity: nhalf)
                     vDSP_ctoz(ptr, 2, &complex, 1, vDSP_Length(nhalf))
                 }
                 
-                // Forward FFT
                 fftSetUp.forward(input: complex, output: &complex)
                 
-                // Calculate magnitudes (squared) -> then sqrt? 
-                // vDSP_zaspec calculates squared magnitude (Re^2 + Im^2).
-                // For peak finding, squared is fine (peak is same), but if we want specific units...
-                // The original code used zaspec.
                 var mags = [Float](repeating: 0, count: nhalf)
                 vDSP_zaspec(&complex, &mags, vDSP_Length(nhalf))
                 
-                // Frequency axis
                 let fres = fs / Float(nfft)
                 let freqs = (0..<nhalf).map { Float($0) * fres }
                 
@@ -269,6 +271,7 @@ public struct SignalOps {
         
         guard let globalMax = mags.max() else { return nil }
         
+        // Find highest peak in valid range
         var bestMag: Float = -1
         var bestFreq: Float? = nil
         
@@ -282,7 +285,7 @@ public struct SignalOps {
             }
         }
         
-        // Threshold check: Peak must be significant relative to global max (noise)
+        // Peak Validation: Must be at least 50% of the global max energy
         if let freq = bestFreq, bestMag >= (globalMax * 0.5) {
             return freq * 60.0
         }

@@ -1,4 +1,3 @@
-// FILE: Tests/VitalLensCoreTests/SignalOpsTests.swift
 // ==================================================
 // Comprehensive Test Suite for SignalOps
 // Covers:
