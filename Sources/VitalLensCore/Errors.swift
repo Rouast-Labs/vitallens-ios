@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors specific to the VitalLens SDK and API interactions.
-public enum VitalLensError: LocalizedError, Sendable {
+public enum VitalLensError: LocalizedError, Sendable, Equatable {
     /// The API Key provided is missing or invalid.
     case invalidAPIKey
     
@@ -22,6 +22,21 @@ public enum VitalLensError: LocalizedError, Sendable {
     
     /// Internal SDK error (e.g., invalid image buffer).
     case processingError(String)
+
+    public static func == (lhs: VitalLensError, rhs: VitalLensError) -> Bool {
+        switch (lhs, rhs) {
+        case (.invalidAPIKey, .invalidAPIKey): return true
+        case (.quotaExceeded, .quotaExceeded): return true
+        case (.serverError(let c1, let m1), .serverError(let c2, let m2)): return c1 == c2 && m1 == m2
+        case (.clientError(let c1, let m1), .clientError(let c2, let m2)): return c1 == c2 && m1 == m2
+        case (.processingError(let m1), .processingError(let m2)): return m1 == m2
+        case (.decodingError(let e1), .decodingError(let e2)): 
+            return e1.localizedDescription == e2.localizedDescription
+        case (.networkError(let e1), .networkError(let e2)):
+            return e1.localizedDescription == e2.localizedDescription
+        default: return false
+        }
+    }
     
     public var errorDescription: String? {
         switch self {
