@@ -29,9 +29,8 @@ final class BufferManagerTests: XCTestCase {
         
         XCTAssertEqual(activeROIs.count, 1, "Should create exactly 1 buffer for a new face")
         
-        // 3. Verify ROI Logic
+        // 3. Verify ROI Logic (Approximate check based on ROICalculator logic)
         let roi = activeROIs.first!.roi
-        
         XCTAssertEqual(roi.origin.x, 0.362, accuracy: 0.001)
     }
     
@@ -48,7 +47,7 @@ final class BufferManagerTests: XCTestCase {
         let face2 = CGRect(x: 0.42, y: 0.42, width: 0.2, height: 0.2)
         let rois2 = await manager.updateAndGetActiveROIs(faceRect: face2, config: trackConfig)
         
-        XCTAssertEqual(rois2.count, 1, "Should maintain the existing buffer for slight movement")        
+        XCTAssertEqual(rois2.count, 1, "Should maintain the existing buffer for slight movement")
         XCTAssertEqual(rois2.first!.id, id1, "Should return the SAME buffer ID")
     }
     
@@ -87,7 +86,7 @@ final class BufferManagerTests: XCTestCase {
         let ready1 = await manager.getReadyBuffer()
         XCTAssertNil(ready1, "Should be nil (15 < 16)")
         
-        // 4. Inject State!
+        // 4. Inject State
         await manager.updateState([0.1, 0.2, 0.3])
         
         // 5. Check Ready (Should be TRUE, because we have state, need 4. 15 > 4)
@@ -134,20 +133,18 @@ final class BufferManagerTests: XCTestCase {
             XCTAssertGreaterThan(bestROI.origin.x, 0.5, "Should pick the new buffer (Right side)")
         }
     }
-
+    
     // MARK: - Robustness & Lifecycle
-
+    
     func testNilFacePreservesBuffers() async {
         let manager = BufferManager()
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         
         // 1. Establish a buffer with a valid face
         let rois1 = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
-        XCTAssertEqual(rois1.count, 1)
         let originalID = rois1.first?.id
         
         // 2. Simulate detection failure (nil face)
-        // This happens often in real streams (blurry frames, extreme angles)
         let rois2 = await manager.updateAndGetActiveROIs(faceRect: nil, config: config)
         
         // Assertion: We must NOT lose the buffer. We should keep processing the last known ROI.
@@ -155,7 +152,7 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertEqual(rois2.first?.id, originalID, "The ID should remain consistent")
         XCTAssertEqual(rois2.first?.roi.origin.x, rois1.first?.roi.origin.x, "The ROI should not change")
     }
-
+    
     func testResetClearsState() async {
         let manager = BufferManager()
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
@@ -175,9 +172,6 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertNil(state, "RNN state should be nil after reset")
     }
     
-    // MARK: - Edge Case: Buffer Accumulation
-    // This documents the current behavior: We accumulate buffers on drift. 
-    // In V2, we might want to test that old buffers eventually expire.
     func testBufferAccumulationOnMovement() async {
         let manager = BufferManager()
         let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
@@ -190,10 +184,7 @@ final class BufferManagerTests: XCTestCase {
             _ = await manager.updateAndGetActiveROIs(faceRect: face, config: trackConfig)
         }
         
-        // We expect 3 distinct buffers because we moved far enough to trigger new ones,
-        // and we haven't implemented pruning yet.
-        // Checking this ensures our "ActiveBufferROI" list correctly reports all of them 
-        // so the StreamProcessor keeps them fed.
+        // We expect 3 distinct buffers because we moved far enough to trigger new ones
         let finalROIs = await manager.updateAndGetActiveROIs(faceRect: nil, config: trackConfig)
         XCTAssertEqual(finalROIs.count, 3)
     }
