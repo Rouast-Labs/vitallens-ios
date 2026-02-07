@@ -3,47 +3,31 @@ import Foundation
 /// Defines how the manager should format the output waveforms.
 public enum WaveformMode: Sendable {
     /// Returns only the new data points generated since the last call.
-    ///
-    /// Ideal for highly efficient, append-only real-time graphing where you maintain your own history buffer.
     case incremental
-    
     /// Returns a fixed-duration sliding window (e.g., last 10 seconds).
-    ///
-    /// Ideal for UI components that simply render whatever data array they are given (e.g., a rolling chart).
     case windowed(seconds: Double)
-    
     /// Returns the entire accumulated history of the session.
-    ///
-    /// Ideal for file processing or saving comprehensive results at the end of a measurement session.
     case complete
 }
 
 /// Internal helper to manage Sum/Count aggregation for seamless signal stitching.
-///
-/// This buffer averages overlapping segments of data (e.g., when the API returns updated estimates for recent frames)
-/// to reduce jitter and discontinuities at chunk boundaries.
 struct SignalBuffer {
     var sum: [Float] = []
     var count: [Int] = []
+    var unit: String?
     
-    /// Merges new data into the buffer, averaging overlapping segments.
-    ///
-    /// - Parameters:
-    ///   - data: The new signal data to merge.
-    ///   - overlapCount: The number of frames at the start of `data` that overlap with the tail of the existing buffer.
-    mutating func merge(data: [Float], overlapCount: Int) {
+    mutating func merge(data: [Float], overlapCount: Int, unit: String?) {
+        if self.unit == nil { self.unit = unit }
+        
         let newCount = data.count
         guard newCount > 0 else { return }
         
-        // 1. Handle Overlap (Average with existing data)
+        // Handle overlap averaging
         let validOverlap = min(overlapCount, sum.count, newCount)
-        
         if validOverlap > 0 {
             let startIdx = sum.count - validOverlap
-            
             for i in 0..<validOverlap {
                 let newVal = data[i]
-                // Ignore NaNs to prevent corrupting the valid history
                 if !newVal.isNaN {
                     sum[startIdx + i] += newVal
                     count[startIdx + i] += 1
@@ -51,29 +35,19 @@ struct SignalBuffer {
             }
         }
         
-        // 2. Handle New Data (Append)
+        // Append new data
         if newCount > validOverlap {
             let newSlice = data[validOverlap...]
-            
-            // Treat NaN as 0.0 for sum, but count it to maintain array alignment.
-            // Downstream processing (SignalOps) handles flatlines/zeros robustly.
             let safeSlice = newSlice.map { $0.isNaN ? 0.0 : $0 }
-            
             sum.append(contentsOf: safeSlice)
             count.append(contentsOf: Array(repeating: 1, count: newSlice.count))
         }
     }
     
-    /// Computes the final averaged signal.
-    ///
-    /// - Returns: An array of floats where each value is `sum / count`.
     func computeAverage() -> [Float] {
         return zip(sum, count).map { $0 / Float($1) }
     }
     
-    /// Removes the oldest data points to maintain a fixed buffer size.
-    ///
-    /// - Parameter countToKeep: The maximum number of recent frames to retain.
     mutating func prune(keepingLast countToKeep: Int) {
         if sum.count > countToKeep {
             let removeCount = sum.count - countToKeep
@@ -82,104 +56,76 @@ struct SignalBuffer {
         }
     }
     
-    /// Clears all data.
     mutating func removeAll() {
         sum.removeAll()
         count.removeAll()
+        unit = nil
     }
 }
 
 /// Manages the stateful accumulation of vital sign waveforms and computes real-time estimates.
-///
-/// This actor is the "brain" of the client-side processing pipeline. It:
-/// 1. Stitches incoming API result chunks into a continuous timeline.
-/// 2. Handles overlap averaging to smooth out transitions.
-/// 3. Computes real-time vitals (HR, RR, HRV) locally using `SignalOps`.
-/// 4. Formats the output based on the requested `WaveformMode`.
 public actor VitalsEstimateManager {
     
     // MARK: - Configuration
     
     /// Maximum history to keep internally (approx 60s @ 30fps).
-    /// Required to support long-window metrics like HRV (SDNN).
     private let maxInternalHistory: Int = 1800
     
-    /// Minimum samples required to attempt Heart Rate estimation (~4 seconds).
+    /// Minimum samples required to attempt frequency estimation (~4 seconds).
     private let minEstimationWindow: Int = 120
     
     /// Minimum samples required to attempt HRV estimation (~20 seconds).
     private let minHRVWindow: Int = 600
     
-    // MARK: - State Buffers
+    // MARK: - State
     
     /// The "Master Clock" for alignment. Stores the timestamp of each frame.
     private var timestamps: [Double] = []
     
-    // Signal Buffers (Data + Confidence)
-    private var ppgData = SignalBuffer()
-    private var ppgConf = SignalBuffer()
-    private var respData = SignalBuffer()
-    private var respConf = SignalBuffer()
+    /// Dynamic storage for all signal buffers. Key is the signal ID (e.g., "ppg_waveform", "sbp").
+    private var signalBuffers: [String: SignalBuffer] = [:]
+    private var signalConfidences: [String: SignalBuffer] = [:]
     
-    // Face Buffers (Simple append strategy; first valid detection wins for a given timestamp)
+    /// Face data tracking
     private var faceCoordinates: [[Double]] = []
     private var faceConfidence: [Double] = []
+    private var faceNote: String?
     
     /// Tracks the last timestamp emitted in `incremental` mode.
     private var lastEmittedTimestamp: Double = -1.0
     
-    // MARK: - Initialization
     public init() {}
     
-    // MARK: - Public API
-    
-    /// Resets all internal state and history.
     public func reset() {
         timestamps.removeAll()
-        ppgData.removeAll()
-        ppgConf.removeAll()
-        respData.removeAll()
-        respConf.removeAll()
+        signalBuffers.removeAll()
+        signalConfidences.removeAll()
         faceCoordinates.removeAll()
         faceConfidence.removeAll()
+        faceNote = nil
         lastEmittedTimestamp = -1.0
     }
     
-    /// Processes a new chunk of data from the API, aggregating it with history and returning the refined result.
-    ///
-    /// - Parameters:
-    ///   - chunk: The raw result chunk from the API.
-    ///   - mode: The desired output format for waveforms.
-    ///   - config: The model configuration (used for FPS fallback).
-    /// - Returns: A `VitalLensResult` containing the stitched waveforms and locally computed vital signs.
+    /// Processes a new chunk of data, aggregating it with history and deriving new vitals.
     public func process(
         chunk: VitalLensResult,
         mode: WaveformMode = .windowed(seconds: 10),
         config: ModelConfig?
     ) -> VitalLensResult {
         
-        // 1. Calculate Overlap based on Time
+        // 1. Merge Time & Calculate Overlap
         let overlapCount = mergeTimestamps(newTimes: chunk.time)
         
-        // 2. Merge Signals ("Soft Stitching")
-        if let ppg = chunk.vitalSigns.ppgWaveform {
-            ppgData.merge(data: ppg.data.map { Float($0) }, overlapCount: overlapCount)
-            ppgConf.merge(data: ppg.confidence.map { Float($0) }, overlapCount: overlapCount)
-        }
-        if let resp = chunk.vitalSigns.respiratoryWaveform {
-            respData.merge(data: resp.data.map { Float($0) }, overlapCount: overlapCount)
-            respConf.merge(data: resp.confidence.map { Float($0) }, overlapCount: overlapCount)
-        }
-        
-        // 3. Merge Face Data
+        // 2. Merge Face Data
         if let coords = chunk.face.coordinates, let conf = chunk.face.confidence {
+            faceNote = chunk.face.note
             let safeOverlap = min(overlapCount, coords.count)
             if coords.count > safeOverlap {
                 faceCoordinates.append(contentsOf: coords[safeOverlap...])
                 faceConfidence.append(contentsOf: conf[safeOverlap...])
             }
         } else {
-            // Pad if face data is missing but signal data exists (e.g., lost tracking)
+            // Pad if missing (e.g. pure signal model)
             let newFrames = chunk.time.count - overlapCount
             if newFrames > 0 {
                 faceCoordinates.append(contentsOf: Array(repeating: [], count: newFrames))
@@ -187,65 +133,160 @@ public actor VitalsEstimateManager {
             }
         }
         
-        // 4. Prune Internal History
+        // 3. Merge All Signals (Dynamic)
+        for (key, series) in chunk.signals {
+            // Ensure buffers exist
+            if signalBuffers[key] == nil {
+                signalBuffers[key] = SignalBuffer()
+                signalConfidences[key] = SignalBuffer()
+            }
+            
+            // Merge Data
+            signalBuffers[key]?.merge(data: series.data, overlapCount: overlapCount, unit: series.unit)
+            
+            // Merge Confidence
+            signalConfidences[key]?.merge(data: series.confidence, overlapCount: overlapCount, unit: nil)
+        }
+        
+        // 4. Prune History
         pruneInternalState(keeping: maxInternalHistory)
         
-        // 5. Calculate Effective FPS
-        // Must happen AFTER merge/prune to accurately reflect the current data window.
+        // 5. Calculate FPS
         let fps = calculateEffectiveFPS() ?? Float(config?.fpsTarget ?? 30.0)
         
-        // 6. Estimate Vitals
-        let computedVitals = estimateVitals(fps: fps)
+        // 6. Derive Vitals (Logic Engine)
+        let derivedSignals = performDerivations(fps: fps)
         
-        // 7. Construct Output
+        // 7. Construct Final Output
         return constructOutput(
             originalResult: chunk,
-            computedVitals: computedVitals,
+            derivedSignals: derivedSignals,
             mode: mode,
             fps: Double(fps)
         )
     }
     
-    // MARK: - Core Logic
+    // MARK: - Derivation Logic
     
-    /// Updates `timestamps` array and returns the number of frames in `newTimes` that overlap with existing history.
-    ///
-    /// - Parameter newTimes: The array of timestamps from the new API chunk.
-    /// - Returns: The number of frames at the start of `newTimes` that are already present in the history.
+    private func performDerivations(fps: Float) -> [String: TimeSeries] {
+        var results = [String: TimeSeries]()
+        
+        // We iterate through our buffers to see what source data we have
+        for (key, buffer) in signalBuffers {
+            let meta = VitalRegistry.shared.getMeta(for: key)
+            let data = buffer.computeAverage()
+            let conf = signalConfidences[key]?.computeAverage() ?? Array(repeating: 1.0, count: data.count)
+            
+            // 1. Always include the source waveform in the output
+            results[key] = TimeSeries(data: data, confidence: conf, unit: buffer.unit ?? meta.unit, note: nil)
+            
+            // 2. Perform Derivation based on Registry
+            switch meta.derivation {
+                
+            case .rateFromFFT:
+                // e.g. ppg_waveform -> heart_rate
+                // e.g. respiratory_waveform -> respiratory_rate
+                
+                if data.count >= minEstimationWindow,
+                   let bounds = meta.frequencyBounds,
+                   let rate = SignalOps.estimateRate(from: SignalOps.standardize(SignalOps.detrend(data, fs: fps)),
+                                                     fs: fps,
+                                                     minRate: Float(bounds.lowerBound),
+                                                     maxRate: Float(bounds.upperBound)) {
+                    
+                    let targetKey = key == "ppg_waveform" ? "heart_rate" : "respiratory_rate"
+                    let targetMeta = VitalRegistry.shared.getMeta(for: targetKey)
+                    let scalarConf = averageConfidence(conf)
+                    
+                    results[targetKey] = createScalarTimeSeries(value: rate, conf: scalarConf, count: data.count, unit: targetMeta.unit)
+                    
+                    // Special Case: HRV (only if source was PPG)
+                    if key == "ppg_waveform" && data.count >= minHRVWindow {
+                        calculateHRV(ppg: data, fps: fps, hr: rate, conf: scalarConf, count: data.count, into: &results)
+                    }
+                }
+                
+            case .average:
+                // e.g. sbp array -> sbp scalar (averaged over window)
+                if !data.isEmpty {
+                    let meanVal = data.reduce(0, +) / Float(data.count)
+                    let meanConf = averageConfidence(conf)
+                    
+                    // We overwrite the raw array with a "constant" array of the mean value.
+                    // This allows the UI to simply grab .latest.value and get the stable average,
+                    // while maintaining the TimeSeries contract.
+                    results[key] = createScalarTimeSeries(
+                        value: meanVal,
+                        conf: meanConf,
+                        count: data.count,
+                        unit: buffer.unit ?? meta.unit
+                    )
+                }
+                
+            case .latest, .none, .hrvStatistics:
+                break // Already handled or pass-through
+            }
+        }
+        
+        return results
+    }
+    
+    private func calculateHRV(ppg: [Float], fps: Float, hr: Float, conf: Float, count: Int, into results: inout [String: TimeSeries]) {
+        let clean = SignalOps.standardize(SignalOps.detrend(ppg, fs: fps))
+        let peaks = SignalOps.findPeaks(in: clean, fs: fps, hr: hr)
+        
+        if let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: fps) {
+            let meta = VitalRegistry.shared.getMeta(for: "hrv_sdnn")
+            results["hrv_sdnn"] = createScalarTimeSeries(value: Float(sdnn), conf: conf, count: count, unit: meta.unit)
+        }
+        
+        if let rmssd = SignalOps.calculateRMSSD(peaks: peaks, fs: fps) {
+            let meta = VitalRegistry.shared.getMeta(for: "hrv_rmssd")
+            results["hrv_rmssd"] = createScalarTimeSeries(value: Float(rmssd), conf: conf, count: count, unit: meta.unit)
+        }
+    }
+    
+    // Helper to create a TimeSeries that represents a single scalar value repeated across the timeline
+    // This maintains the "Everything is an array" contract while providing a value for every frame.
+    private func createScalarTimeSeries(value: Float, conf: Float, count: Int, unit: String) -> TimeSeries {
+        return TimeSeries(
+            data: Array(repeating: value, count: count),
+            confidence: Array(repeating: conf, count: count),
+            unit: unit,
+            note: "Derived locally"
+        )
+    }
+    
+    // MARK: - Helpers
+    
     private func mergeTimestamps(newTimes: [Double]) -> Int {
         guard !newTimes.isEmpty else { return 0 }
-        
         guard let lastTime = timestamps.last else {
             timestamps = newTimes
             return 0
         }
         
-        // Use an epsilon to prevent float equality issues (e.g. 1.0000001 vs 1.0)
-        // 0.005 is safe for FPS up to ~200 (frame time 0.005s)
         let epsilon = 0.005
-        
         if let firstNewIndex = newTimes.firstIndex(where: { $0 > (lastTime + epsilon) }) {
             let overlapCount = firstNewIndex
             let newSlice = newTimes[firstNewIndex...]
             timestamps.append(contentsOf: newSlice)
             return overlapCount
         } else {
-            // If all new times are effectively <= lastTime, it's all overlap
             return newTimes.count
         }
     }
     
-    /// Removes the oldest frames from all internal buffers to enforce the memory limit.
-    ///
-    /// - Parameter count: The maximum number of frames to retain.
     private func pruneInternalState(keeping count: Int) {
         if timestamps.count > count {
             let removeCount = timestamps.count - count
             timestamps.removeFirst(removeCount)
-            ppgData.prune(keepingLast: count)
-            ppgConf.prune(keepingLast: count)
-            respData.prune(keepingLast: count)
-            respConf.prune(keepingLast: count)
+            
+            // Prune all dynamic buffers
+            for key in signalBuffers.keys {
+                signalBuffers[key]?.prune(keepingLast: count)
+                signalConfidences[key]?.prune(keepingLast: count)
+            }
             
             if faceCoordinates.count > count {
                 faceCoordinates.removeFirst(faceCoordinates.count - count)
@@ -254,12 +295,8 @@ public actor VitalsEstimateManager {
         }
     }
     
-    /// Calculates the effective frame rate based on the timestamps in the current history window.
-    ///
-    /// - Returns: The calculated FPS, or `nil` if insufficient history is available.
     private func calculateEffectiveFPS() -> Float? {
         guard timestamps.count >= 2 else { return nil }
-        // Use last ~2 seconds (60 frames) for FPS calculation to be responsive to recent drifts
         let window = min(timestamps.count, 60)
         let slice = timestamps.suffix(window)
         guard let first = slice.first, let last = slice.last, last > first else { return nil }
@@ -268,70 +305,6 @@ public actor VitalsEstimateManager {
         return Float(frames / duration)
     }
     
-    // MARK: - Estimation
-    
-    /// Computes vital signs from the current internal signal history.
-    ///
-    /// - Parameter fps: The sampling frequency to use for FFT and time-domain calculations.
-    /// - Returns: A `VitalSigns` struct containing the computed metrics.
-    private func estimateVitals(fps: Float) -> VitalSigns {
-        let currentPPG = ppgData.computeAverage()
-        let currentResp = respData.computeAverage()
-        
-        var hrMetric: ScalarMetric?
-        var rrMetric: ScalarMetric?
-        var sdnnMetric: ScalarMetric?
-        var rmssdMetric: ScalarMetric?
-        
-        // --- Heart Rate ---
-        if currentPPG.count >= minEstimationWindow {
-            let clean = SignalOps.detrend(currentPPG, fs: fps)
-            let std = SignalOps.standardize(clean)
-            
-            if let hr = SignalOps.estimateRate(from: std, fs: fps, minRate: 40, maxRate: 240) {
-                let conf = averageConfidence(ppgConf.computeAverage())
-                hrMetric = ScalarMetric(value: Double(hr), unit: "bpm", confidence: Double(conf), note: nil)
-                
-                // --- HRV ---
-                if currentPPG.count >= minHRVWindow {
-                    let peaks = SignalOps.findPeaks(in: std, fs: fps, hr: hr)
-                    if let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: fps) {
-                        sdnnMetric = ScalarMetric(value: sdnn, unit: "ms", confidence: Double(conf), note: nil)
-                    }
-                    if let rmssd = SignalOps.calculateRMSSD(peaks: peaks, fs: fps) {
-                        rmssdMetric = ScalarMetric(value: rmssd, unit: "ms", confidence: Double(conf), note: nil)
-                    }
-                }
-            }
-        }
-        
-        // --- Respiratory Rate ---
-        if currentResp.count >= minEstimationWindow {
-            let clean = SignalOps.detrend(currentResp, fs: fps, cutoff: 0.1)
-            let std = SignalOps.standardize(clean)
-            
-            if let rr = SignalOps.estimateRate(from: std, fs: fps, minRate: 6, maxRate: 60) {
-                let conf = averageConfidence(respConf.computeAverage())
-                rrMetric = ScalarMetric(value: Double(rr), unit: "rpm", confidence: Double(conf), note: nil)
-            }
-        }
-        
-        // Note: Waveforms are filled in `constructOutput`, not here.
-        return VitalSigns(
-            heartRate: hrMetric,
-            respiratoryRate: rrMetric,
-            hrvSdnn: sdnnMetric,
-            hrvRmssd: rmssdMetric,
-            hrvLfhf: nil,
-            ppgWaveform: nil,
-            respiratoryWaveform: nil
-        )
-    }
-    
-    /// Computes the arithmetic mean of a confidence array.
-    ///
-    /// - Parameter confs: An array of confidence scores.
-    /// - Returns: The average confidence (0.0 if empty).
     private func averageConfidence(_ confs: [Float]) -> Float {
         guard !confs.isEmpty else { return 0 }
         return confs.reduce(0, +) / Float(confs.count)
@@ -339,123 +312,77 @@ public actor VitalsEstimateManager {
     
     // MARK: - Output Construction
     
-    /// Builds the final `VitalLensResult` by slicing the internal buffers according to the requested mode.
-    ///
-    /// - Parameters:
-    ///   - originalResult: The result received from the API (used for metadata).
-    ///   - computedVitals: The vital signs calculated locally.
-    ///   - mode: The waveform output mode requested by the caller.
-    ///   - fps: The effective FPS used for calculations.
-    /// - Returns: The fully assembled result object.
     private func constructOutput(
         originalResult: VitalLensResult,
-        computedVitals: VitalSigns,
+        derivedSignals: [String: TimeSeries],
         mode: WaveformMode,
         fps: Double
     ) -> VitalLensResult {
         
-        // 1. Determine Output Range based on Mode
         let totalFrames = timestamps.count
         var startIndex: Int = 0
         
+        // Calculate Slicing Index
         switch mode {
         case .complete:
             startIndex = 0
-            
         case .windowed(let seconds):
             let windowFrames = Int(seconds * fps)
             startIndex = max(0, totalFrames - windowFrames)
-            
         case .incremental:
-            // Find the first index where timestamp > lastEmitted
             if let idx = timestamps.firstIndex(where: { $0 > lastEmittedTimestamp }) {
                 startIndex = idx
             } else {
-                startIndex = totalFrames // No new data
+                startIndex = totalFrames
             }
-            // Update cursor
             if let last = timestamps.last {
                 lastEmittedTimestamp = last
             }
         }
         
-        // 2. Slice Data
-        let sliceRange = startIndex..<totalFrames
-        let sliceTime = Array(timestamps[sliceRange])
-        
-        // Get aggregated signals
-        let fullPPG = ppgData.computeAverage()
-        let fullResp = respData.computeAverage()
-        let fullPPGConf = ppgConf.computeAverage()
-        let fullRespConf = respConf.computeAverage()
-        
-        func safeSlice(_ array: [Float]) -> [Double] {
+        // Helper Slicers
+        func sliceDouble(_ array: [Double]) -> [Double] {
             guard startIndex < array.count else { return [] }
-            let end = min(array.count, totalFrames)
-            guard startIndex < end else { return [] }
-            return array[startIndex..<end].map { Double($0) }
+            return Array(array[startIndex...])
         }
         
-        let slicePPGData = safeSlice(fullPPG)
-        let slicePPGConf = safeSlice(fullPPGConf)
-        let sliceRespData = safeSlice(fullResp)
-        let sliceRespConf = safeSlice(fullRespConf)
-        
-        func safeSliceCoords(_ array: [[Double]]) -> [[Double]] {
+        func sliceFloat(_ array: [Float]) -> [Float] {
             guard startIndex < array.count else { return [] }
-            let end = min(array.count, totalFrames)
-            guard startIndex < end else { return [] }
-            return Array(array[startIndex..<end])
+            return Array(array[startIndex...])
         }
         
-        func safeSliceFaceConf(_ array: [Double]) -> [Double] {
+        func sliceCoords(_ array: [[Double]]) -> [[Double]] {
             guard startIndex < array.count else { return [] }
-            let end = min(array.count, totalFrames)
-            guard startIndex < end else { return [] }
-            return Array(array[startIndex..<end])
+            return Array(array[startIndex...])
         }
         
-        let sliceFaceCoords = safeSliceCoords(faceCoordinates)
-        let sliceFaceConf = safeSliceFaceConf(faceConfidence)
+        // Slice Metadata
+        let sliceTime = sliceDouble(timestamps)
+        let sliceFaceCoords = sliceCoords(faceCoordinates)
+        let sliceFaceConf = sliceDouble(faceConfidence)
         
-        // 3. Assemble Final Result
-        let finalPPG = WaveformMetric(
-            data: slicePPGData,
-            unit: "unitless",
-            confidence: slicePPGConf,
-            note: originalResult.vitalSigns.ppgWaveform?.note
-        )
+        // Slice Signals
+        var finalSignals = [String: TimeSeries]()
         
-        let finalResp = WaveformMetric(
-            data: sliceRespData,
-            unit: "unitless",
-            confidence: sliceRespConf,
-            note: originalResult.vitalSigns.respiratoryWaveform?.note
-        )
-        
-        let finalVitals = VitalSigns(
-            heartRate: computedVitals.heartRate,
-            respiratoryRate: computedVitals.respiratoryRate,
-            hrvSdnn: computedVitals.hrvSdnn,
-            hrvRmssd: computedVitals.hrvRmssd,
-            hrvLfhf: computedVitals.hrvLfhf,
-            ppgWaveform: finalPPG,
-            respiratoryWaveform: finalResp
-        )
-        
-        let finalFace = FaceData(
-            coordinates: sliceFaceCoords,
-            confidence: sliceFaceConf,
-            note: originalResult.face.note
-        )
+        for (key, series) in derivedSignals {
+            let slicedData = sliceFloat(series.data)
+            let slicedConf = sliceFloat(series.confidence)
+            
+            if !slicedData.isEmpty {
+                finalSignals[key] = TimeSeries(
+                    data: slicedData,
+                    confidence: slicedConf,
+                    unit: series.unit,
+                    note: series.note
+                )
+            }
+        }
         
         return VitalLensResult(
-            face: finalFace,
-            vitalSigns: finalVitals,
+            face: FaceData(coordinates: sliceFaceCoords, confidence: sliceFaceConf, note: faceNote),
+            signals: finalSignals,
             time: sliceTime,
-            displayTime: originalResult.displayTime,
             fps: fps,
-            estFps: originalResult.estFps,
             modelUsed: originalResult.modelUsed,
             state: originalResult.state,
             message: originalResult.message

@@ -1,216 +1,75 @@
 # vitallens-ios
 
 <div align="center">
-<a href="https://www.rouast.com/api/">
-<img src="https://raw.githubusercontent.com/Rouast-Labs/vitallens.js/main/assets/logo.svg" alt="VitalLens API Logo" height="80px" width="80px"/>
-</a>
-
-<strong>
-Estimate vital signs such as heart rate, HRV, and respiratory rate from face video in Swift.
-</strong>
+  <a href="https://www.rouast.com/api/">
+    <img src="https://raw.githubusercontent.com/Rouast-Labs/vitallens.js/main/assets/logo.svg" alt="VitalLens API Logo" height="80px" width="80px"/>
+  </a>
+  <h3>VitalLens API Client for iOS</h3>
+  <p>Estimate vital signs such as heart rate, HRV, and respiratory rate from face video in Swift.</p>
 </div>
 
-`vitallens-ios` is the official Swift SDK for the **[VitalLens API](https://www.rouast.com/api/)**. It allows you to integrate physiological sensing into your iOS apps using just the device camera or existing video files.
-
-> **Note:** This library is a "Pure API" client. It handles the complexity of face detection, video processing, and real-time streaming efficiency on-device, but the core estimation logic runs on the VitalLens Cloud API.
+`vitallens-ios` is the official Swift SDK for the **[VitalLens API](https://www.rouast.com/api/)**. It provides a modular, high-performance toolset for integrating physiological sensing into iOS applications using `async`/`await` and the Vision framework.
 
 ## Features
 
-* **⚡️ Native Performance:** Built with Swift Concurrency (`async`/`await`), **Vision Framework**, and **Accelerate** for highly efficient, battery-friendly face detection and frame processing.
-* **📱 Drop-in UI Components:** Ready-made SwiftUI views for 30-second scans or continuous monitoring.
-* **🛠 Flexible Core API:** Full access to the raw data stream for building custom UIs.
-* **📂 File Support:** Process pre-recorded videos from the Photo Library or local file system.
-* **🔒 Privacy-First:** Face detection and cropping happen *on-device*. Only the cropped face region is sent to the API.
-
----
+- **⚡️ Native Performance:** Uses **Accelerate (vDSP)** for efficient on-device signal processing.
+- **📱 Drop-in UI:** Ready-made SwiftUI views (`VitalLensUI`) for instant scanning or monitoring.
+- **🔌 Pluggable Inference:** Built on the `InferenceStrategy` pattern, allowing you to swap backends (Remote API vs. Local CoreML) easily.
+- **🔒 Privacy-First:** Face detection and cropping happen *on-device*. Full-frame video is never streamed to the cloud.
 
 ## Installation
 
-### Swift Package Manager (SPM)
+### Swift Package Manager
 
-Add `vitallens-ios` to your project via Xcode:
+Add the package via Xcode or your `Package.swift`:
 
-1. Go to **File > Add Packages...**
-2. Enter the repository URL: `https://github.com/Rouast-Labs/vitallens-ios.git`
-3. Select **Up to Next Major Version** (e.g., `1.0.0`).
+1. **Repository URL:** `https://github.com/Rouast-Labs/vitallens-ios.git`
+2. **Version:** Up to Next Major (e.g., `1.0.0`)
 
-Import the module in your code:
+Select the targets you need:
 
-```swift
-import VitalLens
+- `VitalLens`: Main client logic.
+- `VitalLensUI`: Pre-built SwiftUI views (Recommended).
+- `VitalLensCore`: Pure logic/math (No Camera dependencies).
 
-```
+## Quickstart
 
----
-
-## Usage Guide
-
-You can use VitalLens in two ways:
-
-1. **Drop-in UI:** Use our pre-built SwiftUI views for instant integration.
-2. **Core API:** Use `VitalLens` to build your own custom interface.
-
-### Option 1: Drop-in UI Components
-
-If you want a standard "Scan" or "Monitor" experience without writing camera code, use these SwiftUI components.
-
-#### ⏱️ VitalLensScanView (30-second Scan)
-
-A guided experience that prompts the user to position their face, performs a 30-second measurement, and returns the final result.
+The fastest way to get started is using the **30-second Scan** component.
 
 ```swift
 import SwiftUI
 import VitalLens
+import VitalLensUI
 
-struct MyScanScreen: View {
-    @State private var scanResult: VitalLensResult?
-    
+struct ScanView: View {
     var body: some View {
         VitalLensScanView(
             apiKey: "YOUR_API_KEY",
-            method: .vitalLens2 // Enables HRV
+            method: .vitalLens2
         ) { result in
-            // Called when the 30-second scan is complete
-            print("Heart Rate: \(result.vitalSigns.heartRate?.value ?? 0)")
-            self.scanResult = result
-        }
-    }
-}
-
-```
-
-#### 📈 VitalLensMonitorView (Continuous)
-
-A continuous monitoring widget that shows live graphs and values. Useful for wellness dashboards or fitness tracking.
-
-```swift
-VitalLensMonitorView(
-    apiKey: "YOUR_API_KEY",
-    showWaveforms: true // Toggles real-time PPG chart
-)
-
-```
-
----
-
-### Option 2: Core API (Custom UI)
-
-Use the `VitalLens` controller to manage the camera and API connection.
-
-```swift
-// 1. Configure the client
-let client = VitalLens(
-    apiKey: "YOUR_API_KEY",
-    method: .vitalLens2
-)
-
-// 2. Start the stream (inside an async context)
-// 'previewView' is a standard UIView in your storyboard or SwiftUI wrapper
-func startSession(in previewView: UIView) async {
-    do {
-        let stream = try await client.startStream(preview: previewView)
-        
-        for await result in stream {
-            if let hr = result.vitalSigns.heartRate {
-                print("Live HR: \(hr.value ?? 0) bpm")
+            // Handle results (e.g., save to HealthKit)
+            if let hr = result.heartRate?.latest?.value {
+                print("Heart Rate: \(hr) bpm")
             }
         }
-    } catch {
-        print("Stream error: \(error)")
     }
 }
-
-// 3. Stop the session
-client.stopStream()
-
 ```
 
-#### 3. Analyzing a Video File
+## Documentation
 
-You can also process existing video files (e.g., from the Camera Roll). This mimics the behavior of the API's `/file` endpoint but handles the chunking and uploading for you.
-
-```swift
-func analyzeVideo(url: URL) async {
-    do {
-        let result = try await client.processVideoFile(at: url)
-        
-        print("Average HR: \(result.vitalSigns.heartRate?.value ?? 0)")
-        print("SDNN: \(result.vitalSigns.hrvSdnn?.value ?? 0) ms")
-    } catch {
-        print("Analysis failed: \(error)")
-    }
-}
-
-```
-
----
-
-## Configuration Options
-
-When initializing `VitalLensController` or the UI components, you can pass a `VitalLensConfiguration` struct or individual parameters:
-
-| Parameter | Type | Description | Default |
-| --- | --- | --- | --- |
-| `apiKey` | `String` | Your VitalLens API Key. | `nil` |
-| `method` | `Method` | `.vitalLens` (Auto), `.vitalLens2` (HRV), etc. | `.vitalLens` |
-| `faceDetectionFrequency` | `Double` | How often (Hz) to run the Vision face detector. | `1.0` |
-| `proxyUrl` | `URL?` | Optional URL to your backend proxy (to hide API keys). | `nil` |
-
-### Methods (`VitalLens.Method`)
-
-* `.vitalLens` (Recommended): Automatically selects the best model for your plan.
-* `.vitalLens2`: Forces VitalLens 2.0 (High accuracy, HRV supported).
-* `.vitalLens1`: Forces VitalLens 1.0 (Standard accuracy).
-
----
+- **[SwiftUI Views](https://docs.rouast.com/ios/views):** Drop-in SwiftUI views for scanning and monitoring.
+- **[Examples](https://docs.rouast.com/ios/examples):** How to analyze files or build custom camera loops.
+- **[Core & Advanced](https://docs.rouast.com/ios/core):** Using `SignalOps`, `InferenceStrategy`, and math utilities directly.
+- **[Proxies & Security](https://docs.rouast.com/ios/proxies):** How to keep your API keys safe.
+- **[API Reference](https://docs.rouast.com/ios/ref):** Detailed class and method documentation.
 
 ## Requirements
 
 * **iOS 15.0+**
-* **Camera Permission:** You must add `NSCameraUsageDescription` to your app's `Info.plist` to use the live scanning features.
-
-## Security & Best Practices
-
-### API Keys
-
-Avoid hardcoding your API key in your shipping app.
-
-* **Recommended:** Use a backend proxy. Set `proxyUrl` in the `VitalLensController` configuration to point to your server. Your server adds the `x-api-key` header and forwards the request to `https://api.rouast.com`.
-
-### Privacy
-
-* **On-Device Processing:** This library uses Apple's **Vision Framework** to detect faces locally on the device.
-* **Data Minimization:** Only the cropped region of interest (ROI) containing the face is transmitted to the API. Full-frame video is never uploaded.
-
-## Advanced: Signal Processing Utilities
-
-`vitallens-ios` exposes its high-performance, vDSP-based signal processing engine via `SignalOps`. This allows you to perform physiological signal analysis on your own data arrays (e.g. from local inference models or other sources) without using the API client.
-
-All methods are stateless and use Apple's **Accelerate** framework for efficiency.
-
-### Available Primitives
-
-```swift
-import VitalLens
-
-// 1. Preprocessing
-let cleanSignal = SignalOps.detrend(rawPPG, fs: 30.0)
-let standardized = SignalOps.standardize(cleanSignal)
-
-// 2. Heart Rate Estimation (FFT)
-if let heartRate = SignalOps.estimateRate(from: cleanSignal, fs: 30.0, minRate: 40, maxRate: 240) {
-    print("HR: \(heartRate) bpm")
-}
-
-// 3. HRV Analysis
-// Detect peaks using adaptive Z-score thresholding
-let peaks = SignalOps.findPeaks(in: cleanSignal, fs: 30.0, hr: heartRate)
-
-// Calculate metrics
-if let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: 30.0) {
-    print("SDNN: \(sdnn) ms")
-}
+* **macOS 13.0+** (Core only)
+* **Camera Permission:** Add `NSCameraUsageDescription` to your `Info.plist`.
 
 ## License
 
-MIT License. See [LICENSE](https://www.google.com/search?q=LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.

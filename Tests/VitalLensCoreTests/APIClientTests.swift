@@ -143,6 +143,25 @@ final class APIClientTests: XCTestCase {
             model: "vitallens-2.0"
         )
     }
+
+    func testStrategyConformance() async throws {
+        // Ensure APIClient satisfies the InferenceStrategy protocol requirements at runtime
+        let strategy: InferenceStrategy = APIClient(apiKey: "test", proxyURL: nil, session: session)
+        
+        MockURLProtocol.requestHandler = { request in
+            let json = """
+            {
+                "resolved_model": "vitallens-2.0",
+                "config": { "n_inputs": 8, "input_size": 40, "fps_target": 30.0, "roi_method": "face", "supported_vitals": [] }
+            }
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        
+        let config = try await strategy.resolveConfig()
+        XCTAssertEqual(config.nInputs, 8)
+        XCTAssertEqual(config.inputSize, 40)
+    }
     
     // MARK: - Helpers
     

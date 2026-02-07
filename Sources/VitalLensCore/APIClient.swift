@@ -176,3 +176,15 @@ public actor APIClient {
         }
     }
 }
+
+extension APIClient: InferenceStrategy {
+    
+    public func resolveConfig() async throws -> ModelConfig {
+        let response = try await self.resolveModel(requestedModel: nil)
+        return response.config
+    }
+    
+    public func process(frames: Data, state: [Float]?, meta: [String : String]) async throws -> VitalLensResult {
+        return try await self.sendStreamBatch(rawRGBBytes: frames, state: state, model: nil)
+    }
+}

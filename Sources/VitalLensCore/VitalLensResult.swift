@@ -1,74 +1,118 @@
 import Foundation
 import CoreGraphics
 
-// MARK: - Top Level Result
-
-/// The primary response object returned by the VitalLens API.
-///
-/// This structure contains all estimation data for a processed video chunk, including
-/// face detection results, vital sign estimates, and temporal information.
+/// The raw output from an inference strategy (API or CoreML).
+/// All physiological data is represented as time-series arrays matching the frame count.
 public struct VitalLensResult: Codable, Sendable {
     
-    /// Face detection metadata for the processed video frames.
     public let face: FaceData
     
-    /// A collection of estimated vital signs, including both scalar metrics and waveforms.
-    public let vitalSigns: VitalSigns
+    /// The map of all raw signals returned by the model.
+    /// Key: Signal ID (e.g., "ppg_waveform", "respiratory_waveform", "sbp", "spo2")
+    /// Value: Time-series data
+    public let signals: [String: TimeSeries]
     
-    /// The timestamps corresponding to each processed frame (in seconds).
+    // Metadata
     public let time: [Double]
-    
-    /// A suggested display timestamp for synchronization in real-time UI applications.
-    public let displayTime: Double?
-    
-    /// The detected frame rate of the input video.
     public let fps: Double?
-    
-    /// The effective frame rate used for inference (estimation FPS).
-    public let estFps: Double?
-    
-    /// The identifier of the specific model version used for inference (e.g., "vitallens-2.0").
     public let modelUsed: String?
-    
-    /// The internal Recurrent Neural Network (RNN) state.
-    /// This property is populated during streaming to allow state continuity between API calls.
-    public let state: StateData?
-    
-    /// Additional informational messages or warnings from the API.
+    public let state: StateData? // For RNN continuity
     public let message: String?
+
+    // MARK: - Computed Convenience Accessors
+    // These helpers allow strongly-typed access to known core signals while keeping the structure dynamic.
+    
+    public var ppg: TimeSeries? { signals["ppg_waveform"] }
+    public var resp: TimeSeries? { signals["respiratory_waveform"] }
+    
+    // Future-proofing examples (these return nil if not present in 'signals')
+    public var sbp: TimeSeries? { signals["sbp"] }
+    public var dbp: TimeSeries? { signals["dbp"] }
+    public var spo2: TimeSeries? { signals["spo2"] }
 
     public init(
         face: FaceData,
-        vitalSigns: VitalSigns,
+        signals: [String: TimeSeries],
         time: [Double],
-        displayTime: Double? = nil,
         fps: Double? = nil,
-        estFps: Double? = nil,
         modelUsed: String? = nil,
         state: StateData? = nil,
         message: String? = nil
     ) {
         self.face = face
-        self.vitalSigns = vitalSigns
+        self.signals = signals
         self.time = time
-        self.displayTime = displayTime
         self.fps = fps
-        self.estFps = estFps
         self.modelUsed = modelUsed
         self.state = state
         self.message = message
     }
     
-    enum CodingKeys: String, CodingKey {
-        case face
-        case vitalSigns = "vital_signs"
-        case time
-        case displayTime
-        case fps
-        case estFps
-        case modelUsed = "model_used"
-        case state
-        case message
+    // MARK: - Dynamic Decoding
+    
+    struct DynamicKey: CodingKey {
+        var stringValue: String
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { return nil }
+        init?(intValue: Int) { return nil }
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        
+        // Decode standard fields
+        self.face = try container.decode(FaceData.self, forKey: DynamicKey(stringValue: "face")!)
+        self.time = try container.decode([Double].self, forKey: DynamicKey(stringValue: "time")!)
+        self.fps = try container.decodeIfPresent(Double.self, forKey: DynamicKey(stringValue: "fps")!)
+        self.modelUsed = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "model_used")!)
+        self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
+        self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
+        
+        // Dynamic Signal Decoding
+        // We look inside the "vital_signs" container
+        let vitalsContainer = try container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
+        
+        var tempSignals = [String: TimeSeries]()
+        
+        for key in vitalsContainer.allKeys {
+            // We assume everything inside 'vital_signs' conforms to the TimeSeries structure
+            if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
+                tempSignals[key.stringValue] = signal
+            }
+        }
+        
+        self.signals = tempSignals
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: DynamicKey.self)
+        try container.encode(face, forKey: DynamicKey(stringValue: "face")!)
+        try container.encode(time, forKey: DynamicKey(stringValue: "time")!)
+        try container.encodeIfPresent(fps, forKey: DynamicKey(stringValue: "fps")!)
+        try container.encodeIfPresent(modelUsed, forKey: DynamicKey(stringValue: "model_used")!)
+        try container.encodeIfPresent(state, forKey: DynamicKey(stringValue: "state")!)
+        try container.encodeIfPresent(message, forKey: DynamicKey(stringValue: "message")!)
+        
+        var vitalsContainer = container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
+        for (key, value) in signals {
+            try vitalsContainer.encode(value, forKey: DynamicKey(stringValue: key)!)
+        }
+    }
+}
+
+/// Represents a raw time-series signal from the model.
+/// Contains one value and one confidence score per frame.
+public struct TimeSeries: Codable, Sendable {
+    public let data: [Float]
+    public let confidence: [Float]
+    public let unit: String?
+    public let note: String?
+    
+    public init(data: [Float], confidence: [Float], unit: String?, note: String?) {
+        self.data = data
+        self.confidence = confidence
+        self.unit = unit
+        self.note = note
     }
 }
 
@@ -104,67 +148,6 @@ public struct FaceData: Codable, Sendable {
     }
 }
 
-// MARK: - Vital Signs
-
-/// A container for all physiological metrics estimated by the model.
-public struct VitalSigns: Codable, Sendable {
-    
-    // MARK: Scalar Metrics
-    
-    /// The estimated heart rate in beats per minute (BPM).
-    public let heartRate: ScalarMetric?
-    
-    /// The estimated respiratory rate in breaths per minute (RPM).
-    public let respiratoryRate: ScalarMetric?
-    
-    // MARK: HRV Metrics
-    
-    /// Heart Rate Variability: Standard Deviation of NN intervals (SDNN).
-    public let hrvSdnn: ScalarMetric?
-    
-    /// Heart Rate Variability: Root Mean Square of Successive Differences (RMSSD).
-    public let hrvRmssd: ScalarMetric?
-    
-    /// Heart Rate Variability: Ratio of Low Frequency to High Frequency power (LF/HF).
-    public let hrvLfhf: ScalarMetric?
-    
-    // MARK: Waveforms
-    
-    /// The photoplethysmogram (PPG) signal waveform.
-    public let ppgWaveform: WaveformMetric?
-    
-    /// The respiratory signal waveform.
-    public let respiratoryWaveform: WaveformMetric?
-
-    public init(
-        heartRate: ScalarMetric?,
-        respiratoryRate: ScalarMetric?,
-        hrvSdnn: ScalarMetric?,
-        hrvRmssd: ScalarMetric?,
-        hrvLfhf: ScalarMetric?,
-        ppgWaveform: WaveformMetric?,
-        respiratoryWaveform: WaveformMetric?
-    ) {
-        self.heartRate = heartRate
-        self.respiratoryRate = respiratoryRate
-        self.hrvSdnn = hrvSdnn
-        self.hrvRmssd = hrvRmssd
-        self.hrvLfhf = hrvLfhf
-        self.ppgWaveform = ppgWaveform
-        self.respiratoryWaveform = respiratoryWaveform
-    }
-    
-    enum CodingKeys: String, CodingKey {
-        case heartRate = "heart_rate"
-        case respiratoryRate = "respiratory_rate"
-        case hrvSdnn = "hrv_sdnn"
-        case hrvRmssd = "hrv_rmssd"
-        case hrvLfhf = "hrv_lfhf"
-        case ppgWaveform = "ppg_waveform"
-        case respiratoryWaveform = "respiratory_waveform"
-    }
-}
-
 // MARK: - Helper Types
 
 /// Encapsulates the Recurrent Neural Network (RNN) state.
@@ -185,48 +168,36 @@ public struct StateData: Codable, Sendable {
     }
 }
 
-/// Represents a single scalar value measurement (e.g., Heart Rate).
-public struct ScalarMetric: Codable, Sendable {
-    
-    /// The numeric value of the metric.
-    public let value: Double?
-    
-    /// The unit of measurement (e.g., "bpm", "ms").
+// MARK: - UI Compatibility Helpers
+
+/// A lightweight scalar representation for UI consumption.
+public struct ScalarResult: Sendable {
+    public let value: Double
+    public let confidence: Double
     public let unit: String
-    
-    /// The confidence score of the estimation (0.0 - 1.0).
-    public let confidence: Double?
-    
-    /// Additional context or warnings about the measurement.
-    public let note: String?
-    
-    public init(value: Double?, unit: String, confidence: Double?, note: String?) {
-        self.value = value
-        self.unit = unit
-        self.confidence = confidence
-        self.note = note
+}
+
+public extension TimeSeries {
+    /// Returns the most recent value from the time series as a scalar.
+    var latest: ScalarResult? {
+        guard let val = data.last, let conf = confidence.last else { return nil }
+        return ScalarResult(
+            value: Double(val),
+            confidence: Double(conf),
+            unit: unit ?? ""
+        )
     }
 }
 
-/// Represents a time-series waveform measurement (e.g., PPG signal).
-public struct WaveformMetric: Codable, Sendable {
+public extension VitalLensResult {
+    // These helpers allow the UI to access "heartRate.latest.value" 
+    // mimicking the old "heartRate.value" behavior.
     
-    /// The array of signal values.
-    public let data: [Double]
+    var heartRate: TimeSeries? { signals["heart_rate"] }
+    var respiratoryRate: TimeSeries? { signals["respiratory_rate"] }
+    var hrvSdnn: TimeSeries? { signals["hrv_sdnn"] }
+    var hrvRmssd: TimeSeries? { signals["hrv_rmssd"] }
     
-    /// The unit of measurement (usually "unitless" for normalized signals).
-    public let unit: String
-    
-    /// The confidence score for each data point in the waveform.
-    public let confidence: [Double]
-    
-    /// Additional context about the waveform.
-    public let note: String?
-    
-    public init(data: [Double], unit: String, confidence: [Double], note: String?) {
-        self.data = data
-        self.unit = unit
-        self.confidence = confidence
-        self.note = note
-    }
+    var ppgWaveform: TimeSeries? { signals["ppg_waveform"] }
+    var respiratoryWaveform: TimeSeries? { signals["respiratory_waveform"] }
 }

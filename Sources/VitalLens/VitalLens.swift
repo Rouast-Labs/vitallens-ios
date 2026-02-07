@@ -14,14 +14,9 @@ public final class VitalLens: @unchecked Sendable {
         case vitalLens2 = "vitallens-2.0"
         case vitalLens1_1 = "vitallens-1.1"
         case vitalLens1 = "vitallens-1.0"
-        
-        public var supportsHRV: Bool {
-            switch self {
-            case .vitalLens, .vitalLens2: return true
-            default: return false
-            }
-        }
     }
+
+    private var streamProcessor: StreamProcessor?
     
     // MARK: - Configuration
     public let apiKey: String?
@@ -29,10 +24,6 @@ public final class VitalLens: @unchecked Sendable {
     public let proxyURL: URL?
     public let faceDetectionFrequency: Double
     public let globalROI: CGRect?
-    
-    // MARK: - Internal Dependencies
-    // We keep the processor alive as long as the client exists or until stopped.
-    private var streamProcessor: StreamProcessor?
     
     // MARK: - Initialization
     
@@ -66,9 +57,14 @@ public final class VitalLens: @unchecked Sendable {
     /// - Parameter preview: An optional UIView where the camera feed should be rendered.
     /// - Returns: An AsyncStream of `VitalLensResult` updates.
     public func startStream(preview: UIView? = nil) async throws -> AsyncStream<VitalLensResult> {
-        // Initialize the processor if needed
+        
         if streamProcessor == nil {
-            streamProcessor = StreamProcessor(apiKey: apiKey, proxyURL: proxyURL)
+            // Wiring: Create the API Strategy
+            let apiClient = APIClient(apiKey: apiKey, proxyURL: proxyURL)
+            // Note: You might want to pass the 'method' to the strategy here if APIClient supports it
+            
+            // Inject strategy into processor
+            streamProcessor = StreamProcessor(strategy: apiClient)
         }
         
         guard let processor = streamProcessor else {
