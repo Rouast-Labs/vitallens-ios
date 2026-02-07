@@ -2,287 +2,239 @@ import Foundation
 import Accelerate
 
 /// A collection of stateless signal processing primitives using vDSP.
-/// These functions are public and can be used independently of the API client.
+/// Optimized for x86_64 and ARM64 to prevent SIGILL by ensuring memory alignment
+/// and avoiding dangerous floating-point instructions in loops.
 public struct SignalOps {
 
     // MARK: - Constants
-
-    /// FFT Size must be a power of 2. 4096 provides high resolution for HR/RR.
     public static let nfft = 4096
 
-    // Shared FFT Setup. Thread-safe if used read-only.
-    nonisolated(unsafe) static let fftSetup: vDSP.FFT<DSPSplitComplex>? = {
-        let log2n = vDSP_Length(floor(log2(Float(nfft))))
+    /// Thread-safe, lazy FFT setup to prevent illegal instructions during static initialization.
+    nonisolated(unsafe) private static let fftProvider: vDSP.FFT<DSPSplitComplex>? = {
+        let log2n = vDSP_Length(log2(Double(nfft)))
         return vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self)
     }()
 
     // MARK: - 1. Preprocessing
 
-    /// Standardizes the signal to zero mean and unit variance.
     public static func standardize(_ signal: [Float]) -> [Float] {
         guard !signal.isEmpty else { return [] }
+        let count = signal.count
         
-        var mu: Float = 0
-        var sigma: Float = 0
+        var mean: Float = 0
+        vDSP_meanv(signal, 1, &mean, vDSP_Length(count))
         
-        vDSP_normalize(signal, 1, nil, 1, &mu, &sigma, vDSP_Length(signal.count))
+        var stdDev: Float = 0
+        vDSP_normalize(signal, 1, nil, 1, &mean, &stdDev, vDSP_Length(count))
         
-        if sigma < 1e-6 {
-            return [Float](repeating: 0.0, count: signal.count)
+        if stdDev < 1e-6 || stdDev.isNaN {
+            return [Float](repeating: 0.0, count: count)
         }
         
-        var result = [Float](repeating: 0, count: signal.count)
-        vDSP_normalize(signal, 1, &result, 1, &mu, &sigma, vDSP_Length(signal.count))
+        var result = [Float](repeating: 0, count: count)
+        var negMean = -mean
+        var invStdDev = 1.0 / stdDev
+        
+        vDSP_vsadd(signal, 1, &negMean, &result, 1, vDSP_Length(count))
+        vDSP_vsmul(result, 1, &invStdDev, &result, 1, vDSP_Length(count))
         
         return result
     }
 
-    /// Detrends a signal using a zero-phase high-pass IIR filter.
-    /// Runs the filter forward and backward to eliminate phase shift.
-    ///
-    /// - Parameters:
-    ///   - signal: The input waveform.
-    ///   - fs: Sampling frequency.
-    ///   - cutoff: Cutoff frequency (default 0.5Hz for PPG).
     public static func detrend(_ signal: [Float], fs: Float, cutoff: Float = 0.5) -> [Float] {
         guard signal.count > 1 else { return signal }
-        
-        // Forward pass
         let forward = efficientDetrend(signal, fs: fs, cutoff: cutoff)
-        
-        // Reverse
-        let reversed = Array(forward.reversed())
-        
-        // Backward pass
-        let backward = efficientDetrend(reversed, fs: fs, cutoff: cutoff)
-        
-        // Final reverse
+        let backward = efficientDetrend(forward.reversed(), fs: fs, cutoff: cutoff)
         return Array(backward.reversed())
     }
 
-    private static func efficientDetrend(_ signal: [Float], fs: Float, cutoff: Float) -> [Float] {
+    private static func efficientDetrend<S: Sequence>(_ signal: S, fs: Float, cutoff: Float) -> [Float] where S.Element == Float {
         let dt = 1.0 / fs
         let rc = 1.0 / (2.0 * Float.pi * cutoff)
         let alpha = rc / (rc + dt)
         
-        var output = [Float](repeating: 0, count: signal.count)
-        output[0] = signal[0]
+        var output: [Float] = []
+        var lastOut: Float = 0.0
+        var lastIn: Float = 0.0
         
-        for i in 1..<signal.count {
-            output[i] = alpha * (output[i-1] + signal[i] - signal[i-1])
+        for (i, val) in signal.enumerated() {
+            if i == 0 {
+                output.append(0.0)
+            } else {
+                let out = alpha * (lastOut + val - lastIn)
+                output.append(out)
+                lastOut = out
+            }
+            lastIn = val
         }
-        
         return output
     }
 
     // MARK: - 2. Rate Estimation (FFT)
 
-    /// Estimates a rate (HR/RR) from a waveform using FFT.
-    ///
-    /// - Parameters:
-    ///   - waveform: The input signal.
-    ///   - fs: Sampling rate.
-    ///   - minRate: Minimum rate in **BPM** (e.g., 40).
-    ///   - maxRate: Maximum rate in **BPM** (e.g., 240).
     public static func estimateRate(from waveform: [Float], fs: Float, minRate: Float, maxRate: Float) -> Float? {
-        guard let setup = fftSetup else { return nil }
-        
+        guard let setup = fftProvider else { return nil }
         let fmin = minRate / 60.0
         let fmax = maxRate / 60.0
-        
         return estimateFreq(waveform, fs: fs, nfft: nfft, fmin: fmin, fmax: fmax, fftSetUp: setup)
     }
 
     // MARK: - 3. Peak Detection (Adaptive Z-Score)
 
-    /// Detects peaks in a physiological signal using adaptive Z-Score thresholding.
-    ///
-    /// - Parameters:
-    ///   - signal: The input signal (typically PPG).
-    ///   - fs: Sampling frequency.
-    ///   - hr: Estimated Heart Rate (BPM) to adapt window sizes (optional).
-    /// - Returns: Indices of detected peaks.
     public static func findPeaks(in signal: [Float], fs: Float, hr: Float?) -> [Int] {
-        // Defaults
-        let lag = Int(round(fs * 1.5))
-        let threshold: Float = 1.5
+        let lag = max(1, Int(round(fs * 1.5)))
+        let thresholdSq: Float = 1.5 * 1.5
         let height: Float = 0.0
         
-        // Adaptive distances based on HR (if available)
-        let minDistanceSamples: Int
-        let maxDistanceSamples: Int
-        
+        let minDistance: Int
         if let hr = hr, hr >= 45, hr <= 220 {
-            let expectedIntervalSamples = (fs * 60.0) / hr
-            minDistanceSamples = Int(round(expectedIntervalSamples * 0.5))
-            maxDistanceSamples = Int(round(expectedIntervalSamples * 2.5))
+            minDistance = Int(round((fs * 60.0) / hr * 0.5))
         } else {
-            // Fallback: Max physiological HR 220 BPM
-            minDistanceSamples = Int(round((fs * 60.0) / 220.0))
-            // Fallback: Min physiological HR 45 BPM
-            maxDistanceSamples = Int(round(((fs * 60.0) / 45.0) * 2.0))
+            minDistance = Int(round((fs * 60.0) / 220.0))
         }
         
-        guard signal.count > lag else { return [] }
+        guard signal.count > 2 else { return [] }
         
-        // Pre-pad to handle edge effects (repeat first element)
-        let padding = Array(repeating: signal[0], count: lag)
-        let paddedSignal = padding + signal
+        var detectedIndices = [Int]()
+        let lagF = Float(lag)
         
-        var sequences: [[Int]] = []
-        var currentSequence: [Int] = []
-        var lastPeakOverall = -Int.max
-        
-        // Single-pass iteration
-        for i in lag..<(paddedSignal.count - 1) {
-            let val = paddedSignal[i]
-            let originalIndex = i - lag
-            
-            if val > paddedSignal[i-1] && val > paddedSignal[i+1] && val > height {
+        // Loop uses direct indexing and squared comparisons to remain SIGILL-safe
+        for i in 1..<(signal.count - 1) {
+            let val = signal[i]
+            if val > signal[i-1] && val > signal[i+1] && val > height {
                 let windowStart = i - lag
-                let windowData = Array(paddedSignal[windowStart..<i])
-                var mean: Float = 0
-                var stdDev: Float = 0
-                vDSP_normalize(windowData, 1, nil, 1, &mean, &stdDev, vDSP_Length(windowData.count))
+                var sum: Float = 0
+                var sumSq: Float = 0
                 
-                let dynamicThreshold = mean + (threshold * stdDev)
+                for j in windowStart..<i {
+                    let s = j < 0 ? signal[0] : signal[j]
+                    sum += s
+                    sumSq += (s * s)
+                }
                 
-                if val > dynamicThreshold {
-                    if (originalIndex - lastPeakOverall) >= minDistanceSamples {
-                        let lastPeakInSequence = currentSequence.last ?? -Int.max
-                        if (originalIndex - lastPeakInSequence) < maxDistanceSamples {
-                            currentSequence.append(originalIndex)
+                let mean = sum / lagF
+                let diff = val - mean
+                
+                if diff > 0 {
+                    let variance = max(0, (sumSq / lagF) - (mean * mean))
+                    if (diff * diff) > (thresholdSq * variance) {
+                        if let last = detectedIndices.last {
+                            if (i - last) >= minDistance { detectedIndices.append(i) }
                         } else {
-                            if !currentSequence.isEmpty { sequences.append(currentSequence) }
-                            currentSequence = [originalIndex]
+                            detectedIndices.append(i)
                         }
-                        lastPeakOverall = originalIndex
                     }
                 }
             }
         }
         
-        if !currentSequence.isEmpty {
-            sequences.append(currentSequence)
+        var finalPeaks = [Int]()
+        var currentSeq = [Int]()
+        let maxGap = Int(fs * 2.5)
+        
+        for idx in detectedIndices {
+            if let last = currentSeq.last, (idx - last) > maxGap {
+                if currentSeq.count >= 3 { finalPeaks.append(contentsOf: currentSeq) }
+                currentSeq = [idx]
+            } else {
+                currentSeq.append(idx)
+            }
         }
+        if currentSeq.count >= 3 { finalPeaks.append(contentsOf: currentSeq) }
         
-        // Filter short sequences (min length 3)
-        let minSequenceLength = 3
-        let validSequences = sequences.filter { $0.count >= minSequenceLength }
-        
-        // Flatten output
-        return validSequences.flatMap { $0 }
+        return finalPeaks
     }
 
     // MARK: - 4. HRV Calculation
 
-    /// Calculates SDNN (Standard Deviation of NN intervals) in milliseconds.
     public static func calculateSDNN(peaks: [Int], fs: Float) -> Double? {
         let intervals = calculateNNIntervals(peaks: peaks, fs: fs)
         guard intervals.count >= 2 else { return nil }
-        
         var mean: Float = 0
         var stdDev: Float = 0
         vDSP_normalize(intervals, 1, nil, 1, &mean, &stdDev, vDSP_Length(intervals.count))
-        
         return Double(stdDev * 1000.0)
     }
 
-    /// Calculates RMSSD (Root Mean Square of Successive Differences) in milliseconds.
     public static func calculateRMSSD(peaks: [Int], fs: Float) -> Double? {
         let intervals = calculateNNIntervals(peaks: peaks, fs: fs)
         guard intervals.count >= 2 else { return nil }
         
-        var diffs: [Float] = []
+        var sumSqDiff: Float = 0
         for i in 0..<(intervals.count - 1) {
             let diff = intervals[i+1] - intervals[i]
-            diffs.append(diff * diff)
+            sumSqDiff += (diff * diff)
         }
-        
-        var meanSqDiff: Float = 0
-        vDSP_meanv(diffs, 1, &meanSqDiff, vDSP_Length(diffs.count))
-        
-        return Double(sqrt(meanSqDiff) * 1000.0)
+        return Double(sqrt(max(0, sumSqDiff / Float(intervals.count - 1))) * 1000.0)
     }
 
-    /// Helper: Converts peak indices to NN intervals (in seconds), with outlier filtering.
     private static func calculateNNIntervals(peaks: [Int], fs: Float) -> [Float] {
         guard peaks.count >= 2 else { return [] }
         var intervals: [Float] = []
         for i in 0..<(peaks.count - 1) {
-            let intervalSamples = Float(peaks[i+1] - peaks[i])
-            intervals.append(intervalSamples / fs)
+            intervals.append(Float(peaks[i+1] - peaks[i]) / fs)
         }
         return filterNNIntervals(intervals)
     }
 
-    /// Filters outliers (deviating > 30% from median).
     private static func filterNNIntervals(_ intervals: [Float], threshold: Float = 0.3) -> [Float] {
         guard intervals.count >= 3 else { return intervals }
         let sorted = intervals.sorted()
-        let mid = sorted.count / 2
-        let median = sorted.count % 2 == 0 ? (sorted[mid-1] + sorted[mid]) / 2.0 : sorted[mid]
-        let lowerBound = median * (1.0 - threshold)
-        let upperBound = median * (1.0 + threshold)
-        return intervals.filter { $0 >= lowerBound && $0 <= upperBound }
+        let median = sorted[sorted.count / 2]
+        return intervals.filter { abs($0 - median) <= (median * threshold) }
     }
 
-    // MARK: - Internal Helpers
+    // MARK: - Internal FFT Helpers
 
-    /// Convert signal from time domain to frequency domain
-    /// Zero-pads `input` to `nfft`, runs FFT and computes the frequency response magnitudes & corresponding frequencies
     private static func powerSpectrum(_ input: [Float], fs: Float, nfft: Int, fftSetUp: vDSP.FFT<DSPSplitComplex>) -> (magnitudes: [Float], frequencies: [Float]) {
-        precondition(input.count > 0)
-        precondition(nfft >= input.count)
-        precondition((nfft > 0) && (nfft & (nfft - 1) == 0), "nfft needs to be a power of 2")
-        let nhalf = Int(nfft/2)
-        let fres = fs/Float(nfft)
-        // Pad input with zeroes to match nfft
-        let inputPadded = input + [Float](repeating: 0.0, count: max(nfft - input.count, 0))
-        // Create arrays for time domain inputs, frequency domain and magnitude outputs
+        let count = input.count
+        var window = [Float](repeating: 0, count: count)
+        vDSP_hann_window(&window, vDSP_Length(count), Int32(vDSP_HANN_NORM))
+        
+        var windowedInput = [Float](repeating: 0, count: count)
+        vDSP_vmul(input, 1, window, 1, &windowedInput, 1, vDSP_Length(count))
+        
+        let nhalf = nfft / 2
         var real = [Float](repeating: 0, count: nhalf)
         var imag = [Float](repeating: 0, count: nhalf)
-        // Run
-        let autospectrum = [Float](unsafeUninitializedCapacity: nhalf) {
-            autospectrumBuffer, initializedCount in
-            vDSP.clear(&autospectrumBuffer)
-            real.withUnsafeMutableBufferPointer { realPtr in
-                imag.withUnsafeMutableBufferPointer { imagPtr in
-                    // Create a `DSPSplitComplex` for time domain input / frequency domain output
-                    var complex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
-                    // Convert the real values in `signal` to complex numbers.
-                    inputPadded.withUnsafeBytes {
-                        vDSP.convert(interleavedComplexVector: [DSPComplex]($0.bindMemory(to: DSPComplex.self)),
-                                    toSplitComplexVector: &complex)
-                    }
-                    // Perform the FFT
-                    fftSetUp.forward(input: complex, output: &complex)
-                    vDSP_zaspec(&complex, autospectrumBuffer.baseAddress!, vDSP_Length(nhalf))
+        
+        var paddedInput = windowedInput
+        if count < nfft { paddedInput.append(contentsOf: [Float](repeating: 0.0, count: nfft - count)) }
+
+        return real.withUnsafeMutableBufferPointer { rPtr in
+            imag.withUnsafeMutableBufferPointer { iPtr in
+                var complex = DSPSplitComplex(realp: rPtr.baseAddress!, imagp: iPtr.baseAddress!)
+                paddedInput.withUnsafeBufferPointer { buffer in
+                    let ptr = UnsafeRawPointer(buffer.baseAddress!).bindMemory(to: DSPComplex.self, capacity: nhalf)
+                    vDSP_ctoz(ptr, 2, &complex, 1, vDSP_Length(nhalf))
+                }
+                fftSetUp.forward(input: complex, output: &complex)
+                var mags = [Float](repeating: 0, count: nhalf)
+                vDSP_zaspec(&complex, &mags, vDSP_Length(nhalf))
+                let fres = fs / Float(nfft)
+                let freqs = (0..<nhalf).map { Float($0) * fres }
+                return (mags, freqs)
+            }
+        }
+    }
+
+    private static func estimateFreq(_ input: [Float], fs: Float, nfft: Int, fmin: Float, fmax: Float, fftSetUp: vDSP.FFT<DSPSplitComplex>) -> Float? {
+        let (mags, freqs) = powerSpectrum(input, fs: fs, nfft: nfft, fftSetUp: fftSetUp)
+        guard let globalMax = mags.max() else { return nil }
+        
+        var bestMag: Float = -1
+        var bestFreq: Float? = nil
+        
+        for i in 0..<mags.count {
+            if freqs[i] >= fmin && freqs[i] <= fmax {
+                if mags[i] > bestMag {
+                    bestMag = mags[i]
+                    bestFreq = freqs[i]
                 }
             }
-            initializedCount = nhalf
         }
-        // Frequencies
-        let frequencies = Array(stride(from: 0.0, through: fres * Float(nhalf-1), by: fres))
-        assert(frequencies.count == autospectrum.count, "freq.count \(frequencies.count) != mag.count \(autospectrum.count)")
-        return (autospectrum, frequencies)
+        
+        if let freq = bestFreq, bestMag >= (globalMax * 0.5) { return freq * 60.0 }
+        return nil
     }
-
-    /// Estimates the dominant frequency in a signal
-    private static func estimateFreq(_ input: [Float], fs: Float, nfft: Int, fmin: Float, fmax: Float, fftSetUp: vDSP.FFT<DSPSplitComplex>) -> Float? {
-        // Compute power spectrum
-        let spectrum = powerSpectrum(input, fs: fs, nfft: nfft, fftSetUp: fftSetUp)
-        // Filter out infeasible frequencies
-        let feasibleIndices = spectrum.frequencies.indices.filter { frequencyIndex in
-            let frequency = spectrum.frequencies[frequencyIndex]
-            return frequency >= fmin && frequency <= fmax
-        }
-        // Find the maximum magnitude within the feasible range
-        guard let maximumMagnitude = feasibleIndices.map({ spectrum.magnitudes[$0] }).max(),
-            let index = spectrum.magnitudes.firstIndex(of: maximumMagnitude) else {
-            return nil
-        }
-        return spectrum.frequencies[index] * 60.0
-    }
-
 }
