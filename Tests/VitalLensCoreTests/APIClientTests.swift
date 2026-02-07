@@ -8,7 +8,6 @@ final class APIClientTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
-        // Configure the session to use our Mock Protocol
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         session = URLSession(configuration: configuration)
@@ -25,12 +24,10 @@ final class APIClientTests: XCTestCase {
         apiClient = APIClient(apiKey: "test_key_123", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
-            // Assert that the header is present in the outgoing request
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "test_key_123")
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        // Trigger a call
         _ = try await apiClient.resolveModel(requestedModel: nil)
     }
     
@@ -40,7 +37,6 @@ final class APIClientTests: XCTestCase {
         
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "my-proxy.com")
-            // The client should NOT send the key if using a proxy (security best practice)
             XCTAssertNil(request.value(forHTTPHeaderField: "X-Api-Key"))
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
@@ -92,12 +88,10 @@ final class APIClientTests: XCTestCase {
         apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
-            // Verify query param
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             let modelItem = components?.queryItems?.first(where: { $0.name == "model" })
             XCTAssertEqual(modelItem?.value, "vitallens-2.0")
             
-            // Return dummy config
             let json = """
             {
                 "resolved_model": "vitallens-2.0",
@@ -128,22 +122,15 @@ final class APIClientTests: XCTestCase {
         let dummyData = Data(repeating: 0xFF, count: 100)
         
         MockURLProtocol.requestHandler = { request in
-            // 1. Verify Endpoint
             XCTAssertEqual(request.url?.path, "/vitallens-v3/stream")
             XCTAssertEqual(request.httpMethod, "POST")
             
-            // 2. Verify Headers
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Origin"), "vitallens-ios")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Model"), "vitallens-2.0")
             
-            // 3. Verify State Injection (Base64)
-            // [0.5] as float bytes -> Base64
-            let stateHeader = request.value(forHTTPHeaderField: "X-State")
-            XCTAssertNotNil(stateHeader)
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "X-State"))
             
-            // 4. Verify Body
-            // We need to read the body stream or body data
             let bodyData = request.httpBodyStreamData() ?? request.httpBody
             XCTAssertEqual(bodyData, dummyData)
             
@@ -180,7 +167,6 @@ final class APIClientTests: XCTestCase {
     }
 }
 
-// Extension to help read body stream (URLRequest often uses stream for uploads)
 extension URLRequest {
     func httpBodyStreamData() -> Data? {
         guard let stream = httpBodyStream else { return nil }

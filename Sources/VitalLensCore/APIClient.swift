@@ -1,6 +1,7 @@
 import Foundation
 
-/// Internal actor to handle network requests.
+/// Internal actor responsible for handling all network communication with the VitalLens API.
+/// It manages authentication, endpoint resolution, and request batching.
 public actor APIClient {
     
     private let apiKey: String?
@@ -8,6 +9,7 @@ public actor APIClient {
     private let session: URLSession
     
     // MARK: - Endpoints
+    
     private static let productionBaseURL = URL(string: "https://api.rouast.com/vitallens-v3")!
     
     private var baseURL: URL {
@@ -16,6 +18,12 @@ public actor APIClient {
     
     // MARK: - Initialization
     
+    /// Initializes a new API client.
+    ///
+    /// - Parameters:
+    ///   - apiKey: The VitalLens API key. Required if `proxyURL` is nil.
+    ///   - proxyURL: Optional URL to a backend proxy. If set, the API key is not sent by the client.
+    ///   - session: The URLSession to use for requests. Defaults to `.shared`.
     public init(apiKey: String?, proxyURL: URL?, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
@@ -24,7 +32,11 @@ public actor APIClient {
     
     // MARK: - Configuration
     
-    /// Calls /resolve-model to determine the correct configuration (FPS, Input Size) for the user's plan.
+    /// Contacts the API to determine the optimal configuration (FPS, Input Size) for the current user plan.
+    ///
+    /// - Parameter requestedModel: The specific model version to request (e.g., "vitallens-2.0"). If nil, the API selects the best available.
+    /// - Returns: A `ResolveModelResponse` containing the configuration parameters.
+    /// - Throws: `VitalLensError` if the request fails or the plan is invalid.
     public func resolveModel(requestedModel: String?) async throws -> ResolveModelResponse {
         var url = baseURL.appendingPathComponent("resolve-model")
         
@@ -43,15 +55,14 @@ public actor APIClient {
     
     // MARK: - Streaming
     
-    /// Sends a **batch** of accumulated video frames to the Streaming endpoint.
+    /// Sends a batch of accumulated video frames to the real-time streaming endpoint.
     ///
     /// - Parameters:
-    ///   - rawRGBBytes: A concatenated buffer of raw RGB bytes for *multiple* frames.
-    ///                  Format: [Frame 1 Bytes][Frame 2 Bytes]...[Frame N Bytes].
-    ///                  Total size must be: N * (inputSize * inputSize * 3).
-    ///   - state: The RNN state vector returned from the *previous* API response.
-    ///   - model: The model version identifier.
-    /// - Returns: The parsed VitalLensResult containing the updated state.
+    ///   - rawRGBBytes: A concatenated buffer of raw RGB bytes for multiple frames.
+    ///   - state: The RNN state vector returned from the previous API response.
+    ///   - model: The model version identifier to use for inference.
+    /// - Returns: The `VitalLensResult` containing vital signs and the updated state.
+    /// - Throws: `VitalLensError` for network or API errors.
     public func sendStreamBatch(
         rawRGBBytes: Data,
         state: [Float]?,
@@ -65,23 +76,18 @@ public actor APIClient {
         
         addAuthHeaders(to: &request)
         
-        // Metadata Headers
         request.setValue("vitallens-ios", forHTTPHeaderField: "X-Origin")
         
         if let model = model {
             request.setValue(model, forHTTPHeaderField: "X-Model")
         }
         
-        // State Injection
         if let state = state, !state.isEmpty {
             let stateData = state.withUnsafeBufferPointer { Data(buffer: $0) }
             let base64State = stateData.base64EncodedString()
             request.setValue(base64State, forHTTPHeaderField: "X-State")
         }
 
-        // TODO: Support compression for faster network calls
-        
-        // The body is now a batch of frames
         request.httpBody = rawRGBBytes
         
         return try await perform(request: request)
@@ -89,7 +95,14 @@ public actor APIClient {
     
     // MARK: - File Processing
     
-    /// Uploads a video file chunk for processing.
+    /// Uploads a video file chunk to the file processing endpoint.
+    ///
+    /// - Parameters:
+    ///   - rawRGBBytes: The raw video data for the chunk.
+    ///   - metadata: Additional processing parameters (e.g., fps).
+    ///   - state: Optional RNN state if continuing a previous session.
+    /// - Returns: The `VitalLensResult` for the processed chunk.
+    /// - Throws: `VitalLensError`.
     public func processVideoChunk(
         rawRGBBytes: Data,
         metadata: [String: String],
@@ -101,8 +114,6 @@ public actor APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuthHeaders(to: &request)
         
-        // Matches lambda_function.py expectation:
-        // video = np.frombuffer(base64.b64decode(video_base64), dtype=np.uint8)
         let base64Video = rawRGBBytes.base64EncodedString()
         
         var payload: [String: Any] = [
@@ -115,10 +126,7 @@ public actor APIClient {
             payload["state"] = stateData.base64EncodedString()
         }
         
-        // Add metadata (fps, process_signals, etc)
         for (key, value) in metadata {
-            // Convert boolean strings to actual booleans if needed, or send as string
-            // The backend uses str2bool helper, so strings "True"/"False" are fine.
             payload[key] = value
         }
         
@@ -130,9 +138,7 @@ public actor APIClient {
     // MARK: - Private Helpers
     
     private func addAuthHeaders(to request: inout URLRequest) {
-        // Proxy handles auth if set. Otherwise, we send the key.
         if proxyURL == nil, let key = apiKey {
-            // Matches casing in vitallens-infra/lambda code
             request.setValue(key, forHTTPHeaderField: "X-Api-Key")
         }
     }
@@ -145,7 +151,6 @@ public actor APIClient {
                 throw VitalLensError.networkError(URLError(.badServerResponse))
             }
             
-            // Validate Status Codes
             switch httpResponse.statusCode {
             case 200...299:
                 break
