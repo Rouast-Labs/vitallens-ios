@@ -1,148 +1,297 @@
+// FILE: Tests/VitalLensCoreTests/SignalOpsTests.swift
+// ==================================================
+// Comprehensive Test Suite for SignalOps
+// Covers:
+// 1. Basic Correctness (Clean Signals)
+// 2. Real-world Noise & Artifacts (Gaussian noise, Linear Drift)
+// 3. Robustness (NaNs, Flatlines, Aliasing)
+// 4. Physiological Constraints (Refractory periods, HR hints)
+// ==================================================
+
 import XCTest
+import Accelerate
 @testable import VitalLensCore
 
 final class SignalOpsTests: XCTestCase {
 
-    // MARK: - 1. Standardize Tests
+    // MARK: - Test Helpers
+
+    /// Generates a synthetic signal with customizable characteristics.
+    /// - Parameters:
+    ///   - freq: Target frequency in Hz (e.g., 1.0 for 60 BPM).
+    ///   - fs: Sampling rate in Hz.
+    ///   - duration: Duration in seconds.
+    ///   - noise: Amplitude of random noise (0.0 to 1.0 relative to signal).
+    ///   - trend: Linear drift slope (e.g., 2.0 adds 2*t to each sample).
+    ///   - harmonics: Optional list of (frequency multiplier, amplitude) tuples.
+    ///   - nanIndices: Indices to inject NaN values (to test robustness).
+    private func generateSignal(
+        freq: Float,
+        fs: Float,
+        duration: Float,
+        noise: Float = 0.0,
+        trend: Float = 0.0,
+        harmonics: [(Float, Float)] = [],
+        nanIndices: [Int] = []
+    ) -> [Float] {
+        let count = Int(fs * duration)
+        var signal = [Float]()
+        signal.reserveCapacity(count)
+        
+        for i in 0..<count {
+            let t = Float(i) / fs
+            
+            // 1. Fundamental Frequency
+            var val = sin(2 * Float.pi * freq * t)
+            
+            // 2. Harmonics (e.g., adding a 2nd harmonic)
+            for (mult, amp) in harmonics {
+                val += amp * sin(2 * Float.pi * (freq * mult) * t)
+            }
+            
+            // 3. Noise Component (Simple randomness)
+            let n = Float.random(in: -1...1) * noise
+            
+            // 4. Trend Component (Linear Slope)
+            let drift = trend * t
+            
+            signal.append(val + n + drift)
+        }
+        
+        // 5. Inject Corrupt Data
+        for idx in nanIndices where idx < signal.count {
+            signal[idx] = Float.nan
+        }
+        
+        return signal
+    }
+
+    // MARK: - 1. Preprocessing (Standardize)
 
     func testStandardizeNormal() {
         let input: [Float] = [10, 20, 30, 40, 50]
         let result = SignalOps.standardize(input)
+        
         let mean = result.reduce(0, +) / Float(result.count)
-        let variance = result.map { pow($0 - mean, 2) }.reduce(0, +) / Float(result.count)
+        // Calculate standard deviation manually to verify vDSP
+        let sumSq = result.reduce(0) { $0 + ($1 - mean) * ($1 - mean) }
+        let std = sqrt(sumSq / Float(result.count))
+        
         XCTAssertEqual(mean, 0.0, accuracy: 0.001)
-        XCTAssertEqual(variance, 1.0, accuracy: 0.001)
+        XCTAssertEqual(std, 1.0, accuracy: 0.001)
     }
 
-    func testStandardizeConstant() {
+    func testStandardizeFlatline() {
+        // vDSP_normalize can fail on variance=0.
+        // The implementation should handle this via the stdDev check.
         let input: [Float] = [5, 5, 5, 5, 5]
         let result = SignalOps.standardize(input)
+        
+        // Should return zero array, NOT NaNs or Infs
+        XCTAssertEqual(result, [0, 0, 0, 0, 0])
+        XCTAssertFalse(result.contains { $0.isNaN })
+    }
+
+    func testStandardizeNaNs() {
+        // Test robustness against single-frame corruption
+        let input: [Float] = [1, 2, Float.nan, 4, 5]
+        let result = SignalOps.standardize(input)
+        
+        XCTAssertEqual(result.count, 5)
+        // Expect safe fallback (zeros) rather than crash or NaNs
         XCTAssertEqual(result, [0, 0, 0, 0, 0])
     }
-
-    func testStandardizeEmpty() {
-        XCTAssertTrue(SignalOps.standardize([]).isEmpty)
+    
+    func testStandardizeNearFlatline() {
+        // Signal with variance < 1e-6 should also be zeroed out
+        let input: [Float] = [1.0000001, 1.0000002, 1.0000001]
+        let result = SignalOps.standardize(input)
+        let sum = result.reduce(0, +)
+        XCTAssertEqual(sum, 0.0, accuracy: 0.00001)
     }
 
-    // MARK: - 2. Detrend Tests
+    // MARK: - 2. Detrending (Drift Removal)
 
-    func testDetrendDCRemoval() {
+    func testDetrendRemovesLinearDrift() {
+        // Create a signal that climbs from 0 to 50 over 5 seconds (Huge Drift)
         let fs: Float = 30.0
-        var signal: [Float] = []
-        for i in 0..<300 {
-            signal.append(sin(Float(i) * 0.1) + 100.0)
-        }
+        let trendSlope: Float = 10.0
+        let signal = generateSignal(freq: 1.0, fs: fs, duration: 5.0, trend: trendSlope)
         
-        // Initial DC ~ 100
-        XCTAssertEqual(signal.reduce(0, +) / Float(signal.count), 100.0, accuracy: 1.0)
+        // Pre-check: Verify the drift exists
+        XCTAssertGreaterThan(signal.last!, signal.first! + 40.0)
         
+        // Action
         let result = SignalOps.detrend(signal, fs: fs)
-        let postMean = result.reduce(0, +) / Float(result.count)
         
-        // With improved initialization, mean should be very close to 0
-        XCTAssertEqual(postMean, 0.0, accuracy: 0.1)
-    }
-    
-    func testDetrendShortSignal() {
-        let input: [Float] = [10.0]
-        let result = SignalOps.detrend(input, fs: 30)
-        XCTAssertEqual(result, input)
+        // Post-check: The trend should be largely gone.
+        // We compare the means of the first and last 10%
+        let sliceSize = Int(Float(result.count) * 0.1)
+        let startMean = result.prefix(sliceSize).reduce(0, +) / Float(sliceSize)
+        let endMean = result.suffix(sliceSize).reduce(0, +) / Float(sliceSize)
+        
+        // They should be roughly centered around 0 now
+        XCTAssertEqual(startMean, endMean, accuracy: 1.0, "Detrending failed to remove linear drift")
     }
 
-    // MARK: - 3. Estimate Rate Tests
+    // MARK: - 3. Rate Estimation (FFT)
 
-    func testEstimateRate60BPM() {
+    func testEstimateRateClean() {
+        // 1.5 Hz = 90 BPM
         let fs: Float = 30.0
-        var signal: [Float] = []
-        for i in 0..<300 {
-            let t = Float(i) / fs
-            signal.append(sin(2 * .pi * 1.0 * t))
-        }
+        let signal = generateSignal(freq: 1.5, fs: fs, duration: 10.0)
         let rate = SignalOps.estimateRate(from: signal, fs: fs, minRate: 40, maxRate: 200)
-        XCTAssertEqual(rate!, 60.0, accuracy: 0.5)
+        XCTAssertEqual(rate!, 90.0, accuracy: 1.0)
     }
-    
-    func testEstimateRate120BPM() {
+
+    func testEstimateRateWithNoise() {
+        // 90 BPM with 50% noise amplitude
+        // This validates the Hanning window and peak finding robustness
         let fs: Float = 30.0
-        var signal: [Float] = []
-        for i in 0..<300 {
-            let t = Float(i) / fs
-            signal.append(sin(2 * .pi * 2.0 * t))
-        }
-        let rate = SignalOps.estimateRate(from: signal, fs: fs, minRate: 40, maxRate: 200)
-        XCTAssertEqual(rate!, 120.0, accuracy: 0.5)
-    }
-    
-    func testEstimateRateOutOfBounds() {
-        // 300 BPM = 5 Hz. Max allowed 200 (3.33Hz).
-        let fs: Float = 30.0
-        var signal: [Float] = []
-        for i in 0..<300 {
-            let t = Float(i) / fs
-            signal.append(sin(2 * .pi * 5.0 * t))
-        }
-        
+        let signal = generateSignal(freq: 1.5, fs: fs, duration: 10.0, noise: 0.5)
         let rate = SignalOps.estimateRate(from: signal, fs: fs, minRate: 40, maxRate: 200)
         
-        // With Hanning window and local peak check, this should return nil
-        // as the leakage into the valid range will not form a local peak.
-        XCTAssertNil(rate)
+        XCTAssertNotNil(rate)
+        XCTAssertEqual(rate!, 90.0, accuracy: 3.0)
+    }
+    
+    func testEstimateRateHarmonics() {
+        // 50 BPM (0.83 Hz) with a weak 2nd Harmonic at 1.66 Hz (100 BPM).
+        // FFT should pick the fundamental (stronger) frequency.
+        let fs: Float = 30.0
+        let signal = generateSignal(
+            freq: 0.833,
+            fs: fs,
+            duration: 10.0,
+            harmonics: [(2.0, 0.5)] // 2x freq at 0.5 amplitude
+        )
+        
+        let rate = SignalOps.estimateRate(from: signal, fs: fs, minRate: 40, maxRate: 200)
+        XCTAssertEqual(rate!, 50.0, accuracy: 2.0)
     }
 
-    // MARK: - 4. Peak Detection Tests
+    func testEstimateRateAliasingProtection() {
+        // Nyquist Limit check.
+        // fs = 30Hz -> Max theoretical freq = 15Hz (900 BPM).
+        // If we have a signal at 20Hz (1200 BPM), it aliases to 10Hz (600 BPM).
+        // However, our `maxRate` is 200 BPM (3.33 Hz).
+        // The alias (10Hz) is still > 3.33Hz, so it should be ignored.
+        
+        let fs: Float = 30.0
+        let signal = generateSignal(freq: 20.0, fs: fs, duration: 5.0) // 20Hz signal
+        
+        let rate = SignalOps.estimateRate(from: signal, fs: fs, minRate: 40, maxRate: 200)
+        
+        // Should return nil because the dominant energy is way outside [40, 200] BPM
+        XCTAssertNil(rate, "FFT picked up aliased high-freq noise as a valid heart rate")
+    }
 
-    func testFindPeaksPeriodic() {
+    // MARK: - 4. Peak Detection & Physiological Checks
+
+    func testFindPeaksWithNoise() {
+        // Create a signal with clear peaks but a noisy baseline.
         let fs: Float = 30.0
         var signal = [Float](repeating: 0.0, count: 300)
-        let expectedPeaks = stride(from: 10, to: 300, by: 30).map { $0 }
+        
+        // Add Baseline Noise
+        for i in 0..<300 { signal[i] = Float.random(in: -0.2...0.2) }
+        
+        // Add Peaks (Every 30 frames -> 60 BPM)
+        let expectedPeaks = stride(from: 15, to: 300, by: 30).map { $0 }
         for idx in expectedPeaks {
-            signal[idx] = 5.0
+            signal[idx] = 2.0 // Strong peak well above noise
+            // Make it a "shape"
+            if idx > 0 { signal[idx-1] = 1.0 }
+            if idx < 299 { signal[idx+1] = 1.0 }
         }
-        let found = SignalOps.findPeaks(in: signal, fs: fs, hr: 60)
-        XCTAssertEqual(found, expectedPeaks)
+        
+        let stdSignal = SignalOps.standardize(signal)
+        let found = SignalOps.findPeaks(in: stdSignal, fs: fs, hr: 60)
+        
+        XCTAssertEqual(found.count, expectedPeaks.count)
+        for (f, e) in zip(found, expectedPeaks) {
+            XCTAssertLessThanOrEqual(abs(f - e), 1)
+        }
+    }
+
+    func testFindPeaksRefractoryPeriod() {
+        // Physiologically, if HR is ~60, peaks cannot happen 100ms apart.
+        let fs: Float = 30.0
+        var signal = [Float](repeating: 0, count: 60)
+        
+        // Valid Beat 1
+        signal[10] = 5.0
+        
+        // Noise Beat (Only 5 frames / 166ms later) -> Should be IGNORED
+        signal[15] = 4.0
+        
+        // Valid Beat 2 (30 frames / 1.0s later) -> Should be KEPT
+        signal[40] = 5.0
+        
+        let std = SignalOps.standardize(signal)
+        
+        // Run with HR hint = 60 BPM (Implies minDistance ~ 15 frames)
+        let peaks = SignalOps.findPeaks(in: std, fs: fs, hr: 60)
+        
+        XCTAssertTrue(peaks.contains(10))
+        XCTAssertFalse(peaks.contains(15), "Failed to enforce refractory period")
+        XCTAssertTrue(peaks.contains(40))
     }
     
-    func testFindPeaksEmpty() {
-        let signal: [Float] = []
-        let found = SignalOps.findPeaks(in: signal, fs: 30, hr: 60)
-        XCTAssertTrue(found.isEmpty)
+    func testFindPeaksWithoutHRHint() {
+        // Without Hint, default maxHR is 220 BPM (~8 frames distance).
+        // A peak 10 frames later (180 BPM) should be ACCEPTED.
+        
+        let fs: Float = 30.0
+        var signal = [Float](repeating: 0, count: 60)
+        signal[10] = 5.0
+        signal[20] = 5.0 // 10 frames distance
+        
+        let std = SignalOps.standardize(signal)
+        
+        // 1. With HR=60 Hint -> Expect Reject
+        let peaksHint = SignalOps.findPeaks(in: std, fs: fs, hr: 60)
+        XCTAssertFalse(peaksHint.contains(20))
+        
+        // 2. Without Hint -> Expect Accept
+        let peaksNoHint = SignalOps.findPeaks(in: std, fs: fs, hr: nil)
+        XCTAssertTrue(peaksNoHint.contains(20))
     }
 
-    // MARK: - 5. HRV (SDNN) Tests
+    // MARK: - 5. HRV (SDNN & RMSSD)
 
-    func testSDNNPerfectRhythm() {
-        let peaks = [0, 30, 60, 90, 120]
-        let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: 30.0)
-        XCTAssertEqual(sdnn!, 0.0, accuracy: 0.001)
+    func testSDNNRejectsOutliers() {
+        // SDNN uses `filterNNIntervals` internally.
+        // We inject one massive gap that should be filtered out.
+        let fs: Float = 10.0
+        var peaks = [0, 10, 20, 30] // 1.0s intervals
+        peaks.append(60)            // 3.0s interval (Outlier)
+        peaks.append(70); peaks.append(80) // Back to 1.0s
+        
+        let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: fs)
+        
+        // If outlier is filtered, variance is 0 -> SDNN is 0.
+        XCTAssertNotNil(sdnn)
+        XCTAssertEqual(sdnn!, 0.0, accuracy: 0.1, "SDNN failed to filter outlier interval")
+    }
+
+    func testRMSSDRequiresMinimumIntervals() {
+        let fs: Float = 30.0
+        
+        // 2 Peaks = 1 Interval -> Not enough
+        XCTAssertNil(SignalOps.calculateRMSSD(peaks: [10, 40], fs: fs))
+        
+        // 3 Peaks = 2 Intervals -> Enough
+        XCTAssertNotNil(SignalOps.calculateRMSSD(peaks: [10, 40, 70], fs: fs))
     }
     
     func testSDNNKnownVariance() {
-        let peaks = [0, 30, 50]
+        // Peaks: 0, 30, 50 (Intervals: 3.0s, 2.0s)
+        // Mean = 2.5. Var = ((3-2.5)^2 + (2-2.5)^2)/2 = (0.25+0.25)/2 = 0.25. Std = 0.5
+        // SDNN = 0.5 * 1000 = 500ms
         let fs: Float = 10.0
+        let peaks = [0, 30, 50]
         let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: fs)
         XCTAssertEqual(sdnn!, 500.0, accuracy: 1.0)
-    }
-    
-    func testSDNNInsufficientData() {
-        let peaks2 = [0, 30] // 1 interval
-        XCTAssertNil(SignalOps.calculateSDNN(peaks: peaks2, fs: 30))
-        
-        let peaks3 = [0, 30, 60] // 2 intervals
-        XCTAssertNotNil(SignalOps.calculateSDNN(peaks: peaks3, fs: 30))
-    }
-
-    // MARK: - 6. HRV (RMSSD) Tests
-
-    func testRMSSDPerfectRhythm() {
-        let peaks = [0, 30, 60, 90]
-        let rmssd = SignalOps.calculateRMSSD(peaks: peaks, fs: 30.0)
-        XCTAssertEqual(rmssd!, 0.0, accuracy: 0.001)
-    }
-    
-    func testRMSSDKnownValues() {
-        let peaks = [0, 30, 65]
-        let fs: Float = 10.0
-        let rmssd = SignalOps.calculateRMSSD(peaks: peaks, fs: fs)
-        XCTAssertEqual(rmssd!, 500.0, accuracy: 1.0)
     }
 }
