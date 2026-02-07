@@ -2,6 +2,7 @@ import Foundation
 
 /// Errors specific to the VitalLens SDK and API interactions.
 public enum VitalLensError: LocalizedError, Sendable, Equatable {
+    
     /// The API Key provided is missing or invalid.
     case invalidAPIKey
     
@@ -17,7 +18,7 @@ public enum VitalLensError: LocalizedError, Sendable, Equatable {
     /// The response from the API could not be decoded.
     case decodingError(Error)
     
-    /// A general network error (e.g. offline).
+    /// A general network error (e.g., offline).
     case networkError(Error)
     
     /// Internal SDK error (e.g., invalid image buffer).

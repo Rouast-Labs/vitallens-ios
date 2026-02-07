@@ -19,7 +19,6 @@ final class FrameBufferTests: XCTestCase {
     
     func testInitialization() async {
         let buffer = FrameBuffer(roi: .zero, config: config)
-        // FIX: Call isReady as a function with hasState: false
         let ready = await buffer.isReady(hasState: false)
         XCTAssertFalse(ready, "Buffer should not be ready initially")
     }
@@ -35,9 +34,9 @@ final class FrameBufferTests: XCTestCase {
         let readyNoState = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyNoState, "Should wait for 16 frames when no state exists")
         
-        // Even if we claimed to have state, 15 frames > 4 (nInputs), so it WOULD be ready if state existed.
+        // Even if we claimed to have state, 15 frames > 4 (nInputs), so it WOULD be ready.
         let readyWithState = await buffer.isReady(hasState: true)
-        XCTAssertTrue(readyWithState, "Should be ready with 15 frames if we had state (15 > 4)")
+        XCTAssertTrue(readyWithState, "Should be ready with 15 frames if state context exists")
         
         // Add 16th frame
         await buffer.append(frameData: makeFrameData(val: 1))
@@ -56,7 +55,6 @@ final class FrameBufferTests: XCTestCase {
         }
         
         // Consume (Simulating a successful stateless request)
-        // Note: In the real app, BufferManager checks isReady before calling consume.
         guard let payload1 = await buffer.consume() else {
             XCTFail(); return
         }
@@ -64,18 +62,18 @@ final class FrameBufferTests: XCTestCase {
         
         // Now simulate the Application Loop:
         // 1. Buffer retained 3 frames [14, 15, 16].
-        // 2. We received State from the API (simulated by passing hasState: true).
+        // 2. We received State from the API.
         
         // Add 1 new frame (17)
         await buffer.append(frameData: makeFrameData(val: 17))
         
         // Check Ready with State
         let readyStateful = await buffer.isReady(hasState: true)
-        XCTAssertTrue(readyStateful, "Should be ready immediately because we have state and 4 frames (3 retained + 1 new)")
+        XCTAssertTrue(readyStateful, "Should be ready immediately with state + 4 frames (3 retained + 1 new)")
         
         // Check Ready WITHOUT State (e.g. if API call failed)
         let readyStateless = await buffer.isReady(hasState: false)
-        XCTAssertFalse(readyStateless, "Should NOT be ready if state was lost/failed (needs 16 frames again)")
+        XCTAssertFalse(readyStateless, "Should NOT be ready if state was lost (needs 16 frames again)")
         
         // Consume second batch
         guard let payload2 = await buffer.consume() else {
@@ -92,13 +90,11 @@ final class FrameBufferTests: XCTestCase {
             await buffer.append(frameData: makeFrameData(val: 1))
         }
         
-        // FIX: Call isReady as a function
         let readyBefore = await buffer.isReady(hasState: false)
         XCTAssertTrue(readyBefore)
         
         await buffer.clear()
         
-        // FIX: Call isReady as a function
         let readyAfter = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyAfter)
         
@@ -124,8 +120,6 @@ final class FrameBufferTests: XCTestCase {
             await buffer.append(frameData: makeFrameData(val: 1))
         }
         
-        // consume() internally checks buffer size >= nInputs, does not strictly require isReady check if forced,
-        // but let's check it anyway.
         let ready = await buffer.isReady(hasState: false)
         XCTAssertTrue(ready)
         
