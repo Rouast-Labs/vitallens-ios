@@ -3,37 +3,38 @@ import CoreGraphics
 
 // MARK: - Top Level Result
 
-// TODO: Adopt dynamic model/vital agnostic structure with vital registry
-
-/// The result returned by the VitalLens API.
+/// The primary response object returned by the VitalLens API.
+///
+/// This structure contains all estimation data for a processed video chunk, including
+/// face detection results, vital sign estimates, and temporal information.
 public struct VitalLensResult: Codable, Sendable {
     
-    /// Face detection data for the processed video.
+    /// Face detection metadata for the processed video frames.
     public let face: FaceData
     
-    /// The estimated vital signs and waveforms.
+    /// A collection of estimated vital signs, including both scalar metrics and waveforms.
     public let vitalSigns: VitalSigns
     
-    /// The timestamps for each processed frame (in seconds).
+    /// The timestamps corresponding to each processed frame (in seconds).
     public let time: [Double]
     
-    /// Recommended display time for synchronization (used in live streams).
+    /// A suggested display timestamp for synchronization in real-time UI applications.
     public let displayTime: Double?
     
-    /// The input video's frame rate.
+    /// The detected frame rate of the input video.
     public let fps: Double?
     
     /// The effective frame rate used for inference (estimation FPS).
     public let estFps: Double?
     
-    /// The name of the model actually used by the API (e.g., "vitallens-2.0").
+    /// The identifier of the specific model version used for inference (e.g., "vitallens-2.0").
     public let modelUsed: String?
     
-    /// The internal recurrent state of the model.
-    /// Only populated if the API returns state data.
+    /// The internal Recurrent Neural Network (RNN) state.
+    /// This property is populated during streaming to allow state continuity between API calls.
     public let state: StateData?
     
-    /// Additional information or warnings from the API.
+    /// Additional informational messages or warnings from the API.
     public let message: String?
 
     public init(
@@ -73,14 +74,17 @@ public struct VitalLensResult: Codable, Sendable {
 
 // MARK: - Face Data
 
+/// detailed information about the face detection process.
 public struct FaceData: Codable, Sendable {
-    /// Raw coordinates from JSON: [[x0, y0, x1, y1], ...]
+    
+    /// A list of bounding boxes for the detected face in each frame.
+    /// Format: `[[x, y, x2, y2], ...]` (normalized 0.0 - 1.0).
     public let coordinates: [[Double]]?
     
-    /// Confidence values for the face detection per frame (0.0 - 1.0).
+    /// A list of confidence scores for the face detection in each frame (0.0 - 1.0).
     public let confidence: [Double]?
     
-    /// Explanatory note regarding face detection.
+    /// An explanatory note regarding the face detection status.
     public let note: String?
 
     public init(coordinates: [[Double]]?, confidence: [Double]?, note: String?) {
@@ -89,7 +93,8 @@ public struct FaceData: Codable, Sendable {
         self.note = note
     }
     
-    /// Computed property to get coordinates as clean CGRects.
+    /// A helper property that converts the raw coordinate arrays into `CGRect` objects.
+    /// Returns normalized rectangles (0.0 - 1.0).
     public var boundingBoxes: [CGRect] {
         guard let coords = coordinates else { return [] }
         return coords.map { c in
@@ -101,19 +106,34 @@ public struct FaceData: Codable, Sendable {
 
 // MARK: - Vital Signs
 
+/// A container for all physiological metrics estimated by the model.
 public struct VitalSigns: Codable, Sendable {
     
     // MARK: Scalar Metrics
+    
+    /// The estimated heart rate in beats per minute (BPM).
     public let heartRate: ScalarMetric?
+    
+    /// The estimated respiratory rate in breaths per minute (RPM).
     public let respiratoryRate: ScalarMetric?
     
     // MARK: HRV Metrics
+    
+    /// Heart Rate Variability: Standard Deviation of NN intervals (SDNN).
     public let hrvSdnn: ScalarMetric?
+    
+    /// Heart Rate Variability: Root Mean Square of Successive Differences (RMSSD).
     public let hrvRmssd: ScalarMetric?
+    
+    /// Heart Rate Variability: Ratio of Low Frequency to High Frequency power (LF/HF).
     public let hrvLfhf: ScalarMetric?
     
     // MARK: Waveforms
+    
+    /// The photoplethysmogram (PPG) signal waveform.
     public let ppgWaveform: WaveformMetric?
+    
+    /// The respiratory signal waveform.
     public let respiratoryWaveform: WaveformMetric?
 
     public init(
@@ -147,10 +167,16 @@ public struct VitalSigns: Codable, Sendable {
 
 // MARK: - Helper Types
 
-/// Represents the Recurrent Neural Network (RNN) state returned by the API.
-/// This must be persisted and sent back in the next request for streaming.
+/// Encapsulates the Recurrent Neural Network (RNN) state.
+///
+/// This opaque data blob is required for continuity when performing streaming inference.
+/// Clients must persist this object and include it in the subsequent API request.
 public struct StateData: Codable, Sendable {
+    
+    /// Base64 encoded string representing the flattened RNN state tensors.
     public let data: String
+    
+    /// Optional metadata regarding the state.
     public let note: String?
     
     public init(data: String, note: String?) {
@@ -159,11 +185,19 @@ public struct StateData: Codable, Sendable {
     }
 }
 
-/// Represents a single scalar vital sign value (e.g., Heart Rate: 72 bpm).
+/// Represents a single scalar value measurement (e.g., Heart Rate).
 public struct ScalarMetric: Codable, Sendable {
+    
+    /// The numeric value of the metric.
     public let value: Double?
+    
+    /// The unit of measurement (e.g., "bpm", "ms").
     public let unit: String
+    
+    /// The confidence score of the estimation (0.0 - 1.0).
     public let confidence: Double?
+    
+    /// Additional context or warnings about the measurement.
     public let note: String?
     
     public init(value: Double?, unit: String, confidence: Double?, note: String?) {
@@ -174,11 +208,19 @@ public struct ScalarMetric: Codable, Sendable {
     }
 }
 
-/// Represents a waveform series (e.g. PPG signal).
+/// Represents a time-series waveform measurement (e.g., PPG signal).
 public struct WaveformMetric: Codable, Sendable {
+    
+    /// The array of signal values.
     public let data: [Double]
+    
+    /// The unit of measurement (usually "unitless" for normalized signals).
     public let unit: String
+    
+    /// The confidence score for each data point in the waveform.
     public let confidence: [Double]
+    
+    /// Additional context about the waveform.
     public let note: String?
     
     public init(data: [Double], unit: String, confidence: [Double], note: String?) {
