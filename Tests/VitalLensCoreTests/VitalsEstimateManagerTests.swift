@@ -242,6 +242,47 @@ final class VitalsEstimateManagerTests: XCTestCase {
         
         XCTAssertNil(result.vitalSigns.heartRate)
     }
+
+    func testHRVThresholds() async {
+        let manager = VitalsEstimateManager()
+        // Config: 30 FPS
+        
+        // 1. Send 500 frames (Enough for HR (120), NOT enough for HRV (600))
+        var times: [Double] = []
+        var ppg: [Float] = []
+        for i in 0..<500 {
+            let t = Double(i)/30.0
+            times.append(t)
+            
+            // FIX: Use sin^3 to sharpen peaks.
+            // A pure sine wave has a peak of ~1.41 sigma, which is below the 1.5 sigma detection threshold.
+            // sin^3 has a peak of ~1.78 sigma, which ensures robust detection.
+            let raw = sin(2 * .pi * 1.0 * t + 0.1) // 60 BPM + phase offset
+            ppg.append(Float(pow(raw, 3)))
+        }
+        
+        let chunk1 = makeChunk(times: times, ppg: ppg)
+        let res1 = await manager.process(chunk: chunk1, mode: .complete, config: config)
+        
+        // Should have HR now
+        XCTAssertNotNil(res1.vitalSigns.heartRate, "HR should be present > 120 frames")
+        XCTAssertNil(res1.vitalSigns.hrvSdnn, "HRV should be nil < 600 frames")
+        
+        // 2. Send 200 more frames (Total 700 > 600)
+        var times2: [Double] = []
+        var ppg2: [Float] = []
+        for i in 500..<700 {
+            let t = Double(i)/30.0
+            times2.append(t)
+            let raw = sin(2 * .pi * 1.0 * t + 0.1)
+            ppg2.append(Float(pow(raw, 3)))
+        }
+        
+        let chunk2 = makeChunk(times: times2, ppg: ppg2)
+        let res2 = await manager.process(chunk: chunk2, mode: .complete, config: config)
+        
+        XCTAssertNotNil(res2.vitalSigns.hrvSdnn, "HRV should be present > 600 frames")
+    }
     
     // MARK: - 5. Face Data Tests (Hard Stitching)
     
@@ -315,5 +356,122 @@ final class VitalsEstimateManagerTests: XCTestCase {
         // If reset worked, 3.0 is treated as new data, not overlap
         XCTAssertEqual(result.time.count, 2)
         XCTAssertEqual(result.time.first!, 3.0)
+    }
+
+    // MARK: - Missing Coverage
+    
+    func testMismatchedArrayLengths() async {
+        let manager = VitalsEstimateManager()
+        
+        // Scenario: API glitch where we get 5 timestamps but only 2 PPG points
+        // The makeChunk helper usually auto-fills, so we construct manually here
+        let times = [0.0, 1.0, 2.0, 3.0, 4.0]
+        let ppgData = [10.0, 20.0] // Short!
+        
+        let ppgWave = WaveformMetric(data: ppgData, unit: "", confidence: [1.0, 1.0], note: nil)
+        let vitals = VitalSigns(
+            heartRate: nil, respiratoryRate: nil, hrvSdnn: nil, hrvRmssd: nil, hrvLfhf: nil,
+            ppgWaveform: ppgWave,
+            respiratoryWaveform: nil
+        )
+        
+        let chunk = VitalLensResult(
+            face: FaceData(coordinates: nil, confidence: nil, note: nil),
+            vitalSigns: vitals,
+            time: times
+        )
+        
+        // Should not crash
+        let result = await manager.process(chunk: chunk, mode: .complete, config: config)
+        
+        // Verify behavior: We expect the time to be full length
+        XCTAssertEqual(result.time.count, 5)
+        
+        // And the PPG data should essentially stop where input stopped (or be 0 if padded, depending on internal merge logic)
+        // With current SignalBuffer.merge logic, it just takes what is available.
+        // Since `constructOutput` slices based on `timestamps.count` (5) and uses `safeSlice`,
+        // it will return however much is in the buffer (2).
+        XCTAssertEqual(result.vitalSigns.ppgWaveform?.data.count, 2)
+    }
+    
+    func testEffectiveFPSCalculation() async {
+        let manager = VitalsEstimateManager()
+        
+        // Simulate 20 FPS (0.05s interval)
+        // Send enough data (>= 60 frames) to trigger the FPS calc
+        var times: [Double] = []
+        for i in 0..<100 {
+            times.append(Double(i) * 0.05) 
+        }
+        
+        let chunk = makeChunk(times: times)
+        let result = await manager.process(chunk: chunk, mode: .complete, config: config)
+        
+        // Config says 1.0, but data says 20.0. Manager should trust data.
+        XCTAssertEqual(result.fps ?? 0.0, 20.0, accuracy: 0.5)
+    }
+
+    func testTimestampPrecisionErrors() async {
+        let manager = VitalsEstimateManager()
+        
+        // Chunk 1 ends exactly at 1.0
+        let chunk1 = makeChunk(times: [1.0], ppg: [10])
+        _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
+        
+        // Chunk 2 starts at 1.000000001 (Micro-drift)
+        // Theoretically this IS the same frame as 1.0, but strict > check sees it as new.
+        let chunk2 = makeChunk(times: [1.000000001, 2.0], ppg: [10, 20])
+        
+        let result = await manager.process(chunk: chunk2, mode: .complete, config: config)
+        
+        // EXPECTATION: Should detect overlap and merge (count = 2)
+        XCTAssertEqual(result.time.count, 2) 
+    }
+
+    func testNaNHandlingInSignalMerge() async {
+        let manager = VitalsEstimateManager()
+        
+        // Existing data
+        let chunk1 = makeChunk(times: [1.0], ppg: [10.0])
+        _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
+        
+        // Incoming data has a NaN (e.g. lost tracking) overlapping our existing data
+        let chunk2 = makeChunk(times: [1.0, 2.0], ppg: [Float.nan, 20.0])
+        
+        let result = await manager.process(chunk: chunk2, mode: .complete, config: config)
+        let ppg = result.vitalSigns.ppgWaveform!.data
+        
+        // If we simply add/divide by count, 10 + NaN = NaN.
+        // We must ensure the Manager or SignalBuffer ignores NaNs during merge.
+        XCTAssertFalse(ppg[0].isNaN, "Merging a NaN should not corrupt existing valid history")
+        XCTAssertEqual(ppg[0], 10.0, accuracy: 0.1) 
+    }
+
+    func testJitteryTimestamps() async {
+        let manager = VitalsEstimateManager()
+        let jitterConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "face", supportedVitals: ["heart_rate"])
+
+        // Generate 60 frames with random jitter around 30 FPS (0.033s)
+        var times: [Double] = []
+        var ppg: [Float] = []
+        var currentTime = 0.0
+        
+        for _ in 0..<120 {
+            // Interval is 0.033 +/- 0.015
+            let jitter = Double.random(in: -0.015...0.015)
+            currentTime += (0.0333 + jitter)
+            times.append(currentTime)
+            ppg.append(Float(sin(2 * .pi * 1.0 * currentTime))) // 60 BPM
+        }
+        
+        let chunk = makeChunk(times: times, ppg: ppg)
+        let result = await manager.process(chunk: chunk, mode: .complete, config: jitterConfig)
+        
+        // Verify FPS calculation is roughly 30 despite jitter
+        XCTAssertEqual(result.fps ?? 0, 30.0, accuracy: 5.0)
+        
+        // Verify Estimation still works (SignalOps usually handles non-uniform sampling via detrend/standardize assuming fs is average)
+        XCTAssertNotNil(result.vitalSigns.heartRate?.value)
+        XCTAssertEqual(result.vitalSigns.heartRate?.value ?? 0, 60.0, accuracy: 3.0)
     }
 }

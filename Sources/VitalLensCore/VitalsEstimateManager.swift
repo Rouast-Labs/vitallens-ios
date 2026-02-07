@@ -26,30 +26,31 @@ struct SignalBuffer {
         guard newCount > 0 else { return }
         
         // 1. Handle Overlap (Average with existing data)
-        // We only merge if we actually have data to merge against
         let validOverlap = min(overlapCount, sum.count, newCount)
         
         if validOverlap > 0 {
-            let startIdx = sum.count - validOverlap // Backtrack from the end
+            let startIdx = sum.count - validOverlap
             
             for i in 0..<validOverlap {
-                // Determine the alignment:
-                // The first element of 'data' corresponds to sum[startIdx]
-                // The overlap logic assumes the input 'data' starts exactly where the buffer tail starts.
-                // In standard stitching, 'overlapCount' is how many frames at the START of 'data' are repeats.
-                
-                // Note: The caller (Manager) calculates overlapCount based on Time.
-                // data[0...overlapCount-1] are the frames to merge.
-                
-                sum[startIdx + i] += data[i]
-                count[startIdx + i] += 1
+                let newVal = data[i]
+                // FIX: Ignore NaNs so we don't poison our history
+                if !newVal.isNaN {
+                    sum[startIdx + i] += newVal
+                    count[startIdx + i] += 1
+                }
             }
         }
         
         // 2. Handle New Data (Append)
         if newCount > validOverlap {
             let newSlice = data[validOverlap...]
-            sum.append(contentsOf: newSlice)
+            
+            // FIX: Sanitize new data (replace NaN with 0 for sum, but keep count aligned)
+            // We treat NaN as a "0" value sample with a count of 1 to maintain array alignment,
+            // but since it's 0 it won't affect the sum. SignalOps.standardize handles flatlines later.
+            let safeSlice = newSlice.map { $0.isNaN ? 0.0 : $0 }
+            
+            sum.append(contentsOf: safeSlice)
             count.append(contentsOf: Array(repeating: 1, count: newSlice.count))
         }
     }
@@ -124,13 +125,10 @@ public actor VitalsEstimateManager {
         config: ModelConfig?
     ) -> VitalLensResult {
         
-        let fps = calculateEffectiveFPS() ?? Float(config?.fpsTarget ?? 30.0)
-        
         // 1. Calculate Overlap based on Time
-        // This tells us how many frames at the START of 'chunk' are historical.
         let overlapCount = mergeTimestamps(newTimes: chunk.time)
         
-        // 2. Merge Signals ("Soft Stitching" / Averaging)
+        // 2. Merge Signals ("Soft Stitching")
         if let ppg = chunk.vitalSigns.ppgWaveform {
             ppgData.merge(data: ppg.data.map { Float($0) }, overlapCount: overlapCount)
             ppgConf.merge(data: ppg.confidence.map { Float($0) }, overlapCount: overlapCount)
@@ -140,8 +138,7 @@ public actor VitalsEstimateManager {
             respConf.merge(data: resp.confidence.map { Float($0) }, overlapCount: overlapCount)
         }
         
-        // 3. Merge Face Data ("Hard Stitching" / First Writer Wins)
-        // We only append the NEW data (indices >= overlapCount). We do not change existing history.
+        // 3. Merge Face Data
         if let coords = chunk.face.coordinates, let conf = chunk.face.confidence {
             let safeOverlap = min(overlapCount, coords.count)
             if coords.count > safeOverlap {
@@ -149,7 +146,6 @@ public actor VitalsEstimateManager {
                 faceConfidence.append(contentsOf: conf[safeOverlap...])
             }
         } else {
-            // Pad if face data is missing but time advanced
             let newFrames = chunk.time.count - overlapCount
             if newFrames > 0 {
                 faceCoordinates.append(contentsOf: Array(repeating: [], count: newFrames))
@@ -158,14 +154,15 @@ public actor VitalsEstimateManager {
         }
         
         // 4. Prune Internal History
-        // We must keep enough data for HRV (60s), regardless of the requested output mode.
         pruneInternalState(keeping: maxInternalHistory)
         
-        // 5. Estimate Vitals
-        // Note: We use the full averaged internal buffer for estimation to maximize accuracy.
+        // 5. Calculate FPS (MOVED HERE - Must happen AFTER merge/prune to see current data)
+        let fps = calculateEffectiveFPS() ?? Float(config?.fpsTarget ?? 30.0)
+        
+        // 6. Estimate Vitals
         let computedVitals = estimateVitals(fps: fps)
         
-        // 6. Construct Output
+        // 7. Construct Output
         return constructOutput(
             originalResult: chunk,
             computedVitals: computedVitals,
@@ -181,20 +178,21 @@ public actor VitalsEstimateManager {
         guard !newTimes.isEmpty else { return 0 }
         
         guard let lastTime = timestamps.last else {
-            // First chunk ever
             timestamps = newTimes
             return 0
         }
         
-        // Find where the new chunk actually provides *new* data (time > lastTime)
-        if let firstNewIndex = newTimes.firstIndex(where: { $0 > lastTime }) {
+        // FIX: Use an epsilon to prevent float equality issues (e.g. 1.0000001 vs 1.0)
+        // 0.005 is safe for FPS up to ~200 (frame time 0.005s)
+        let epsilon = 0.005
+        
+        if let firstNewIndex = newTimes.firstIndex(where: { $0 > (lastTime + epsilon) }) {
             let overlapCount = firstNewIndex
             let newSlice = newTimes[firstNewIndex...]
             timestamps.append(contentsOf: newSlice)
             return overlapCount
         } else {
-            // Corner Case: All new times are older or equal to lastTime?
-            // This implies the entire chunk is "Overlap".
+            // If all new times are effectively <= lastTime, it's all overlap
             return newTimes.count
         }
     }
