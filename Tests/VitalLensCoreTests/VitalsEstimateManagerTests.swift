@@ -5,16 +5,17 @@ final class VitalsEstimateManagerTests: XCTestCase {
     
     // MARK: - Helpers
     
-    /// Creates a dummy config for testing
+    /// Creates a dummy config for testing.
+    /// FPS is set to 1.0 to make manual time calculations easier.
     let config = ModelConfig(
         nInputs: 4,
         inputSize: 40,
-        fpsTarget: 1.0, // Low FPS makes math easier for manual verification
+        fpsTarget: 1.0,
         roiMethod: "face",
         supportedVitals: ["heart_rate", "ppg_waveform"]
     )
     
-    /// Helper to create a dummy result chunk
+    /// Helper to create a synthetic result chunk.
     func makeChunk(
         times: [Double],
         ppg: [Float]? = nil,
@@ -85,7 +86,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         let chunk1 = makeChunk(times: [1.0, 2.0], ppg: [10, 20])
         _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
         
-        // Gap in time
+        // Gap in time (3.0, 4.0)
         let chunk2 = makeChunk(times: [3.0, 4.0], ppg: [30, 40])
         let result = await manager.process(chunk: chunk2, mode: .complete, config: config)
         
@@ -99,7 +100,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         let chunk1 = makeChunk(times: [1.0, 2.0], ppg: [10, 20])
         _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
         
-        // Same chunk again
+        // Send exactly the same chunk again
         let result = await manager.process(chunk: chunk1, mode: .complete, config: config)
         
         XCTAssertEqual(result.time.count, 2)
@@ -124,7 +125,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         let res2 = await manager.process(chunk: chunk2, mode: .incremental, config: config)
         
         // Incremental should ONLY return the *new* data point (4.0)
-        // It should NOT return 2.0 or 3.0, even though they were updated/averaged internally
+        // It should NOT return 2.0 or 3.0, even though they were updated internally
         XCTAssertEqual(res2.time, [4.0])
         XCTAssertEqual(res2.vitalSigns.ppgWaveform!.data.count, 1)
     }
@@ -170,20 +171,18 @@ final class VitalsEstimateManagerTests: XCTestCase {
     func testPruningKeepsInternalHistory() async {
         let manager = VitalsEstimateManager()
         
-        // Max internal history is 1800.
-        // Let's add 2000 frames.
+        // Max internal history is 1800. Add 2000 frames.
         var times: [Double] = []
         for i in 0..<2000 { times.append(Double(i)) }
         let chunk = makeChunk(times: times)
         
         // Process in .incremental mode.
         // The manager should prune the buffer to 1800 items BEFORE returning the result.
-        // Therefore, we only see the 1800 retained items.
         let result = await manager.process(chunk: chunk, mode: .incremental, config: config)
         
         XCTAssertEqual(result.time.count, 1800, "Should be capped at max internal history immediately")
         
-        // Now add 1 more frame.
+        // Add 1 more frame.
         let chunk2 = makeChunk(times: [2000.0])
         let res2 = await manager.process(chunk: chunk2, mode: .incremental, config: config)
         
@@ -235,7 +234,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
     
     func testInsufficientDataSkipsEstimation() async {
         let manager = VitalsEstimateManager()
-        // 30 frames (Need 120)
+        // 30 frames (Need 120 for HR)
         let chunk = makeChunk(times: (0..<30).map { Double($0)/30.0 })
         
         let result = await manager.process(chunk: chunk, mode: .complete, config: config)
@@ -254,9 +253,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
             let t = Double(i)/30.0
             times.append(t)
             
-            // FIX: Use sin^3 to sharpen peaks.
-            // A pure sine wave has a peak of ~1.41 sigma, which is below the 1.5 sigma detection threshold.
-            // sin^3 has a peak of ~1.78 sigma, which ensures robust detection.
+            // Use sin^3 to sharpen peaks for robust detection (Crest factor > 1.5 sigma)
             let raw = sin(2 * .pi * 1.0 * t + 0.1) // 60 BPM + phase offset
             ppg.append(Float(pow(raw, 3)))
         }
@@ -358,13 +355,12 @@ final class VitalsEstimateManagerTests: XCTestCase {
         XCTAssertEqual(result.time.first!, 3.0)
     }
 
-    // MARK: - Missing Coverage
+    // MARK: - Edge Cases
     
     func testMismatchedArrayLengths() async {
         let manager = VitalsEstimateManager()
         
         // Scenario: API glitch where we get 5 timestamps but only 2 PPG points
-        // The makeChunk helper usually auto-fills, so we construct manually here
         let times = [0.0, 1.0, 2.0, 3.0, 4.0]
         let ppgData = [10.0, 20.0] // Short!
         
@@ -387,10 +383,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         // Verify behavior: We expect the time to be full length
         XCTAssertEqual(result.time.count, 5)
         
-        // And the PPG data should essentially stop where input stopped (or be 0 if padded, depending on internal merge logic)
-        // With current SignalBuffer.merge logic, it just takes what is available.
-        // Since `constructOutput` slices based on `timestamps.count` (5) and uses `safeSlice`,
-        // it will return however much is in the buffer (2).
+        // And the PPG data should essentially stop where input stopped
         XCTAssertEqual(result.vitalSigns.ppgWaveform?.data.count, 2)
     }
     
@@ -401,7 +394,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         // Send enough data (>= 60 frames) to trigger the FPS calc
         var times: [Double] = []
         for i in 0..<100 {
-            times.append(Double(i) * 0.05) 
+            times.append(Double(i) * 0.05)
         }
         
         let chunk = makeChunk(times: times)
@@ -419,13 +412,13 @@ final class VitalsEstimateManagerTests: XCTestCase {
         _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
         
         // Chunk 2 starts at 1.000000001 (Micro-drift)
-        // Theoretically this IS the same frame as 1.0, but strict > check sees it as new.
+        // Strict equality would see this as a NEW frame, causing jitter. Epsilon logic handles it.
         let chunk2 = makeChunk(times: [1.000000001, 2.0], ppg: [10, 20])
         
         let result = await manager.process(chunk: chunk2, mode: .complete, config: config)
         
-        // EXPECTATION: Should detect overlap and merge (count = 2)
-        XCTAssertEqual(result.time.count, 2) 
+        // Should detect overlap and merge
+        XCTAssertEqual(result.time.count, 2)
     }
 
     func testNaNHandlingInSignalMerge() async {
@@ -435,7 +428,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         let chunk1 = makeChunk(times: [1.0], ppg: [10.0])
         _ = await manager.process(chunk: chunk1, mode: .complete, config: config)
         
-        // Incoming data has a NaN (e.g. lost tracking) overlapping our existing data
+        // Incoming data has a NaN (e.g., lost tracking) overlapping our existing data
         let chunk2 = makeChunk(times: [1.0, 2.0], ppg: [Float.nan, 20.0])
         
         let result = await manager.process(chunk: chunk2, mode: .complete, config: config)
@@ -444,14 +437,14 @@ final class VitalsEstimateManagerTests: XCTestCase {
         // If we simply add/divide by count, 10 + NaN = NaN.
         // We must ensure the Manager or SignalBuffer ignores NaNs during merge.
         XCTAssertFalse(ppg[0].isNaN, "Merging a NaN should not corrupt existing valid history")
-        XCTAssertEqual(ppg[0], 10.0, accuracy: 0.1) 
+        XCTAssertEqual(ppg[0], 10.0, accuracy: 0.1)
     }
 
     func testJitteryTimestamps() async {
         let manager = VitalsEstimateManager()
         let jitterConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "face", supportedVitals: ["heart_rate"])
 
-        // Generate 60 frames with random jitter around 30 FPS (0.033s)
+        // Generate 120 frames with random jitter around 30 FPS (0.033s)
         var times: [Double] = []
         var ppg: [Float] = []
         var currentTime = 0.0
