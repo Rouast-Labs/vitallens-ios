@@ -27,6 +27,10 @@ public struct SignalOps {
         
         vDSP_normalize(signal, 1, nil, 1, &mu, &sigma, vDSP_Length(signal.count))
         
+        if sigma < 1e-6 {
+            return [Float](repeating: 0.0, count: signal.count)
+        }
+        
         var result = [Float](repeating: 0, count: signal.count)
         vDSP_normalize(signal, 1, &result, 1, &mu, &sigma, vDSP_Length(signal.count))
         
