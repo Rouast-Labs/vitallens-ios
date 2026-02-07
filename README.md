@@ -8,6 +8,7 @@
   <p>Estimate vital signs such as heart rate, HRV, and respiratory rate from face video in Swift.</p>
 </div>
 
+<!-- mkdocs-start -->
 `vitallens-ios` is the official Swift SDK for the **[VitalLens API](https://www.rouast.com/api/)**. It provides a modular, high-performance toolset for integrating physiological sensing into iOS applications using `async`/`await` and the Vision framework.
 
 ## Features
@@ -55,6 +56,7 @@ struct ScanView: View {
     }
 }
 ```
+<!-- mkdocs-end -->
 
 ## Documentation
 
@@ -64,6 +66,7 @@ struct ScanView: View {
 - **[Proxies & Security](https://docs.rouast.com/ios/proxies):** How to keep your API keys safe.
 - **[API Reference](https://docs.rouast.com/ios/ref):** Detailed class and method documentation.
 
+<!-- mkdocs-bottom-start -->
 ## Requirements
 
 * **iOS 15.0+**
@@ -73,3 +76,4 @@ struct ScanView: View {
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+<!-- mkdocs-bottom-end -->
