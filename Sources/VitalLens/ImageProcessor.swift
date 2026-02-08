@@ -162,7 +162,6 @@ final class ImageProcessor: @unchecked Sendable {
         let cropW = Int(roi.width * CGFloat(width))
         let cropH = Int(roi.height * CGFloat(height))
         
-        // FIX: Added validation check (was missing in previous draft)
         guard cropX >= 0, cropY >= 0, cropX + cropW <= width, cropY + cropH <= height else {
             throw VitalLensError.processingError("ROI out of bounds")
         }
