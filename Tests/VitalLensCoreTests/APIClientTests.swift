@@ -8,6 +8,7 @@ final class APIClientTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
+        // Ensure MockURLProtocol is registered in the configuration
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         session = URLSession(configuration: configuration)
@@ -20,7 +21,7 @@ final class APIClientTests: XCTestCase {
     
     // MARK: - Headers & Auth
     
-    func testAPIKeyHeaderIsSet() async throws {
+    func testAPIKeyHeaderIsSet_DirectCall() async throws {
         apiClient = APIClient(apiKey: "test_key_123", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
@@ -37,6 +38,7 @@ final class APIClientTests: XCTestCase {
         
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "my-proxy.com")
+            // Security Check: Key should NOT be sent to proxy
             XCTAssertNil(request.value(forHTTPHeaderField: "X-Api-Key"))
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
@@ -74,7 +76,7 @@ final class APIClientTests: XCTestCase {
             _ = try await apiClient.resolveModel(requestedModel: nil)
             XCTFail("Should have thrown error")
         } catch {
-            if case VitalLensError.serverError(let code, _) = error {
+            if let vlError = error as? VitalLensError, case .serverError(let code, _) = vlError {
                 XCTAssertEqual(code, 500)
             } else {
                 XCTFail("Wrong error type: \(error)")
@@ -118,7 +120,7 @@ final class APIClientTests: XCTestCase {
     func testStreamBatchRequestConstruction() async throws {
         apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
         
-        let dummyState = [Float](repeating: 0.5, count: 10)
+        let dummyState: [Float] = [0.1, 0.2] // Simple known state
         let dummyData = Data(repeating: 0xFF, count: 100)
         
         MockURLProtocol.requestHandler = { request in
@@ -129,8 +131,20 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Origin"), "vitallens-ios")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Model"), "vitallens-2.0")
             
-            XCTAssertNotNil(request.value(forHTTPHeaderField: "X-State"))
+            guard let stateHeader = request.value(forHTTPHeaderField: "X-State"),
+                  let decodedData = Data(base64Encoded: stateHeader) else {
+                XCTFail("X-State header missing or invalid Base64")
+                return (HTTPURLResponse(), nil)
+            }
             
+            let floats = decodedData.withUnsafeBytes {
+                Array($0.bindMemory(to: Float.self))
+            }
+            XCTAssertEqual(floats.count, 2)
+            XCTAssertEqual(floats[0], 0.1, accuracy: 0.0001)
+            XCTAssertEqual(floats[1], 0.2, accuracy: 0.0001)
+            
+            // Verify Body
             let bodyData = request.httpBodyStreamData() ?? request.httpBody
             XCTAssertEqual(bodyData, dummyData)
             
@@ -186,6 +200,7 @@ final class APIClientTests: XCTestCase {
     }
 }
 
+// Ensure the helper exists for handling stream bodies
 extension URLRequest {
     func httpBodyStreamData() -> Data? {
         guard let stream = httpBodyStream else { return nil }
