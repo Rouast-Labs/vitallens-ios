@@ -44,10 +44,10 @@ let package = Package(
             dependencies: ["VitalLensCore"]
         ),
 
-        // // Integration Tests (Runs on iOS Simulator)
-        // .testTarget(
-        //     name: "VitalLensTests",
-        //     dependencies: ["VitalLens", "VitalLensCore"]
-        // ),
+        // Integration Tests (Runs on iOS Simulator)
+        .testTarget(
+            name: "VitalLensTests",
+            dependencies: ["VitalLens", "VitalLensCore"]
+        ),
     ]
 )
