@@ -43,50 +43,53 @@ actor StreamProcessor {
         self.vitalsEstimator = VitalsEstimateManager()
     }
     
-    #if canImport(UIKit)
-    func start(preview: UIView?) async throws -> AsyncStream<VitalLensResult> {
+    /// Starts the processing loop.
+    /// - Parameter preview: A sendable wrapper containing the UIView (iOS Only).
+    func start(preview: SendableUIPreview? = nil) async throws -> AsyncStream<VitalLensResult> {
+        // 1. Resolve Config
         self.config = try await strategy.resolveConfig()
         
-        if let view = preview {
+        // 2. Setup Camera (iOS Only)
+        #if canImport(UIKit)
+        if let wrapper = preview, let view = wrapper.view as? UIView {
+            // Safe: We jump back to MainActor to touch the UIView
             await MainActor.run { camera.showPreview(on: view) }
         }
         try await camera.start()
+        #endif
         
+        // 3. Return Stream
         return AsyncStream { continuation in
             self.outputContinuation = continuation
             
+            #if canImport(UIKit)
             Task {
                 for await sampleBuffer in camera.stream {
-                    // Extract CVPixelBuffer from CMSampleBuffer
                     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-                    
-                    // FIX: Wrap in SendablePixelBuffer before passing into the actor
                     let safeBuffer = SendablePixelBuffer(pixelBuffer)
                     await self.processFrame(safeBuffer)
                 }
             }
+            #endif
         }
     }
-    #endif
     
     /// Processes a single frame. Exposed internally for testing.
-    /// FIX: Accepts SendablePixelBuffer to satisfy actor isolation requirements.
     func processFrame(_ pixelBuffer: SendablePixelBuffer) async {
         guard let config = self.config else { return }
         let now = Date()
         
-        let buffer = pixelBuffer.buffer // Unwrap
+        let buffer = pixelBuffer.buffer
         
-        // 1. Run Face Detection (Throttled)
+        // 1. Run Face Detection
         if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
-            // Pass the wrapper directly to the detector protocol
             if let rect = try? await detector.detectFace(in: pixelBuffer) {
                 self.lastFaceRect = rect
                 self.lastDetectionTime = now
             }
         }
         
-        // 2. Determine Active ROIs (Drift Compensation)
+        // 2. Determine Active ROIs
         let activeROIs = await bufferManager.updateAndGetActiveROIs(
             faceRect: lastFaceRect,
             config: config
@@ -97,7 +100,7 @@ actor StreamProcessor {
         // 3. Crop & Scale
         for item in activeROIs {
             if let rawBytes = try? processor.process(
-                pixelBuffer: buffer, // Processor handles locking internally
+                pixelBuffer: buffer,
                 roi: item.roi,
                 targetSize: config.inputSize
             ) {
@@ -105,7 +108,7 @@ actor StreamProcessor {
             }
         }
         
-        // 4. Check for Batch Readiness
+        // 4. Check Batch
         if !isSending {
             await checkAndSend()
         }

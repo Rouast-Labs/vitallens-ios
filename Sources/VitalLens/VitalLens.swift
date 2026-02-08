@@ -16,7 +16,7 @@ public final class VitalLens: @unchecked Sendable {
         case vitalLens1 = "vitallens-1.0"
     }
 
-    private var streamProcessor: StreamProcessor?
+    var streamProcessor: StreamProcessor?
     
     // MARK: - Configuration
     public let apiKey: String?
@@ -48,22 +48,33 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = globalROI
         self.proxyURL = proxyURL
     }
+
+    init(processor: StreamProcessor) {
+        self.apiKey = "test"
+        self.method = .vitalLens
+        self.faceDetectionFrequency = 1.0
+        self.globalROI = nil
+        self.proxyURL = nil
+        self.streamProcessor = processor
+    }
     
     // MARK: - Public API
     
     #if canImport(UIKit)
-    /// Starts the live camera stream and returns an async sequence of results.
-    ///
-    /// - Parameter preview: An optional UIView where the camera feed should be rendered.
-    /// - Returns: An AsyncStream of `VitalLensResult` updates.
+    /// Starts the live camera stream.
     public func startStream(preview: UIView? = nil) async throws -> AsyncStream<VitalLensResult> {
-        
+        return try await _startStream(preview: preview)
+    }
+    #else
+    /// Starts the stream in headless/test mode (no camera).
+    public func startStream() async throws -> AsyncStream<VitalLensResult> {
+        return try await _startStream(preview: nil)
+    }
+    #endif
+    
+    private func _startStream(preview: Any?) async throws -> AsyncStream<VitalLensResult> {
         if streamProcessor == nil {
-            // Wiring: Create the API Strategy
             let apiClient = APIClient(apiKey: apiKey, proxyURL: proxyURL)
-            // Note: You might want to pass the 'method' to the strategy here if APIClient supports it
-            
-            // Inject strategy into processor
             streamProcessor = StreamProcessor(strategy: apiClient)
         }
         
@@ -71,20 +82,17 @@ public final class VitalLens: @unchecked Sendable {
             throw VitalLensError.processingError("Failed to initialize StreamProcessor")
         }
         
-        return try await processor.start(preview: preview)
+        var wrapper: SendableUIPreview? = nil
+        if let view = preview {
+            wrapper = SendableUIPreview(view)
+        }
+        
+        return try await processor.start(preview: wrapper)
     }
-    #else
-    /// macOS Stub: Video streaming is not supported on macOS in this version.
-    public func startStream() async throws -> AsyncStream<VitalLensResult> {
-        throw VitalLensError.processingError("Live camera streaming is only supported on iOS/iPadOS.")
-    }
-    #endif
-    
-    /// Stops the live camera stream and releases resources.
+
     public func stopStream() {
         Task {
             await streamProcessor?.stop()
-            streamProcessor = nil
         }
     }
     
