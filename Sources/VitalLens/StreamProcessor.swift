@@ -6,13 +6,14 @@ import VitalLensCore
 import UIKit
 #endif
 
+/// The engine that coordinates the camera, face detection, and API inference loop.
 actor StreamProcessor {
 
     #if canImport(UIKit)
     private let camera: CameraSource
     #endif
     
-    private let detector: FaceDetector
+    private let detector: any FaceDetecting
     private let processor: ImageProcessor
     
     private let strategy: any InferenceStrategy
@@ -20,8 +21,9 @@ actor StreamProcessor {
     private let bufferManager: BufferManager
     private let vitalsEstimator: VitalsEstimateManager
     
+    // State
     private var config: ModelConfig?
-    private let detectionInterval: TimeInterval = 1
+    private var detectionInterval: TimeInterval = 0.5
     
     private var lastFaceRect: CGRect?
     private var lastDetectionTime: Date = .distantPast
@@ -29,12 +31,12 @@ actor StreamProcessor {
     
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     
-    init(strategy: any InferenceStrategy) {
+    init(strategy: any InferenceStrategy, detector: any FaceDetecting = FaceDetector()) {
         #if canImport(UIKit)
         self.camera = CameraSource()
         #endif
 
-        self.detector = FaceDetector()
+        self.detector = detector
         self.processor = ImageProcessor()
         self.strategy = strategy
         self.bufferManager = BufferManager()
@@ -43,66 +45,75 @@ actor StreamProcessor {
     
     #if canImport(UIKit)
     func start(preview: UIView?) async throws -> AsyncStream<VitalLensResult> {
-        
-        // 1. Resolve Configuration (Network or Local)
         self.config = try await strategy.resolveConfig()
         
         if let view = preview {
-            await MainActor.run {
-                camera.showPreview(on: view)
-            }
+            await MainActor.run { camera.showPreview(on: view) }
         }
-        
         try await camera.start()
         
         return AsyncStream { continuation in
             self.outputContinuation = continuation
-            Task { await self.processStream() }
-        }
-    }
-
-    private func processStream() async {
-        guard let config = self.config else { return }
-        
-        for await buffer in camera.stream {
-            let now = Date()
             
-            // Face Detection (Local)
-            if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
-                if let rect = try? await detector.detectFace(in: buffer) {
-                    self.lastFaceRect = rect
-                    self.lastDetectionTime = now
+            Task {
+                for await sampleBuffer in camera.stream {
+                    // Extract CVPixelBuffer from CMSampleBuffer
+                    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+                    
+                    // FIX: Wrap in SendablePixelBuffer before passing into the actor
+                    let safeBuffer = SendablePixelBuffer(pixelBuffer)
+                    await self.processFrame(safeBuffer)
                 }
             }
-            
-            let activeROIs = await bufferManager.updateAndGetActiveROIs(
-                faceRect: lastFaceRect,
-                config: config
-            )
-            
-            if activeROIs.isEmpty { continue }
-            
-            // Image Processing (Crop/Resize)
-            for item in activeROIs {
-                if let rawBytes = try? processor.process(
-                    pixelBuffer: buffer,
-                    roi: item.roi,
-                    targetSize: config.inputSize
-                ) {
-                    await bufferManager.append(bufferId: item.id, data: rawBytes)
-                }
-            }
-            
-            if !isSending {
-                await checkAndSend()
-            }
         }
-    }
-    #else
-    func start() async throws -> AsyncStream<VitalLensResult> {
-        throw VitalLensError.processingError("Not supported on macOS")
     }
     #endif
+    
+    /// Processes a single frame. Exposed internally for testing.
+    /// FIX: Accepts SendablePixelBuffer to satisfy actor isolation requirements.
+    func processFrame(_ pixelBuffer: SendablePixelBuffer) async {
+        guard let config = self.config else { return }
+        let now = Date()
+        
+        let buffer = pixelBuffer.buffer // Unwrap
+        
+        // 1. Run Face Detection (Throttled)
+        if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
+            // Pass the wrapper directly to the detector protocol
+            if let rect = try? await detector.detectFace(in: pixelBuffer) {
+                self.lastFaceRect = rect
+                self.lastDetectionTime = now
+            }
+        }
+        
+        // 2. Determine Active ROIs (Drift Compensation)
+        let activeROIs = await bufferManager.updateAndGetActiveROIs(
+            faceRect: lastFaceRect,
+            config: config
+        )
+        
+        if activeROIs.isEmpty { return }
+        
+        // 3. Crop & Scale
+        for item in activeROIs {
+            if let rawBytes = try? processor.process(
+                pixelBuffer: buffer, // Processor handles locking internally
+                roi: item.roi,
+                targetSize: config.inputSize
+            ) {
+                await bufferManager.append(bufferId: item.id, data: rawBytes)
+            }
+        }
+        
+        // 4. Check for Batch Readiness
+        if !isSending {
+            await checkAndSend()
+        }
+    }
+    
+    func _setConfig(_ config: ModelConfig) {
+        self.config = config
+    }
 
     func stop() {
         #if canImport(UIKit)
@@ -122,10 +133,7 @@ actor StreamProcessor {
     private func checkAndSend() async {
         guard let config = self.config else { return }
         
-        guard let buffer = await bufferManager.getReadyBuffer() else {
-            return
-        }
-        
+        guard let buffer = await bufferManager.getReadyBuffer() else { return }
         guard let payload = await buffer.consume() else { return }
         
         self.isSending = true
@@ -139,7 +147,6 @@ actor StreamProcessor {
                 meta: [:]
             )
             
-            // Handle RNN State
             if let stateData = rawResult.state?.data,
                let decodedData = Data(base64Encoded: stateData) {
                 let newState = decodedData.withUnsafeBytes {
@@ -148,18 +155,14 @@ actor StreamProcessor {
                 await bufferManager.updateState(newState)
             }
             
-            // Process Vitals Locally (HRV, Smoothing, Derivation)
             let refinedResult = await vitalsEstimator.process(chunk: rawResult, config: config)
-            
             outputContinuation?.yield(refinedResult)
             
         } catch {
-            print("VitalLens Stream Error: \(error)")
+            print("[StreamProcessor] Error: \(error)")
         }
         
         self.isSending = false
-        
-        // Recursive check for buffered frames
         await checkAndSend()
     }
 }

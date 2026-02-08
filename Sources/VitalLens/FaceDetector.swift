@@ -5,7 +5,7 @@ import VitalLensCore
 
 /// An actor responsible for detecting faces in video frames using the Vision framework.
 /// It handles the coordinate space conversion (Vision Bottom-Left -> Normalized Top-Left).
-actor FaceDetector {
+actor FaceDetector: FaceDetecting {
     
     // MARK: - Properties
     
@@ -24,9 +24,10 @@ actor FaceDetector {
     /// - Parameter pixelBuffer: The video frame to analyze.
     /// - Returns: The bounding box of the face in **normalized coordinates (0.0-1.0)** with Top-Left origin,
     ///            or `nil` if no face is found.
-    func detectFace(in pixelBuffer: CVPixelBuffer) async throws -> CGRect? {
-        
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+    func detectFace(in pixelBuffer: SendablePixelBuffer) async throws -> CGRect? {
+        let buffer = pixelBuffer.buffer
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
         
         // Perform the request
         // Note: Vision operations are synchronous on the calling thread, but since we are in an Actor,
