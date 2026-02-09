@@ -183,51 +183,58 @@ actor StreamProcessor {
     private func runInferenceLoop(source: AsyncStream<Void>) async {
         print("[StreamProcessor] Inference Loop Started")
         
+        var consecutiveErrors = 0
+        let maxRetries = 3
+        
         for await _ in source {
             if Task.isCancelled { break }
             
-            // Keep draining the buffer as long as we have enough data to form a batch.
-            // This loop naturally handles "catch up" if the API was slow.
             while let buffer = await bufferManager.getReadyBuffer() {
                 if Task.isCancelled { break }
                 
-                // 1. Dynamic Batching
-                // consume() grabs ALL available frames in the buffer.
+                if consecutiveErrors > 0 {
+                    let delay = pow(2.0, Double(consecutiveErrors)) * 0.1
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+                
                 guard let payload = await buffer.consume() else { break }
                 let state = await bufferManager.getState()
                 
                 do {
-                    // 2. Blocking Inference
-                    // This waits for the Network/CoreML result.
-                    // Meanwhile, processFrame is still running and filling the buffer!
                     let rawResult = try await strategy.process(
                         frames: payload,
                         state: state,
                         meta: [:]
                     )
                     
-                    // 3. State Update
-                    // Must happen immediately to ensure continuity for the NEXT batch.
+                    consecutiveErrors = 0
+                    
                     if let stateData = rawResult.state?.data,
-                       let decoded = Data(base64Encoded: stateData) {
+                    let decoded = Data(base64Encoded: stateData) {
                         let newState = decoded.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
                         await bufferManager.updateState(newState)
                     }
                     
-                    // 4. Emit Result
                     if let config = self.config {
                         let refined = await vitalsEstimator.process(chunk: rawResult, config: config)
                         outputContinuation?.yield(refined)
                     }
                     
                 } catch {
-                    print("[StreamProcessor] Inference Error: \(error)")
-                    // In a real app, you might want to backoff or reset state here.
+                    consecutiveErrors += 1
+                    print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
+                    
+                    if consecutiveErrors >= maxRetries {
+                        print("[StreamProcessor] Max retries hit. Resetting State & Buffers.")
+                        
+                        await bufferManager.reset() 
+                        await vitalsEstimator.reset()
+                        
+                        consecutiveErrors = 0
+                    }
                 }
             }
         }
-        
-        print("[StreamProcessor] Inference Loop Ended")
     }
     
     func _setConfig(_ config: ModelConfig) {
