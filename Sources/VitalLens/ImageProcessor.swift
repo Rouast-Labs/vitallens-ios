@@ -102,7 +102,7 @@ final class ImageProcessor: @unchecked Sendable {
         )
         
         // Scale Y -> scaledYBuffer
-        var error = vImageScale_Planar8(&sourceY, &scaledYBuffer, nil, vImage_Flags(kvImageNoFlags))
+        var error = vImageScale_Planar8(&sourceY, &scaledYBuffer, nil, vImage_Flags(kvImageHighQualityResampling))
         guard error == kvImageNoError else { throw VitalLensError.processingError("vImage Scale Y failed: \(error)") }
         
         // 3. Scale UV Plane
