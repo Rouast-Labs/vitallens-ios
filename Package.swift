@@ -49,5 +49,10 @@ let package = Package(
             name: "VitalLensTests",
             dependencies: ["VitalLens", "VitalLensCore"]
         ),
+
+        .testTarget(
+            name: "VitalLensUITests",
+            dependencies: ["VitalLensUI", "VitalLens"]
+        ),
     ]
 )

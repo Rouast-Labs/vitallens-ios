@@ -5,7 +5,8 @@ import VitalLensCore
 
 public struct VitalLensScanView: View {
     
-    private let apiKey: String
+    private let apiKey: String?
+    private let proxyURL: URL?
     private let method: VitalLens.Method
     private let onComplete: (VitalLensResult) -> Void
     
@@ -18,12 +19,21 @@ public struct VitalLensScanView: View {
     
     private let scanDuration: TimeInterval = 30.0
     
+    /// Initializes the Scan View.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Your VitalLens API Key (Optional if proxyURL is set).
+    ///   - proxyURL: URL to your backend proxy (Optional if apiKey is set).
+    ///   - method: The model version to use (default: .vitalLens).
+    ///   - onComplete: Closure called with the final result upon success.
     public init(
-        apiKey: String,
+        apiKey: String? = nil,
+        proxyURL: URL? = nil,
         method: VitalLens.Method = .vitalLens,
         onComplete: @escaping (VitalLensResult) -> Void
     ) {
         self.apiKey = apiKey
+        self.proxyURL = proxyURL
         self.method = method
         self.onComplete = onComplete
     }
@@ -88,7 +98,13 @@ public struct VitalLensScanView: View {
     private func startSession(in view: UIView) {
         guard client == nil else { return }
         
-        let newClient = VitalLens(apiKey: apiKey, method: method)
+        // Validation
+        if apiKey == nil && proxyURL == nil {
+            self.statusMessage = "Error: Missing API Key or Proxy URL"
+            return
+        }
+        
+        let newClient = VitalLens(apiKey: apiKey, method: method, proxyURL: proxyURL)
         self.client = newClient
         
         Task {

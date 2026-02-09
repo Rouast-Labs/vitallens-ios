@@ -5,7 +5,8 @@ import VitalLensCore
 
 public struct VitalLensMonitorView: View {
     
-    private let apiKey: String
+    private let apiKey: String?
+    private let proxyURL: URL?
     private let showWaveforms: Bool
     
     @State private var client: VitalLens?
@@ -18,8 +19,19 @@ public struct VitalLensMonitorView: View {
     @State private var ppgHistory: [Double] = []
     private let maxHistoryPoints = 150
     
-    public init(apiKey: String, showWaveforms: Bool = true) {
+    /// Initializes the Monitor View.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Your VitalLens API Key (Optional if proxyURL is set).
+    ///   - proxyURL: URL to your backend proxy (Optional if apiKey is set).
+    ///   - showWaveforms: Whether to render the real-time PPG chart (default: true).
+    public init(
+        apiKey: String? = nil,
+        proxyURL: URL? = nil,
+        showWaveforms: Bool = true
+    ) {
         self.apiKey = apiKey
+        self.proxyURL = proxyURL
         self.showWaveforms = showWaveforms
     }
     
@@ -98,7 +110,12 @@ public struct VitalLensMonitorView: View {
     private func startSession(in view: UIView) {
         guard client == nil else { return }
         
-        let newClient = VitalLens(apiKey: apiKey, method: .vitalLens2)
+        if apiKey == nil && proxyURL == nil {
+            self.status = "Config Error"
+            return
+        }
+        
+        let newClient = VitalLens(apiKey: apiKey, method: .vitalLens2, proxyURL: proxyURL)
         self.client = newClient
         
         Task {
