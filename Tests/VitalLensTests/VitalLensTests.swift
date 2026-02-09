@@ -10,7 +10,9 @@ final class VitalLensTests: XCTestCase {
         // 1. Setup Mock Processor
         let strategy = MockStrategy()
         let detector = MockFaceDetector()
-        let processor = StreamProcessor(strategy: strategy, detector: detector)
+
+        let mockCamera = MockCameraSource()
+        let processor = StreamProcessor(strategy: strategy, detector: detector, camera: mockCamera)
         
         // Manually inject config to bypass API resolution in test
         let config = try await strategy.resolveConfig()
@@ -64,5 +66,43 @@ final class VitalLensTests: XCTestCase {
         XCTAssertEqual(client.method, .vitalLens2)
         XCTAssertEqual(client.faceDetectionFrequency, 2.0)
         XCTAssertEqual(client.proxyURL, url)
+    }
+}
+
+final class MockCameraSource: CameraStreaming, @unchecked Sendable {
+    private var continuation: AsyncStream<SendablePixelBuffer>.Continuation?
+    
+    var stream: AsyncStream<SendablePixelBuffer> {
+        AsyncStream { continuation in
+            self.continuation = continuation
+        }
+    }
+    
+    func start() async throws {
+        // Simulate the camera producing frames
+        Task {
+            for _ in 0..<30 {
+                // 30fps simulation
+                try? await Task.sleep(nanoseconds: 33_000_000)
+                
+                if let buffer = createDummyBuffer() {
+                    continuation?.yield(SendablePixelBuffer(buffer))
+                }
+            }
+        }
+    }
+    
+    func stop() {
+        continuation?.finish()
+    }
+    
+    #if canImport(UIKit)
+    @MainActor func showPreview(on view: UIView) {}
+    #endif
+    
+    private func createDummyBuffer() -> CVPixelBuffer? {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &buffer)
+        return buffer
     }
 }

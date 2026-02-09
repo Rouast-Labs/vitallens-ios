@@ -5,11 +5,9 @@ import VitalLensCore
 
 public struct VitalLensMonitorView: View {
     
-    // Config
     private let apiKey: String
     private let showWaveforms: Bool
     
-    // State
     @State private var client: VitalLens?
     @State private var heartRate: String = "--"
     @State private var hrvSDNN: String = "--"
@@ -17,7 +15,6 @@ public struct VitalLensMonitorView: View {
     @State private var status: String = "Connecting..."
     @State private var isActive: Bool = false
     
-    // Waveform Buffers (Last 150 points is ~5 seconds at 30fps)
     @State private var ppgHistory: [Double] = []
     private let maxHistoryPoints = 150
     
@@ -31,28 +28,26 @@ public struct VitalLensMonitorView: View {
             Color(UIColor.systemBackground).edgesIgnoringSafeArea(.all)
             
             VStack(spacing: 24) {
-                // 1. Header / Status
                 HStack {
                     Text("VitalLens Monitor")
                         .font(.headline)
+                        .foregroundColor(Color.primary)
                     Spacer()
                     StatusBadge(status: status, isActive: isActive)
                 }
                 .padding(.horizontal)
                 .padding(.top)
                 
-                // 2. Main Metric (Heart Rate)
                 VStack(spacing: -5) {
                     Text(heartRate)
                         .font(.system(size: 80, weight: .bold, design: .rounded))
-                        // .contentTransition(.numericText(value: Double(heartRate) ?? 0)) // iOS 16+
                         .monospacedDigit()
+                        .foregroundColor(Color.primary)
                     Text("BPM")
                         .font(.headline)
                         .foregroundStyle(.secondary)
                 }
                 
-                // 3. Secondary Metrics Grid
                 if #available(iOS 16.0, *) {
                     Grid(horizontalSpacing: 20) {
                         GridRow {
@@ -69,7 +64,6 @@ public struct VitalLensMonitorView: View {
                     .padding(.horizontal)
                 }
                 
-                // 4. Real-time Graph
                 if showWaveforms {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("PPG Signal")
@@ -89,7 +83,6 @@ public struct VitalLensMonitorView: View {
                 
                 Spacer()
                 
-                // 5. Hidden Camera Preview (Required to keep camera active)
                 CameraPreview { view in
                     startSession(in: view)
                 }
@@ -126,26 +119,24 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        if let hr = result.vitalSigns.heartRate?.value {
+        if let hr = result.heartRate?.latest?.value {
             self.heartRate = String(format: "%.0f", hr)
         }
-        if let sdnn = result.vitalSigns.hrvSdnn?.value {
+        if let sdnn = result.hrvSdnn?.latest?.value {
             self.hrvSDNN = String(format: "%.0f", sdnn)
         }
-        if let rr = result.vitalSigns.respiratoryRate?.value {
+        if let rr = result.respiratoryRate?.latest?.value {
             self.respRate = String(format: "%.0f", rr)
         }
         
-        if showWaveforms, let ppgChunk = result.vitalSigns.ppgWaveform?.data {
-            self.ppgHistory.append(contentsOf: ppgChunk)
+        if showWaveforms, let ppgChunk = result.ppgWaveform?.data {
+            self.ppgHistory.append(contentsOf: ppgChunk.map { Double($0) })
             if self.ppgHistory.count > maxHistoryPoints {
                 self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints)
             }
         }
     }
 }
-
-// MARK: - Internal Subviews
 
 struct StatusBadge: View {
     let status: String
@@ -181,8 +172,8 @@ struct MetricTile: View {
                 Text(value)
                     .font(.title2)
                     .bold()
-                    // .contentTransition(.numericText(value: Double(value) ?? 0))
                     .monospacedDigit()
+                    .foregroundColor(Color.primary)
                 Text(unit)
                     .font(.caption2)
                     .foregroundStyle(.secondary)

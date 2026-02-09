@@ -50,6 +50,7 @@ final class ImageProcessorTests: XCTestCase {
             targetSize: targetSize
         )
         
+        // Check the middle pixel of the result
         let midIndex = (targetSize * targetSize / 2) * 3
         XCTAssertEqual(greenData[midIndex], 0)
         XCTAssertEqual(greenData[midIndex+1], 255)
@@ -122,13 +123,51 @@ final class ImageProcessorTests: XCTestCase {
         
         XCTAssertThrowsError(try processor.process(pixelBuffer: buffer, roi: badROI, targetSize: 40))
     }
+
+    func testProcess_ReturnsTightlyPackedRGB() throws {
+        // Arrange
+        let width = 64
+        let height = 64
+        let targetSize = 40
+        // Use solid red for this test
+        let pixelBuffer = try createBGRAPixelBuffer(width: width, height: height, r: 255, g: 0, b: 0)
+        let roi = CGRect(x: 0, y: 0, width: 1, height: 1) // Full frame
+        
+        // Act
+        let data = try processor.process(pixelBuffer: pixelBuffer, roi: roi, targetSize: targetSize)
+        
+        // Assert
+        let expectedBytes = targetSize * targetSize * 3
+        XCTAssertEqual(data.count, expectedBytes, "Output data size must match width * height * 3 exactly")
+        
+        // Verify no padding:
+        // If vImage added padding, the size would likely be larger (e.g. aligned to 16/32 bytes per row)
+        // For 40px width: 40 * 3 = 120 bytes per row. 120 is not a power of 2, 
+        // ensuring we catch alignment issues if they exist.
+    }
     
     // MARK: - Helpers
     
     private func createBGRAPixelBuffer(width: Int, height: Int, r: UInt8, g: UInt8, b: UInt8) throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &buffer)
-        let pixelBuffer = buffer!
+        // Standardize keys for test buffers to ensure compatibility
+        let attributes: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attributes as CFDictionary,
+            &buffer
+        )
+        
+        guard status == kCVReturnSuccess, let pixelBuffer = buffer else {
+            throw NSError(domain: "Test", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create CVPixelBuffer"])
+        }
         
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
@@ -148,8 +187,23 @@ final class ImageProcessorTests: XCTestCase {
     
     private func createQuadrantBGRAPixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &buffer)
-        let pixelBuffer = buffer!
+        let attributes: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attributes as CFDictionary,
+            &buffer
+        )
+        
+        guard let pixelBuffer = buffer else {
+            throw NSError(domain: "Test", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create CVPixelBuffer"])
+        }
+        
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)!
@@ -172,8 +226,23 @@ final class ImageProcessorTests: XCTestCase {
     
     private func createYUVPixelBuffer(width: Int, height: Int, y: UInt8, u: UInt8, v: UInt8) throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &buffer)
-        let pixelBuffer = buffer!
+        // Attributes not strictly necessary for YUV test logic but good for consistency
+        let attributes: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        
+        CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            attributes as CFDictionary,
+            &buffer
+        )
+        guard let pixelBuffer = buffer else {
+            throw NSError(domain: "Test", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create CVPixelBuffer"])
+        }
+        
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         

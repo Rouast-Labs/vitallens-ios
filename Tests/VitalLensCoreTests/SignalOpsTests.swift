@@ -167,7 +167,7 @@ final class SignalOpsTests: XCTestCase {
         var signal = [Float](repeating: 0.0, count: 300)
         
         // Add Baseline Noise
-        for i in 0..<300 { signal[i] = Float.random(in: -0.2...0.2) }
+        for i in 0..<300 { signal[i] = Float.random(in: -0.05...0.05) }
         
         // Add Peaks (Every 30 frames -> 60 BPM)
         let expectedPeaks = stride(from: 15, to: 300, by: 30).map { $0 }

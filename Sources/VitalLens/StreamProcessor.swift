@@ -10,7 +10,7 @@ import UIKit
 actor StreamProcessor {
 
     #if canImport(UIKit)
-    private let camera: CameraSource
+    private let camera: any CameraStreaming
     #endif
     
     private let detector: any FaceDetecting
@@ -31,9 +31,13 @@ actor StreamProcessor {
     
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     
-    init(strategy: any InferenceStrategy, detector: any FaceDetecting = FaceDetector()) {
+    init(
+        strategy: any InferenceStrategy,
+        detector: any FaceDetecting = FaceDetector(),
+        camera: (any CameraStreaming)? = nil
+    ) {
         #if canImport(UIKit)
-        self.camera = CameraSource()
+        self.camera = camera ?? CameraSource()
         #endif
 
         self.detector = detector
@@ -64,9 +68,7 @@ actor StreamProcessor {
             
             #if canImport(UIKit)
             Task {
-                for await sampleBuffer in camera.stream {
-                    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-                    let safeBuffer = SendablePixelBuffer(pixelBuffer)
+                for await safeBuffer in camera.stream {
                     await self.processFrame(safeBuffer)
                 }
             }

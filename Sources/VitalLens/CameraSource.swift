@@ -1,12 +1,12 @@
 import Foundation
 import AVFoundation
+import VitalLensCore
 
 #if canImport(UIKit)
 import UIKit
 
 /// A wrapper around AVCaptureSession that exposes a video stream as an AsyncStream.
-class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
-    
+class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, CameraStreaming, @unchecked Sendable {    
     // MARK: - Properties
     
     private let session = AVCaptureSession()
@@ -15,13 +15,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unc
     private var previewLayer: AVCaptureVideoPreviewLayer?    
 
     /// The stream of video frames.
-    var stream: AsyncStream<CMSampleBuffer> {
+    var stream: AsyncStream<SendablePixelBuffer> {
         AsyncStream { continuation in
             self.continuation = continuation
         }
     }
     
-    private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
+    private var continuation: AsyncStream<SendablePixelBuffer>.Continuation?
     
     // MARK: - Initialization
     
@@ -136,7 +136,8 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unc
     // MARK: - Delegate
     
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        continuation?.yield(sampleBuffer)
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        continuation?.yield(SendablePixelBuffer(pixelBuffer))
     }
 }
 #endif

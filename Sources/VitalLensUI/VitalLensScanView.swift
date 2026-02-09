@@ -5,20 +5,17 @@ import VitalLensCore
 
 public struct VitalLensScanView: View {
     
-    // Configuration
     private let apiKey: String
     private let method: VitalLens.Method
     private let onComplete: (VitalLensResult) -> Void
     
-    // State
     @State private var client: VitalLens?
     @State private var isScanning = false
-    @State private var progress: Double = 0.0 // 0.0 to 1.0
+    @State private var progress: Double = 0.0  
     @State private var currentHeartRate: Int = 0
     @State private var statusMessage: String = "Position your face in the oval"
     @State private var faceDetected = false
     
-    // Constants
     private let scanDuration: TimeInterval = 30.0
     
     public init(
@@ -35,13 +32,11 @@ public struct VitalLensScanView: View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
             
-            // 1. Camera Layer
             CameraPreview { view in
                 startSession(in: view)
             }
             .edgesIgnoringSafeArea(.all)
             
-            // 2. UI Overlay
             VStack {
                 Spacer()
                 
@@ -54,15 +49,12 @@ public struct VitalLensScanView: View {
                 
                 Spacer()
                 
-                // Face Guide Oval & Progress
                 ZStack {
-                    // Guide Oval
                     Ellipse()
                         .strokeBorder(faceDetected ? Color.green : Color.white, lineWidth: 3)
                         .background(Color.black.opacity(0.01))
                         .frame(width: 250, height: 320)
                     
-                    // Progress Ring
                     if isScanning {
                         Circle()
                             .trim(from: 0.0, to: CGFloat(progress))
@@ -71,7 +63,6 @@ public struct VitalLensScanView: View {
                             .frame(width: 340, height: 340)
                             .animation(.linear(duration: 0.1), value: progress)
                         
-                        // Live HR
                         if currentHeartRate > 0 {
                             VStack {
                                 Text("\(currentHeartRate)")
@@ -126,7 +117,7 @@ public struct VitalLensScanView: View {
                         let elapsed = Date().timeIntervalSince(start)
                         self.progress = min(elapsed / scanDuration, 1.0)
                         
-                        if let hr = result.vitalSigns.heartRate?.value {
+                        if let hr = result.heartRate?.latest?.value {
                             self.currentHeartRate = Int(hr)
                         }
                         

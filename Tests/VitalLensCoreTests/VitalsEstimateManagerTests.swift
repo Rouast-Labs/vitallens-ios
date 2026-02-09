@@ -214,7 +214,8 @@ final class VitalsEstimateManagerTests: XCTestCase {
         for i in 500..<700 {
             let t = Double(i)/30.0
             times2.append(t)
-            let raw = sin(2 * .pi * 1.0 * t + 0.1)
+            let freqMod = 1.0 + 0.1 * sin(2 * .pi * 0.1 * t)
+            let raw = sin(2 * .pi * freqMod * t + 0.1)
             ppg2.append(Float(pow(raw, 3)))
         }
         
