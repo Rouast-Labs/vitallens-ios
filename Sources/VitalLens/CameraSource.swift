@@ -1,19 +1,23 @@
 import Foundation
 import AVFoundation
 import VitalLensCore
+import CoreVideo
 
 #if canImport(UIKit)
 import UIKit
 
-/// A wrapper around AVCaptureSession that exposes a video stream as an AsyncStream.
-class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, CameraStreaming, @unchecked Sendable {    
-    // MARK: - Properties
+class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, CameraStreaming, @unchecked Sendable {
     
+    private let queue = DispatchQueue(label: "com.vitallens.camera", qos: .userInitiated)
+    
+    // Real Camera Properties
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
-    private let queue = DispatchQueue(label: "com.vitallens.camera", qos: .userInitiated)
-    private var previewLayer: AVCaptureVideoPreviewLayer?    
-
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    
+    // Simulator Properties
+    private var simulatorTask: Task<Void, Never>?
+    
     /// The stream of video frames.
     var stream: AsyncStream<SendablePixelBuffer> {
         AsyncStream { continuation in
@@ -23,17 +27,21 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     private var continuation: AsyncStream<SendablePixelBuffer>.Continuation?
     
-    // MARK: - Initialization
-    
     override init() {
         super.init()
     }
     
-    // MARK: - Public API
-    
     /// Configures and starts the camera session.
     func start() async throws {
-        // Check Permissions
+        
+        // 1. SIMULATOR PATH
+        #if targetEnvironment(simulator)
+        print("[CameraSource] Running on Simulator. Starting synthetic stream.")
+        startSimulatorStream()
+        return
+        #else
+        
+        // 2. DEVICE PATH
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             break
@@ -44,12 +52,10 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
             throw VitalLensError.processingError("Camera access restricted")
         }
         
-        // Configure Session on background queue
         return try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
                 guard let self = self else { return }
                 do {
-                    // Only configure if not already running/configured
                     if self.session.inputs.isEmpty {
                         try self.configureSession()
                     }
@@ -62,21 +68,34 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
                 }
             }
         }
+        #endif
     }
     
     /// Stops the camera session.
     func stop() {
+        // Stop Simulator Stream
+        #if targetEnvironment(simulator)
+        simulatorTask?.cancel()
+        simulatorTask = nil
+        #endif
+        
+        // Stop Real Stream
         queue.async { [weak self] in
-            self?.session.stopRunning()
+            if self?.session.isRunning == true {
+                self?.session.stopRunning()
+            }
             self?.continuation?.finish()
             self?.continuation = nil
         }
     }
 
     /// Attaches the camera preview to a UIView.
-    /// Must be called on the Main Thread.
     @MainActor
     func showPreview(on view: UIView) {
+        #if targetEnvironment(simulator)
+        // On simulator, just show a placeholder color so we know layout is working
+        view.backgroundColor = .darkGray
+        #else
         if previewLayer == nil {
             let layer = AVCaptureVideoPreviewLayer(session: session)
             layer.videoGravity = .resizeAspectFill
@@ -90,9 +109,10 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
                 view.layer.insertSublayer(layer, at: 0)
             }
         }
+        #endif
     }
     
-    // MARK: - Private Configuration
+    // MARK: - Device Configuration
     
     private func configureSession() throws {
         session.beginConfiguration()
@@ -100,7 +120,6 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         
         session.sessionPreset = .high
         
-        // 1. Input: Front Camera
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
             throw VitalLensError.processingError("No front camera found")
         }
@@ -110,7 +129,6 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
         session.addInput(input)
         
-        // 2. Output: Video Data
         if session.canAddOutput(output) {
             session.addOutput(output)
             output.alwaysDiscardsLateVideoFrames = true
@@ -122,7 +140,6 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
             throw VitalLensError.processingError("Could not add video output")
         }
         
-        // 3. Orientation & Mirroring
         if let connection = output.connection(with: .video) {
             if connection.isVideoOrientationSupported {
                 connection.videoOrientation = .portrait
@@ -133,11 +150,62 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
     }
     
-    // MARK: - Delegate
-    
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         continuation?.yield(SendablePixelBuffer(pixelBuffer))
     }
+    
+    // MARK: - Simulator Fallback
+    
+    #if targetEnvironment(simulator)
+    private func startSimulatorStream() {
+        guard simulatorTask == nil else { return }
+        
+        simulatorTask = Task {
+            while !Task.isCancelled {
+                // Generate 30 FPS
+                try? await Task.sleep(nanoseconds: 33_333_333)
+                
+                if let buffer = createSimulatorBuffer() {
+                    continuation?.yield(SendablePixelBuffer(buffer))
+                }
+            }
+        }
+    }
+    
+    private func createSimulatorBuffer() -> CVPixelBuffer? {
+        var buffer: CVPixelBuffer?
+        let width = 480
+        let height = 640
+        let attrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attrs as CFDictionary,
+            &buffer
+        )
+        
+        guard status == kCVReturnSuccess, let pixelBuffer = buffer else { return nil }
+        
+        // Fill with a moving color to simulate "liveness"
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        
+        if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            // Just fill it with gray for performance
+            for y in 0..<height {
+                memset(baseAddress.advanced(by: y * bytesPerRow), 128, width * 4)
+            }
+        }
+        return pixelBuffer
+    }
+    #endif
 }
 #endif

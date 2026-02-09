@@ -3,8 +3,6 @@ import CoreVideo
 @testable import VitalLens
 @testable import VitalLensCore
 
-// MARK: - Mocks
-
 actor MockStrategy: InferenceStrategy {
     var processCalledCount = 0
     private var shouldFail = false
@@ -48,8 +46,6 @@ actor MockFaceDetector: FaceDetecting {
     }
 }
 
-// MARK: - Tests
-
 final class StreamProcessorTests: XCTestCase {
     
     var strategy: MockStrategy!
@@ -62,36 +58,39 @@ final class StreamProcessorTests: XCTestCase {
         detector = MockFaceDetector()
         processor = StreamProcessor(strategy: strategy, detector: detector)
         
-        // Inject config
-        let config = try await strategy.resolveConfig()
-        await processor._setConfig(config)
+        // We must call start() to initialize the background loop
+        _ = try await processor.start()
         
-        // Create dummy buffer
         var cvBuffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &cvBuffer)
         buffer = SendablePixelBuffer(cvBuffer!)
     }
     
+    override func tearDown() async throws {
+        await processor.stop()
+        strategy = nil
+        detector = nil
+        processor = nil
+    }
+    
     func testProcessFrame_HappyPath_CallsStrategy() async throws {
         await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
-        // Send 20 frames (needs > 16 for cold start)
+        // Push frames fast
         for _ in 0..<20 {
             await processor.processFrame(buffer)
         }
         
-        // Wait for async processing
+        // Give the background loop a moment to wake up and process
         try await Task.sleep(nanoseconds: 200 * 1_000_000)
         
         let count = await strategy.processCalledCount
-        XCTAssertGreaterThan(count, 0, "Strategy should be called when face is present")
+        XCTAssertGreaterThan(count, 0, "Strategy should be called by the background loop")
     }
     
     func testProcessFrame_NoFace_DoesNotCallStrategy() async throws {
-        // Ensure no face is detected
         await detector.setFace(nil)
         
-        // Send frames
         for _ in 0..<20 {
             await processor.processFrame(buffer)
         }
@@ -99,24 +98,22 @@ final class StreamProcessorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 200 * 1_000_000)
         
         let count = await strategy.processCalledCount
-        XCTAssertEqual(count, 0, "Strategy should NOT be called when no face is detected")
+        XCTAssertEqual(count, 0, "Strategy should NOT be called when no face is detected (BufferManager returns no ROIs)")
     }
     
     func testProcessFrame_StrategyFailure_RecoversAndContinues() async throws {
         await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
-        // 1. Force Failure
+        // 1. Induce Failure
         await strategy.setShouldFail(true)
         
-        // Send batch that will fail
         for _ in 0..<20 { await processor.processFrame(buffer) }
         try await Task.sleep(nanoseconds: 200 * 1_000_000)
         
         // 2. Heal
         await strategy.setShouldFail(false)
         
-        // Send another batch
-        // The processor should not be stuck in "isSending" state.
+        // 3. Continue Processing
         for _ in 0..<20 { await processor.processFrame(buffer) }
         try await Task.sleep(nanoseconds: 200 * 1_000_000)
         
@@ -124,21 +121,26 @@ final class StreamProcessorTests: XCTestCase {
         XCTAssertGreaterThan(count, 0, "Processor should recover and process subsequent frames after an error")
     }
     
-    func testStop_ResetsState() async throws {
+    func testStop_KillsBackgroundLoop() async throws {
         await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
-        // Send some frames to fill buffer partially
+        // 1. Process some frames
         for _ in 0..<10 { await processor.processFrame(buffer) }
+        try await Task.sleep(nanoseconds: 100 * 1_000_000)
         
-        // Stop
+        let countBefore = await strategy.processCalledCount
+        
+        // 2. Stop
         await processor.stop()
         
-        // Send more frames (should be ignored or start fresh)
-        for _ in 0..<10 { await processor.processFrame(buffer) }
-        
+        // 3. Try to process more (Inference Loop should be dead)
+        for _ in 0..<50 { await processor.processFrame(buffer) }
         try await Task.sleep(nanoseconds: 200 * 1_000_000)
         
-        let count = await strategy.processCalledCount
-        XCTAssertEqual(count, 0, "Strategy should not be called immediately after stop/reset (buffer was cleared)")
+        let countAfter = await strategy.processCalledCount
+        
+        // Even though frames were pushed, the loop was cancelled, so count should not increase significantly
+        // (It might increase by 1 if a request was already in flight, but not 50 frames worth)
+        XCTAssertEqual(countAfter, countBefore, "Strategy calls should stop after processor.stop()")
     }
 }
