@@ -18,6 +18,9 @@ public final class VitalLens: @unchecked Sendable {
     }
 
     var streamProcessor: StreamProcessor?
+
+    // Observers for lifecycle management
+    private var observers: [NSObjectProtocol] = []
     
     // MARK: - Configuration
     public let apiKey: String?
@@ -48,6 +51,8 @@ public final class VitalLens: @unchecked Sendable {
         self.faceDetectionFrequency = faceDetectionFrequency
         self.globalROI = globalROI
         self.proxyURL = proxyURL
+
+        setupLifecycleObservers()
     }
 
     init(processor: StreamProcessor) {
@@ -57,6 +62,42 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = nil
         self.proxyURL = nil
         self.streamProcessor = processor
+
+        setupLifecycleObservers()
+    }
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    private func setupLifecycleObservers() {
+        #if canImport(UIKit)
+        let center = NotificationCenter.default
+        
+        // Pause on background
+        let backgroundObserver = center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleAppBackground()
+        }
+        
+        // Resume on foreground
+        let foregroundObserver = center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleAppForeground()
+        }
+        
+        observers.append(contentsOf: [backgroundObserver, foregroundObserver])
+        #endif
+    }
+
+    private func handleAppBackground() {
+        Task {
+            await streamProcessor?.pause()
+        }
+    }
+    
+    private func handleAppForeground() {
+        Task {
+            try? await streamProcessor?.resume()
+        }
     }
     
     // MARK: - Public API
@@ -108,7 +149,7 @@ public final class VitalLens: @unchecked Sendable {
         // 3. Components
         let processor = ImageProcessor()
         let detector = FaceDetector()
-        let bufferManager = BufferManager()
+        _ = BufferManager()
         let vitalsManager = VitalsEstimateManager()
         
         var roi: CGRect? = self.globalROI

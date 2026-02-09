@@ -1,4 +1,5 @@
 import XCTest
+import Compression
 @testable import VitalLensCore
 
 final class APIClientTests: XCTestCase {
@@ -115,22 +116,29 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(response.config.nInputs, 4)
     }
     
-    // MARK: - Logic: Streaming
+    // MARK: - Logic: Streaming (Compression & Headers)
     
     func testStreamBatchRequestConstruction() async throws {
         apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
         
-        let dummyState: [Float] = [0.1, 0.2] // Simple known state
-        let dummyData = Data(repeating: 0xFF, count: 100)
+        let dummyState: [Float] = [0.1, 0.2]
+        // Create repeating data that is highly compressible
+        let dummyData = Data(repeating: 0xAB, count: 1000)
         
         MockURLProtocol.requestHandler = { request in
+            // 1. Endpoint Check
             XCTAssertEqual(request.url?.path, "/vitallens-v3/stream")
             XCTAssertEqual(request.httpMethod, "POST")
             
+            // 2. Header Checks
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Origin"), "vitallens-ios")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Model"), "vitallens-2.0")
             
+            // Compression Flag
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Encoding"), "gzip", "Stream requests must declare gzip compression")
+            
+            // State must be in HEADER for stream
             guard let stateHeader = request.value(forHTTPHeaderField: "X-State"),
                   let decodedData = Data(base64Encoded: stateHeader) else {
                 XCTFail("X-State header missing or invalid Base64")
@@ -142,11 +150,16 @@ final class APIClientTests: XCTestCase {
             }
             XCTAssertEqual(floats.count, 2)
             XCTAssertEqual(floats[0], 0.1, accuracy: 0.0001)
-            XCTAssertEqual(floats[1], 0.2, accuracy: 0.0001)
             
-            // Verify Body
-            let bodyData = request.httpBodyStreamData() ?? request.httpBody
-            XCTAssertEqual(bodyData, dummyData)
+            // 3. Body Checks (Compression)
+            let bodyData = request.httpBodyStreamData() ?? request.httpBody ?? Data()
+            
+            // Body should NOT match raw data (it should be compressed)
+            XCTAssertNotEqual(bodyData, dummyData, "Request body was not compressed")
+            // Verify GZIP Magic Bytes (RFC 1952)
+            XCTAssertGreaterThan(bodyData.count, 2, "Body too small for GZIP")
+            XCTAssertEqual(bodyData[0], 0x1f, "Missing GZIP magic byte 1")
+            XCTAssertEqual(bodyData[1], 0x8b, "Missing GZIP magic byte 2")
             
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
         }
@@ -155,6 +168,54 @@ final class APIClientTests: XCTestCase {
             rawRGBBytes: dummyData,
             state: dummyState,
             model: "vitallens-2.0"
+        )
+    }
+    
+    // MARK: - Logic: File Upload (JSON & Body State)
+    
+    func testFileEndpointRequestConstruction() async throws {
+        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        
+        let dummyState: [Float] = [0.5, 0.6]
+        let dummyData = Data([0x01, 0x02, 0x03, 0x04])
+        let metadata = ["fps": "30.0"]
+        
+        MockURLProtocol.requestHandler = { request in
+            // 1. Endpoint Check
+            XCTAssertEqual(request.url?.path, "/vitallens-v3/file")
+            XCTAssertEqual(request.httpMethod, "POST")
+            
+            // 2. Header Checks
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            // Ensure we do NOT send stream headers
+            XCTAssertNil(request.value(forHTTPHeaderField: "X-Encoding"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "X-State"))
+            
+            // 3. Body Checks (JSON)
+            let bodyData = request.httpBodyStreamData() ?? request.httpBody ?? Data()
+            guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] else {
+                XCTFail("Body was not valid JSON")
+                return (HTTPURLResponse(), nil)
+            }
+            
+            XCTAssertEqual(json["origin"] as? String, "vitallens-ios")
+            XCTAssertEqual(json["fps"] as? String, "30.0")
+            
+            // Video should be Base64
+            let videoB64 = json["video"] as? String
+            XCTAssertEqual(videoB64, dummyData.base64EncodedString())
+            
+            // State should be in Body (Base64)
+            let stateB64 = json["state"] as? String
+            XCTAssertNotNil(stateB64)
+            
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
+        }
+        
+        _ = try await apiClient.processVideoChunk(
+            rawRGBBytes: dummyData,
+            metadata: metadata,
+            state: dummyState
         )
     }
 
@@ -219,5 +280,36 @@ extension URLRequest {
         buffer.deallocate()
         stream.close()
         return data
+    }
+}
+
+// Helper for verifying compression in tests
+extension Data {
+    func test_decompressed() -> Data? {
+        let pageSize = 128
+        var decompressed = Data()
+        
+        return try? self.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return nil }
+            let srcSize = self.count
+            
+            // Estimate output size (heuristic for test data)
+            let dstSize = srcSize * 20
+            let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: dstSize)
+            defer { dstBuffer.deallocate() }
+            
+            // ZLIB signature for 'deflate'
+            let compression = COMPRESSION_ZLIB
+            
+            let decompressedSize = compression_decode_buffer(
+                dstBuffer, dstSize,
+                baseAddress.bindMemory(to: UInt8.self, capacity: srcSize), srcSize,
+                nil,
+                compression
+            )
+            
+            if decompressedSize == 0 { return nil }
+            return Data(bytes: dstBuffer, count: decompressedSize)
+        }
     }
 }

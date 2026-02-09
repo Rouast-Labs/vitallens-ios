@@ -28,6 +28,7 @@ actor StreamProcessor {
     private var lastFaceRect: CGRect?
     private var lastDetectionTime: Date = .distantPast
     private var isSending: Bool = false
+    private var isPaused: Bool = false
     
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     
@@ -50,40 +51,71 @@ actor StreamProcessor {
     /// Starts the processing loop.
     /// - Parameter preview: A sendable wrapper containing the UIView (iOS Only).
     func start(preview: SendableUIPreview? = nil) async throws -> AsyncStream<VitalLensResult> {
-        // 1. Resolve Config
-        self.config = try await strategy.resolveConfig()
         
-        // 2. Setup Camera (iOS Only)
+        self.config = try await strategy.resolveConfig()
+        self.isPaused = false
+        
         #if canImport(UIKit)
         if let wrapper = preview, let view = wrapper.view as? UIView {
-            // Safe: We jump back to MainActor to touch the UIView
             await MainActor.run { camera.showPreview(on: view) }
         }
         try await camera.start()
         #endif
         
-        // 3. Return Stream
         return AsyncStream { continuation in
             self.outputContinuation = continuation
             
             #if canImport(UIKit)
             Task {
                 for await safeBuffer in camera.stream {
-                    await self.processFrame(safeBuffer)
+                    if !self.isPaused {
+                        await self.processFrame(safeBuffer)
+                    }
                 }
             }
             #endif
         }
     }
     
+    /// Pauses camera and processing without killing the stream.
+    func pause() async {
+        self.isPaused = true
+        #if canImport(UIKit)
+        camera.stop()
+        #endif
+    }
+    
+    /// Resumes camera and processing.
+    func resume() async throws {
+        self.isPaused = false
+        #if canImport(UIKit)
+        try await camera.start()
+        #endif
+    }
+    
+    func stop() {
+        self.isPaused = true
+        #if canImport(UIKit)
+        camera.stop()
+        #endif
+        
+        outputContinuation?.finish()
+        outputContinuation = nil
+        
+        Task {
+            await bufferManager.reset()
+            await vitalsEstimator.reset()
+        }
+        isSending = false
+    }
+    
     /// Processes a single frame. Exposed internally for testing.
     func processFrame(_ pixelBuffer: SendablePixelBuffer) async {
-        guard let config = self.config else { return }
-        let now = Date()
+        guard let config = self.config, !isPaused else { return }
         
+        let now = Date()
         let buffer = pixelBuffer.buffer
         
-        // 1. Run Face Detection
         if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
             if let rect = try? await detector.detectFace(in: pixelBuffer) {
                 self.lastFaceRect = rect
@@ -91,7 +123,6 @@ actor StreamProcessor {
             }
         }
         
-        // 2. Determine Active ROIs
         let activeROIs = await bufferManager.updateAndGetActiveROIs(
             faceRect: lastFaceRect,
             config: config
@@ -99,7 +130,6 @@ actor StreamProcessor {
         
         if activeROIs.isEmpty { return }
         
-        // 3. Crop & Scale
         for item in activeROIs {
             if let rawBytes = try? processor.process(
                 pixelBuffer: buffer,
@@ -110,29 +140,9 @@ actor StreamProcessor {
             }
         }
         
-        // 4. Check Batch
         if !isSending {
             await checkAndSend()
         }
-    }
-    
-    func _setConfig(_ config: ModelConfig) {
-        self.config = config
-    }
-
-    func stop() {
-        #if canImport(UIKit)
-        camera.stop()
-        #endif
-        
-        outputContinuation?.finish()
-        outputContinuation = nil
-        
-        Task {
-            await bufferManager.reset()
-            await vitalsEstimator.reset() 
-        }
-        isSending = false
     }
     
     private func checkAndSend() async {
@@ -169,5 +179,9 @@ actor StreamProcessor {
         
         self.isSending = false
         await checkAndSend()
+    }
+    
+    func _setConfig(_ config: ModelConfig) {
+        self.config = config
     }
 }
