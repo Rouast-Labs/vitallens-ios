@@ -61,24 +61,34 @@ public actor APIClient {
     private let apiKey: String?
     private let proxyURL: URL?
     private let session: URLSession
+    private let environment: [String: String]
     
-    // Default to the production API if no proxy is provided
     private static let productionBaseURL = URL(string: "https://api.rouast.com/vitallens-v3")!
     
-    private var baseURL: URL {
-        return proxyURL ?? Self.productionBaseURL
-    }
-    
-    /// Initializes a new API client.
-    ///
-    /// - Parameters:
-    ///   - apiKey: The VitalLens API key. Required if `proxyURL` is nil.
-    ///   - proxyURL: Optional URL to a backend proxy. If set, the API key is not sent by the client.
-    ///   - session: The URLSession to use for requests. Defaults to `.shared`.
-    public init(apiKey: String?, proxyURL: URL?, session: URLSession = .shared) {
-        self.apiKey = apiKey
+    public init(
+        apiKey: String? = nil, 
+        proxyURL: URL? = nil, 
+        session: URLSession = .shared,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        self.environment = environment
+        
+        let envKey = environment["VITALLENS_API_KEY"]
+        self.apiKey = apiKey ?? envKey
+        
         self.proxyURL = proxyURL
         self.session = session
+    }
+
+    private var baseURL: URL {
+        if let proxy = proxyURL { return proxy }
+                
+        if let envURLString = environment["VITALLENS_BASE_URL"],
+           let envURL = URL(string: envURLString) {
+            return envURL
+        }
+        
+        return Self.productionBaseURL
     }
     
     // MARK: - Configuration

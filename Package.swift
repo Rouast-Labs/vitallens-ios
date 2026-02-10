@@ -47,7 +47,10 @@ let package = Package(
         // Integration Tests (Runs on iOS Simulator)
         .testTarget(
             name: "VitalLensTests",
-            dependencies: ["VitalLens", "VitalLensCore"]
+            dependencies: ["VitalLens", "VitalLensCore"],
+            resources: [
+                .copy("Resources/sample_video_2.mp4")
+            ]
         ),
 
         .testTarget(

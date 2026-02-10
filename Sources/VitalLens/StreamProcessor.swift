@@ -142,7 +142,7 @@ actor StreamProcessor {
         if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
             Task {
                 if let rect = try? await detector.detectFace(in: pixelBuffer) {
-                    await self.updateFaceRect(rect)
+                    self.updateFaceRect(rect)
                 }
             }
             self.lastDetectionTime = now

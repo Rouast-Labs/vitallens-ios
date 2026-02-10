@@ -141,7 +141,7 @@ public final class VitalLens: @unchecked Sendable {
     public func processVideoFile(at url: URL) async throws -> VitalLensResult {
         // 1. Setup Source
         let source = try await FileSource.from(url: url)
-        
+
         // 2. Resolve Config
         let apiClient = APIClient(apiKey: apiKey, proxyURL: proxyURL)
         let config = try await apiClient.resolveConfig()

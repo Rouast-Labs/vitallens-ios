@@ -19,6 +19,97 @@ final class APIClientTests: XCTestCase {
         MockURLProtocol.requestHandler = nil
         super.tearDown()
     }
+
+    // MARK: - Configuration Tests
+
+    func testEnvironmentBaseURL_IsUsed_WhenProxyIsNil() async throws {
+        // 1. Simulate an environment with a Dev URL
+        let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
+        
+        // 2. Initialize with NO proxy, but with the mock env
+        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session, environment: mockEnv)
+        
+        MockURLProtocol.requestHandler = { request in
+            // 3. Verify the request hits the Dev URL
+            XCTAssertEqual(request.url?.host, "dev.example.com")
+            XCTAssertEqual(request.url?.scheme, "http")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+        }
+        
+        _ = try await apiClient.resolveModel(requestedModel: nil)
+    }
+
+    func testEnvironmentAPIKey_IsUsed_WhenExplicitKeyIsNil() async throws {
+        // 1. Simulate environment with an API Key
+        let mockEnv = ["VITALLENS_API_KEY": "env_secret_key"]
+        
+        // 2. Initialize with nil explicit key
+        apiClient = APIClient(apiKey: nil, proxyURL: nil, session: session, environment: mockEnv)
+        
+        MockURLProtocol.requestHandler = { request in
+            // 3. Verify the header uses the environment key
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "env_secret_key")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+        }
+        
+        _ = try await apiClient.resolveModel(requestedModel: nil)
+    }
+
+    func testExplicitKey_Overrides_EnvironmentKey() async throws {
+        // 1. Conflict: Env has one key, Init has another
+        let mockEnv = ["VITALLENS_API_KEY": "env_key"]
+        
+        apiClient = APIClient(apiKey: "explicit_key", proxyURL: nil, session: session, environment: mockEnv)
+        
+        MockURLProtocol.requestHandler = { request in
+            // 2. Verify Explicit wins
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "explicit_key")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+        }
+        
+        _ = try await apiClient.resolveModel(requestedModel: nil)
+    }
+
+    func testExplicitProxy_Overrides_EnvironmentBaseURL() async throws {
+        // 1. Conflict: Env says Dev, Proxy says Proxy
+        let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
+        let proxy = URL(string: "https://my-proxy.com")!
+        
+        apiClient = APIClient(apiKey: "key", proxyURL: proxy, session: session, environment: mockEnv)
+        
+        MockURLProtocol.requestHandler = { request in
+            // 2. Verify Proxy wins
+            XCTAssertEqual(request.url?.host, "my-proxy.com")
+            
+            // 3. Verify Auth header is STRIPPED (standard proxy behavior)
+            // Even though we have a key, if proxyURL is set, we assume the proxy handles auth.
+            XCTAssertNil(request.value(forHTTPHeaderField: "X-Api-Key"))
+            
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+        }
+        
+        _ = try await apiClient.resolveModel(requestedModel: nil)
+    }
+    
+    func testDevEnvironment_SendsAuthHeader() async throws {
+        // 1. Setup: Env URL is used (NOT proxy)
+        let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
+        
+        // 2. Init with API key (explicit or env doesn't matter, just needs to exist)
+        apiClient = APIClient(apiKey: "secret", proxyURL: nil, session: session, environment: mockEnv)
+        
+        MockURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.url?.host, "dev.example.com")
+            
+            // 3. CRITICAL: Verify Auth header IS sent. 
+            // Unlike 'proxyURL', 'VITALLENS_BASE_URL' is treated as a direct upstream, so we must authenticate.
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "secret")
+            
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+        }
+        
+        _ = try await apiClient.resolveModel(requestedModel: nil)
+    }
     
     // MARK: - Headers & Auth
     
@@ -127,7 +218,7 @@ final class APIClientTests: XCTestCase {
         
         MockURLProtocol.requestHandler = { request in
             // 1. Endpoint Check
-            XCTAssertEqual(request.url?.path, "/vitallens-v3/stream")
+            XCTAssertTrue(request.url?.path.hasSuffix("/stream") ?? false, "URL should end in /stream")
             XCTAssertEqual(request.httpMethod, "POST")
             
             // 2. Header Checks
@@ -182,7 +273,7 @@ final class APIClientTests: XCTestCase {
         
         MockURLProtocol.requestHandler = { request in
             // 1. Endpoint Check
-            XCTAssertEqual(request.url?.path, "/vitallens-v3/file")
+            XCTAssertTrue(request.url?.path.hasSuffix("/file") ?? false, "URL should end in /file")
             XCTAssertEqual(request.httpMethod, "POST")
             
             // 2. Header Checks
@@ -286,19 +377,14 @@ extension URLRequest {
 // Helper for verifying compression in tests
 extension Data {
     func test_decompressed() -> Data? {
-        let pageSize = 128
-        var decompressed = Data()
-        
-        return try? self.withUnsafeBytes { rawBuffer in
+        return self.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return nil }
             let srcSize = self.count
             
-            // Estimate output size (heuristic for test data)
             let dstSize = srcSize * 20
             let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: dstSize)
             defer { dstBuffer.deallocate() }
             
-            // ZLIB signature for 'deflate'
             let compression = COMPRESSION_ZLIB
             
             let decompressedSize = compression_decode_buffer(
