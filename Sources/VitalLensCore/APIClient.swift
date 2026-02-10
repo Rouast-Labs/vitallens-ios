@@ -183,12 +183,36 @@ public actor APIClient {
         }
         
         for (key, value) in metadata {
-            payload[key] = value
+            if let numberValue = Double(value) {
+                payload[key] = numberValue
+            } else {
+                payload[key] = value
+            }
         }
         
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        return try await perform(request: request)
+        // Perform Request
+        let result: VitalLensResult = try await perform(request: request)
+        
+        // Timestamp synthesis fix (from previous step)
+        if result.time.isEmpty, let n = result.sampleCount {
+            let fps = Double(metadata["fps"] ?? "30.0") ?? 30.0
+            let synthesizedTime = (0..<n).map { Double($0) / fps }
+            
+            return VitalLensResult(
+                face: result.face,
+                signals: result.signals,
+                time: synthesizedTime,
+                fps: fps,
+                modelUsed: result.modelUsed,
+                state: result.state,
+                message: result.message,
+                sampleCount: n
+            )
+        }
+
+        return result
     }
     
     // MARK: - Private Helpers

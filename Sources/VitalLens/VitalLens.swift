@@ -159,18 +159,25 @@ public final class VitalLens: @unchecked Sendable {
         // Iterate frames
         for await frame in source.frames() {
             if roi == nil {
-                if let detectedRect = try? await detector.detectFace(in: frame) {
-                    let idealROI = ROICalculator.calculateROI(from: detectedRect, method: config.roiMethod)
-                    roi = idealROI
-                    print("[VitalLens] File Processing ROI established: \(idealROI)")
-                    break
+                do {
+                    if let detectedRect = try await detector.detectFace(
+                        in: frame, 
+                        orientation: source.orientation
+                    ) {
+                        let idealROI = ROICalculator.calculateROI(from: detectedRect, method: config.roiMethod)
+                        roi = idealROI
+                        print("[VitalLens] File Processing ROI established: \(idealROI)")
+                        break
+                    }
+                } catch {
+                    print("[VitalLens] Face Detection Failed: \(error)")
                 }
             }
         }
         
         var chunkData = Data()
         let frameSize = config.inputSize * config.inputSize * 3
-        let batchSize = 150 // frames per request (approx 5 seconds)
+        let batchSize = 900
         let overlapFrames = config.nInputs - 1
         var totalFramesProcessed = 0
         

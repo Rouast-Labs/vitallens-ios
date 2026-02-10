@@ -2,6 +2,8 @@ import Foundation
 import Vision
 import CoreImage
 import VitalLensCore
+import ImageIO
+import CoreML
 
 /// An actor responsible for detecting faces in video frames using the Vision framework.
 /// It handles the coordinate space conversion (Vision Bottom-Left -> Normalized Top-Left).
@@ -14,8 +16,26 @@ actor FaceDetector: FaceDetecting {
     // MARK: - Initialization
     
     init() {
-        self.faceRequest = VNDetectFaceRectanglesRequest()
-    }
+        let request = VNDetectFaceRectanglesRequest()
+        request.revision = VNDetectFaceRectanglesRequestRevision3
+
+        #if targetEnvironment(simulator)
+        if #available(iOS 17.0, *) {
+            let allDevices = MLComputeDevice.allComputeDevices
+            for device in allDevices {
+                if device.description.contains("MLCPUComputeDevice") {
+                    request.setComputeDevice(.some(device), for: .main)
+                    break
+                }
+            }
+        } else {
+            // Fallback for older iOS versions
+            request.usesCPUOnly = true
+        }
+        #endif
+
+        self.faceRequest = request
+    }    
     
     // MARK: - Detection
     
@@ -24,14 +44,14 @@ actor FaceDetector: FaceDetecting {
     /// - Parameter pixelBuffer: The video frame to analyze.
     /// - Returns: The bounding box of the face in **normalized coordinates (0.0-1.0)** with Top-Left origin,
     ///            or `nil` if no face is found.
-    func detectFace(in pixelBuffer: SendablePixelBuffer) async throws -> CGRect? {
+    func detectFace(
+        in pixelBuffer: SendablePixelBuffer, 
+        orientation: CGImagePropertyOrientation = .up
+    ) async throws -> CGRect? {
         let buffer = pixelBuffer.buffer
-
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
         
-        // Perform the request
-        // Note: Vision operations are synchronous on the calling thread, but since we are in an Actor,
-        // this runs safely on a background cooperative thread without blocking the UI.
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        
         try handler.perform([faceRequest])
         
         guard let observations = faceRequest.results,
@@ -39,16 +59,8 @@ actor FaceDetector: FaceDetecting {
             return nil
         }
         
-        // VitalLens JS strategy: If multiple faces, pick the largest/most central.
-        // Vision sorts by confidence usually, but let's stick to the first result for now.
-        // Future optimization: Implement tracking ID to stick to the *same* face.
-        
-        // Vision returns coordinates in a normalized space where (0,0) is BOTTOM-left.
-        // We need to convert this to TOP-left origin for standard image processing.
         let visionRect = face.boundingBox
-        let normalizedRect = convertVisionToTopLeft(visionRect)
-        
-        return normalizedRect
+        return convertVisionToTopLeft(visionRect)
     }
     
     // MARK: - Helpers

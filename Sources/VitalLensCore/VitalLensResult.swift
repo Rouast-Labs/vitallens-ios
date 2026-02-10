@@ -6,29 +6,28 @@ import CoreGraphics
 public struct VitalLensResult: Codable, Sendable {
     
     public let face: FaceData
-    
-    /// The map of all raw signals returned by the model.
-    /// Key: Signal ID (e.g., "ppg_waveform", "respiratory_waveform", "sbp", "spo2")
-    /// Value: Time-series data
     public let signals: [String: TimeSeries]
-    
-    // Metadata
     public let time: [Double]
     public let fps: Double?
     public let modelUsed: String?
-    public let state: StateData? // For RNN continuity
+    public let state: StateData?
     public let message: String?
+    public let sampleCount: Int?
 
     // MARK: - Computed Convenience Accessors
-    // These helpers allow strongly-typed access to known core signals while keeping the structure dynamic.
     
     public var ppg: TimeSeries? { signals["ppg_waveform"] }
-    public var resp: TimeSeries? { signals["respiratory_waveform"] }
-    
-    // Future-proofing examples (these return nil if not present in 'signals')
+    public var resp: TimeSeries? { signals["respiratory_waveform"] }    
     public var sbp: TimeSeries? { signals["sbp"] }
     public var dbp: TimeSeries? { signals["dbp"] }
     public var spo2: TimeSeries? { signals["spo2"] }
+
+    public var heartRate: TimeSeries? { signals["heart_rate"] }
+    public var respiratoryRate: TimeSeries? { signals["respiratory_rate"] }
+    public var hrvSdnn: TimeSeries? { signals["hrv_sdnn"] }
+    public var hrvRmssd: TimeSeries? { signals["hrv_rmssd"] }
+    public var ppgWaveform: TimeSeries? { signals["ppg_waveform"] }
+    public var respiratoryWaveform: TimeSeries? { signals["respiratory_waveform"] }
 
     public init(
         face: FaceData,
@@ -37,7 +36,8 @@ public struct VitalLensResult: Codable, Sendable {
         fps: Double? = nil,
         modelUsed: String? = nil,
         state: StateData? = nil,
-        message: String? = nil
+        message: String? = nil,
+        sampleCount: Int? = nil
     ) {
         self.face = face
         self.signals = signals
@@ -46,6 +46,7 @@ public struct VitalLensResult: Codable, Sendable {
         self.modelUsed = modelUsed
         self.state = state
         self.message = message
+        self.sampleCount = sampleCount
     }
     
     // MARK: - Dynamic Decoding
@@ -60,28 +61,32 @@ public struct VitalLensResult: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DynamicKey.self)
         
-        // Decode standard fields
-        self.face = try container.decode(FaceData.self, forKey: DynamicKey(stringValue: "face")!)
-        self.time = try container.decode([Double].self, forKey: DynamicKey(stringValue: "time")!)
+        self.face = try container.decodeIfPresent(FaceData.self, forKey: DynamicKey(stringValue: "face")!) 
+                    ?? FaceData(coordinates: [], confidence: [], note: nil)
+        
+        self.time = try container.decodeIfPresent([Double].self, forKey: DynamicKey(stringValue: "time")!) ?? []
         self.fps = try container.decodeIfPresent(Double.self, forKey: DynamicKey(stringValue: "fps")!)
         self.modelUsed = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "model_used")!)
         self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
+        self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
         
-        // Dynamic Signal Decoding
-        // We look inside the "vital_signs" container
-        let vitalsContainer = try container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
-        
-        var tempSignals = [String: TimeSeries]()
-        
-        for key in vitalsContainer.allKeys {
-            // We assume everything inside 'vital_signs' conforms to the TimeSeries structure
-            if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
-                tempSignals[key.stringValue] = signal
+        if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
+            var tempSignals = [String: TimeSeries]()
+            for key in vitalsContainer.allKeys {
+                // Try decoding as standard TimeSeries (arrays)
+                if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
+                    tempSignals[key.stringValue] = signal
+                } 
+                // Fallback: Try decoding as Scalar (value/confidence numbers) and wrap in array
+                else if let scalar = try? vitalsContainer.decode(ScalarResponse.self, forKey: key) {
+                    tempSignals[key.stringValue] = TimeSeries(scalar: scalar)
+                }
             }
+            self.signals = tempSignals
+        } else {
+            self.signals = [:]
         }
-        
-        self.signals = tempSignals
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -92,6 +97,7 @@ public struct VitalLensResult: Codable, Sendable {
         try container.encodeIfPresent(modelUsed, forKey: DynamicKey(stringValue: "model_used")!)
         try container.encodeIfPresent(state, forKey: DynamicKey(stringValue: "state")!)
         try container.encodeIfPresent(message, forKey: DynamicKey(stringValue: "message")!)
+        try container.encodeIfPresent(sampleCount, forKey: DynamicKey(stringValue: "n")!)
         
         var vitalsContainer = container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
         for (key, value) in signals {
@@ -114,6 +120,21 @@ public struct TimeSeries: Codable, Sendable {
         self.unit = unit
         self.note = note
     }
+    
+    // Init from Scalar Response (backend "value" format)
+    init(scalar: ScalarResponse) {
+        self.data = scalar.value != nil ? [scalar.value!] : []
+        self.confidence = scalar.confidence != nil ? [scalar.confidence!] : []
+        self.unit = scalar.unit
+        self.note = scalar.note
+    }
+}
+
+struct ScalarResponse: Decodable {
+    let value: Float?
+    let confidence: Float?
+    let unit: String?
+    let note: String?
 }
 
 // MARK: - Face Data
@@ -161,10 +182,28 @@ public struct StateData: Codable, Sendable {
     
     /// Optional metadata regarding the state.
     public let note: String?
-    
+
     public init(data: String, note: String?) {
         self.data = data
         self.note = note
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.note = try container.decodeIfPresent(String.self, forKey: .note)
+        
+        // FIX: Handle Polymorphic 'data' field (String OR Array<Float>)
+        if let stringData = try? container.decode(String.self, forKey: .data) {
+            self.data = stringData
+        } else if let floatArray = try? container.decode([Float].self, forKey: .data) {
+            // Convert [Float] -> Data -> Base64 String
+            let rawData = floatArray.withUnsafeBufferPointer { Data(buffer: $0) }
+            self.data = rawData.base64EncodedString()
+        } else {
+            // If it's null or missing, we can't do much, but let's avoid crashing if possible
+            // or throw a specific error.
+            throw DecodingError.typeMismatch(String.self, DecodingError.Context(codingPath: container.codingPath, debugDescription: "State data expected to be String or [Float]"))
+        }
     }
 }
 
@@ -187,17 +226,4 @@ public extension TimeSeries {
             unit: unit ?? ""
         )
     }
-}
-
-public extension VitalLensResult {
-    // These helpers allow the UI to access "heartRate.latest.value" 
-    // mimicking the old "heartRate.value" behavior.
-    
-    var heartRate: TimeSeries? { signals["heart_rate"] }
-    var respiratoryRate: TimeSeries? { signals["respiratory_rate"] }
-    var hrvSdnn: TimeSeries? { signals["hrv_sdnn"] }
-    var hrvRmssd: TimeSeries? { signals["hrv_rmssd"] }
-    
-    var ppgWaveform: TimeSeries? { signals["ppg_waveform"] }
-    var respiratoryWaveform: TimeSeries? { signals["respiratory_waveform"] }
 }

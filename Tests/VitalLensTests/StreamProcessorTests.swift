@@ -1,5 +1,6 @@
 import XCTest
 import CoreVideo
+import ImageIO
 @testable import VitalLens
 @testable import VitalLensCore
 
@@ -43,11 +44,22 @@ actor MockStrategy: InferenceStrategy {
         let dummyStateData = Data([0x00, 0x00, 0x80, 0x3F])
         let stateStr = dummyStateData.base64EncodedString()
         
+        // Explicitly typed empty arrays to satisfy the compiler
+        let emptyCoords: [[Double]] = []
+        let emptyConf: [Double] = []
+        
         return VitalLensResult(
-            face: FaceData(coordinates: [], confidence: [], note: nil),
-            signals: ["heart_rate": TimeSeries(data: [72.0], confidence: [0.9], unit: "bpm", note: "")],
+            face: FaceData(coordinates: emptyCoords, confidence: emptyConf, note: nil as String?),
+            signals: [
+                "heart_rate": TimeSeries(
+                    data: [Float(72.0)],
+                    confidence: [Float(0.9)],
+                    unit: "bpm",
+                    note: ""
+                )
+            ],
             time: [Date().timeIntervalSince1970],
-            state: StateData(data: stateStr, note: nil)
+            state: StateData(data: stateStr, note: nil as String?)
         )
     }
 }
@@ -55,7 +67,11 @@ actor MockStrategy: InferenceStrategy {
 actor MockFaceDetector: FaceDetecting {
     var forcedRect: CGRect?
     
-    func detectFace(in pixelBuffer: SendablePixelBuffer) async throws -> CGRect? {
+    // Update signature to match protocol
+    func detectFace(
+        in pixelBuffer: SendablePixelBuffer, 
+        orientation: CGImagePropertyOrientation
+    ) async throws -> CGRect? {
         return forcedRect
     }
     

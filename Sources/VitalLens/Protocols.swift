@@ -1,5 +1,6 @@
 import Foundation
 import CoreVideo
+import ImageIO
 
 #if canImport(UIKit)
 import UIKit
@@ -20,7 +21,10 @@ public struct SendableUIPreview: @unchecked Sendable {
 
 /// Abstraction for face detection to allow mocking in tests.
 public protocol FaceDetecting: Sendable {
-    func detectFace(in pixelBuffer: SendablePixelBuffer) async throws -> CGRect?
+    func detectFace(
+        in pixelBuffer: SendablePixelBuffer, 
+        orientation: CGImagePropertyOrientation
+    ) async throws -> CGRect?
 }
 
 /// Abstract interface for a camera source to allow mocking in tests.
