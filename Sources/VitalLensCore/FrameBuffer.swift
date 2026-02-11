@@ -55,7 +55,6 @@ public actor FrameBuffer {
             
             if safeDrop > 0 {
                 buffer.removeFirst(safeDrop)
-                print("[FrameBuffer] Warning: Dropped \(safeDrop) frames due to overflow.")
             }
         }
     }
@@ -64,16 +63,8 @@ public actor FrameBuffer {
     public func isReady(hasState: Bool, mode: InferenceMode) -> Bool {
         let threshold = constraints.threshold(mode: mode, hasState: hasState)
         
-        if hasState {
-            // We have state (RNN context).
-            // We usually retain (nInputs - 1) frames.
-            // Ready when: Total >= (Retained) + (New Threshold)
-            return buffer.count >= (config.nInputs - 1 + threshold)
-        } else {
-            // Cold start. We need at least nInputs mathematically.
-            // Plus whatever the strategy demands for a cold start batch.
-            return buffer.count >= max(config.nInputs, threshold)
-        }
+        let requiredCount = max(config.nInputs, threshold)
+        return buffer.count >= requiredCount
     }
     
     /// Consumes the buffer for inference while retaining necessary context frames.

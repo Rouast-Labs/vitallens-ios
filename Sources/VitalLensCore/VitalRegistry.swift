@@ -1,5 +1,3 @@
-// FILE: Sources/VitalLensCore/VitalRegistry.swift
-
 import Foundation
 import SwiftUI
 
