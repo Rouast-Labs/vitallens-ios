@@ -1,25 +1,17 @@
 import Foundation
 import CoreVideo
 import ImageIO
+import VitalLensCore
 
 #if canImport(UIKit)
 import UIKit
 #endif
 
-/// A thread-safe wrapper for CVPixelBuffer to satisfy Swift 6 strict concurrency.
-public struct SendablePixelBuffer: @unchecked Sendable {
-    public let buffer: CVPixelBuffer
-    public init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
-}
-
 /// A container for a video frame and its capture metadata.
 public struct InputFrame: Sendable {
     public let buffer: SendablePixelBuffer
-    /// The orientation of the image data (how it should be displayed up).
     public let orientation: CGImagePropertyOrientation
-    /// Whether the image is mirrored (common for front-facing cameras).
     public let isMirrored: Bool
-    /// The timestamp of the frame capture.
     public let timestamp: TimeInterval
     
     public init(buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation, isMirrored: Bool, timestamp: TimeInterval) {

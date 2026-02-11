@@ -7,7 +7,7 @@ import CoreML
 
 /// An actor responsible for detecting faces in video frames using the Vision framework.
 /// It handles the coordinate space conversion (Vision Bottom-Left -> Normalized Top-Left).
-actor FaceDetector: FaceDetecting {
+public actor FaceDetector: FaceDetecting {
     
     // MARK: - Properties
     
@@ -15,7 +15,7 @@ actor FaceDetector: FaceDetecting {
     
     // MARK: - Initialization
     
-    init() {
+    public init() {
         let request = VNDetectFaceRectanglesRequest()
         request.revision = VNDetectFaceRectanglesRequestRevision3
 
@@ -44,7 +44,7 @@ actor FaceDetector: FaceDetecting {
     /// - Parameter pixelBuffer: The video frame to analyze.
     /// - Returns: The bounding box of the face in **normalized coordinates (0.0-1.0)** with Top-Left origin,
     ///            or `nil` if no face is found.
-    func detectFace(
+    public func detectFace(
         in pixelBuffer: SendablePixelBuffer, 
         orientation: CGImagePropertyOrientation = .up
     ) async throws -> CGRect? {

@@ -107,7 +107,7 @@ actor FileProcessor {
         let buffer = FrameBuffer(roi: roi, config: config, constraints: constraints)
         
         var accumulatedResult: VitalLensResult?
-        var currentState: (any InferenceState)? = nil 
+        var currentState: (any InferenceState)? = nil
         var totalFramesProcessed = 0
         
         for await frame in source.frames() {
@@ -133,9 +133,6 @@ actor FileProcessor {
             }
             
             totalFramesProcessed += 1
-            
-            // Check readiness based on File mode constraints
-            let state = accumulatedResult?.state?.toFloatArray()
             
             if await buffer.isReady(hasState: currentState != nil, mode: .file) {
                 if let window = await buffer.consume() {
@@ -163,11 +160,10 @@ actor FileProcessor {
         
         // Handle remaining frames (Flush final partial batch)
         if let window = await buffer.consume(), window.count >= config.nInputs {
-            let state = accumulatedResult?.state?.toFloatArray()
             
-            let result = try await strategy.infer(
+            let (result, _) = try await strategy.infer(
                 window: window,
-                state: state,
+                state: currentState,
                 mode: .file,
                 model: nil
             )

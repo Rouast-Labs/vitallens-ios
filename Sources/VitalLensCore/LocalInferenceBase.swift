@@ -2,8 +2,8 @@ import Foundation
 import CoreVideo
 
 /// A generic base strategy for running local CoreML models.
-/// Consumers (like the Legacy App) must subclass this to inject their specific model logic.
-open actor LocalInferenceBase: InferenceStrategy {
+/// Consumers must subclass this to inject their specific model logic.
+open class LocalInferenceBase: InferenceStrategy, @unchecked Sendable {
     
     // Config must be provided by the subclass
     public let config: ModelConfig
@@ -12,7 +12,7 @@ open actor LocalInferenceBase: InferenceStrategy {
         self.config = config
     }
 
-    public nonisolated var batchConstraints: BatchConstraints {
+    public var batchConstraints: BatchConstraints {
         // Default constraints for local inference (can be overridden)
         BatchConstraints(streamMinNoState: config.nInputs, streamMinWithState: 1, streamMax: 30)
     }
@@ -30,7 +30,6 @@ open actor LocalInferenceBase: InferenceStrategy {
         fatalError("Subclasses must implement predict(frames:state:)")
     }
 
-    // The SDK handles the boring part: unwrapping the window and calling your predict method
     public func infer(
         window: [(InferenceUnit, InferenceContext)], 
         state: (any InferenceState)?, 
@@ -38,20 +37,15 @@ open actor LocalInferenceBase: InferenceStrategy {
         model: String?
     ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
         
-        // 1. Unpack PixelBuffers
         let pixelBuffers = try window.map { unit, _ -> CVPixelBuffer in
-            guard case .pixelBuffer(let buffer) = unit else {
+            guard case .pixelBuffer(let wrapper) = unit else {
                 throw VitalLensError.processingError("Local strategy requires .pixelBuffer inputs")
             }
-            return buffer
+            return wrapper.buffer
         }
         
-        // 2. Call the app's implementation
         let (result, newState) = try await predict(frames: pixelBuffers, state: state)
         
-        // 3. Return result (SDK will handle caching the new state)
-        // Note: You will need to update InferenceStrategy to return (VitalLensResult, Any?) tuple 
-        // or attach state to the result if you prefer that pattern.
         return (result, newState)
     }
 }

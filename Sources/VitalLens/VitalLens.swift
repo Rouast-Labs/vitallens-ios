@@ -83,6 +83,7 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = nil
         self.proxyURL = nil
         self.strategy = strategy
+        self.customSource = nil
         setupLifecycleObservers()
     }
 

@@ -1,6 +1,8 @@
 import Foundation
 import CoreVideo
 import ImageIO
+import VitalLensCore
+
 #if canImport(UIKit)
 import UIKit
 #endif

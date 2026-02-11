@@ -2,6 +2,12 @@ import Foundation
 import CoreVideo
 import ImageIO
 
+/// A thread-safe wrapper for CVPixelBuffer
+public struct SendablePixelBuffer: @unchecked Sendable {
+    public let buffer: CVPixelBuffer
+    public init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
+}
+
 /// Defines the target endpoint behavior.
 public enum InferenceMode: Sendable {
     case stream 
@@ -10,21 +16,17 @@ public enum InferenceMode: Sendable {
 
 /// Represents the unit of data to be processed.
 /// - `rgbData`: Pre-processed, flattened RGB bytes (e.g. 40x40x3). Used for the Remote API.
-/// - `pixelBuffer`: Raw image buffer. Used for Local CoreML (Future).
+/// - `pixelBuffer`: Raw image buffer. Used for Local CoreML.
 public enum InferenceUnit: Sendable {
     case rgbData(Data)
-    case pixelBuffer(CVPixelBuffer)
+    case pixelBuffer(SendablePixelBuffer)
 }
 
 /// Contextual metadata associated with a specific frame unit.
 public struct InferenceContext: Sendable {
-    public let timestamp: TimeInterval
-    
-    // Future-proofing: CoreML models often need orientation/mirroring flags passed in at inference time
+    public let timestamp: TimeInterval    
     public let orientation: CGImagePropertyOrientation
     public let isMirrored: Bool
-    
-    // The specific ROI used to generate this unit
     public let roi: CGRect
     
     public init(
@@ -41,7 +43,6 @@ public struct InferenceContext: Sendable {
 }
 
 /// Defines the buffering constraints for a specific strategy.
-/// These values dictate when the BufferManager should trigger a ready state or force a flush.
 // TODO: These could depend on the model too, though.
 public struct BatchConstraints: Sendable {
     /// The minimum number of frames required to process a stream batch without state (Cold Start).
@@ -60,10 +61,10 @@ public struct BatchConstraints: Sendable {
     
     public init(
         streamMinNoState: Int = 16,
-        streamMinWithState: Int = 4, // Default nInputs
+        streamMinWithState: Int = 4,
         streamMax: Int = 150,
         fileMinNoState: Int = 16,
-        fileMinWithState: Int = 4,   // Default nInputs
+        fileMinWithState: Int = 4,
         fileMax: Int = 900
     ) {
         self.streamMinNoState = streamMinNoState
@@ -117,14 +118,4 @@ public protocol InferenceStrategy: Sendable {
         mode: InferenceMode, 
         model: String?
     ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?)
-}
-
-public struct CoreMLAuxiliaryData: ResultAuxiliaryData {
-    public let pulseMasks: [[Float]]
-    public let respMasks: [[Float]]
-    
-    public init(pulseMasks: [[Float]], respMasks: [[Float]]) {
-        self.pulseMasks = pulseMasks
-        self.respMasks = respMasks
-    }
 }

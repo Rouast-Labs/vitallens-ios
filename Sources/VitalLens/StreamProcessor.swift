@@ -15,14 +15,14 @@ import UIKit
 /// - Returns: An InferenceUnit (either RGB data or a PixelBuffer).
 public typealias FrameTransformer = @Sendable (CVPixelBuffer, CGRect, ModelConfig) throws -> InferenceUnit
 
-/// The engine that coordinates the camera, face detection, and API inference loop.
+/// The engine that coordinates the camera, and inference loop.
 actor StreamProcessor {
 
     #if canImport(UIKit)
     private let camera: any CameraStreaming
     #endif
     
-    private let detector: any FaceDetecting
+    private let roiStrategy: any ROIStrategy
     private let strategy: any InferenceStrategy
     private let transformer: FrameTransformer
     

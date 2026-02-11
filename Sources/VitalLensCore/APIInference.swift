@@ -58,8 +58,7 @@ extension Data {
 
 // MARK: - Remote Inference
 
-/// Internal actor responsible for handling all network communication with the VitalLens API.
-/// It manages authentication, endpoint resolution, and request batching.
+/// Actor responsible for handling all network communication with the VitalLens API.
 public actor APIInference {
     
     private let apiKey: String?
@@ -69,8 +68,8 @@ public actor APIInference {
 
     private static let productionBaseURL = URL(string: "https://api.rouast.com/vitallens-v3")!
     
-    // TODO: What is this
-    private var cachedNInputs: Int = 4
+    // TODO: What is this. Maybe remove
+    nonisolated(unsafe) private var cachedNInputs: Int = 4
     
     public init(
         apiKey: String? = nil, 
@@ -201,6 +200,7 @@ public actor APIInference {
             return VitalLensResult(
                 face: result.face,
                 signals: result.signals,
+                time: [],
                 modelUsed: result.modelUsed,
                 state: result.state,
                 message: result.message,
@@ -259,12 +259,7 @@ public actor APIInference {
 extension APIInference: InferenceStrategy {
 
     // TODO: Both should supply the min and max.
-    public var batchConstraints: BatchConstraints {
-        // API optimized constraints:
-        // - Min Stream (No State): 16 frames to establish signal
-        // - Min Stream (State): nInputs (e.g. 4) for low latency
-        // - Max Stream: 150 frames (5 seconds) to avoid timeouts/lag
-        // - File Max: 900 frames (30 seconds) for efficiency
+    public nonisolated var batchConstraints: BatchConstraints {
         return BatchConstraints(
             streamMinNoState: 16,
             streamMinWithState: self.cachedNInputs,
