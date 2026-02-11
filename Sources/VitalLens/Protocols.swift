@@ -12,14 +12,31 @@ public struct SendablePixelBuffer: @unchecked Sendable {
     public init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
 }
 
+/// A container for a video frame and its capture metadata.
+public struct InputFrame: Sendable {
+    public let buffer: SendablePixelBuffer
+    /// The orientation of the image data (how it should be displayed up).
+    public let orientation: CGImagePropertyOrientation
+    /// Whether the image is mirrored (common for front-facing cameras).
+    public let isMirrored: Bool
+    /// The timestamp of the frame capture.
+    public let timestamp: TimeInterval
+    
+    public init(buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation, isMirrored: Bool, timestamp: TimeInterval) {
+        self.buffer = buffer
+        self.orientation = orientation
+        self.isMirrored = isMirrored
+        self.timestamp = timestamp
+    }
+}
+
 /// A thread-safe wrapper for transporting UI references (UIView, NSView) into actors.
-/// CAUTION: Only access the wrapped value on the Main Actor.
 public struct SendableUIPreview: @unchecked Sendable {
     public let view: Any
     public init(_ view: Any) { self.view = view }
 }
 
-/// Abstraction for face detection to allow mocking in tests.
+/// Abstraction for face detection.
 public protocol FaceDetecting: Sendable {
     func detectFace(
         in pixelBuffer: SendablePixelBuffer, 
@@ -27,13 +44,14 @@ public protocol FaceDetecting: Sendable {
     ) async throws -> CGRect?
 }
 
-/// Abstract interface for a camera source to allow mocking in tests.
+/// Abstract interface for a camera source.
 public protocol CameraStreaming: Sendable {
-    var stream: AsyncStream<SendablePixelBuffer> { get }
+    /// The stream of input frames including metadata.
+    var stream: AsyncStream<InputFrame> { get }
+    
     func start() async throws
     func stop()
     
-    // Only require the view preview method on platforms that have UIKit
     #if canImport(UIKit)
     @MainActor func showPreview(on view: UIView)
     #endif

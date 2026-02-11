@@ -1,6 +1,10 @@
 import Foundation
 import zlib
 
+public struct APIState: InferenceState {
+    public let data: [Float]
+}
+
 // MARK: - GZIP Helper
 extension Data {
     /// Compresses the data using GZIP (RFC 1952).
@@ -52,18 +56,21 @@ extension Data {
     }
 }
 
-// MARK: - API Client
+// MARK: - Remote Inference
 
 /// Internal actor responsible for handling all network communication with the VitalLens API.
 /// It manages authentication, endpoint resolution, and request batching.
-public actor APIClient {
+public actor APIInference {
     
     private let apiKey: String?
     private let proxyURL: URL?
     private let session: URLSession
     private let environment: [String: String]
-    
+
     private static let productionBaseURL = URL(string: "https://api.rouast.com/vitallens-v3")!
+    
+    // TODO: What is this
+    private var cachedNInputs: Int = 4
     
     public init(
         apiKey: String? = nil, 
@@ -82,7 +89,7 @@ public actor APIClient {
 
     private var baseURL: URL {
         if let proxy = proxyURL { return proxy }
-                
+
         if let envURLString = environment["VITALLENS_BASE_URL"],
            let envURL = URL(string: envURLString) {
             return envURL
@@ -107,14 +114,16 @@ public actor APIClient {
         request.httpMethod = "GET"
         addAuthHeaders(to: &request)
         
-        return try await perform(request: request)
+        let response: ResolveModelResponse = try await perform(request: request)
+        self.cachedNInputs = response.config.nInputs
+        return response
     }
     
     // MARK: - Streaming Endpoint
     
     /// Sends a batch of accumulated video frames to the real-time streaming endpoint.
     /// Uses GZIP compression for the body and HTTP Headers for metadata/state.
-    public func sendStreamBatch(
+    public func inferStream(
         rawRGBBytes: Data,
         state: [Float]?,
         model: String?
@@ -124,7 +133,6 @@ public actor APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         
-        // 1. Headers
         addAuthHeaders(to: &request)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue("vitallens-ios", forHTTPHeaderField: "X-Origin")
@@ -134,15 +142,12 @@ public actor APIClient {
             request.setValue(model, forHTTPHeaderField: "X-Model")
         }
         
-        // State must be in HEADER for /stream
         if let state = state, !state.isEmpty {
             let stateData = state.withUnsafeBufferPointer { Data(buffer: $0) }
             let base64State = stateData.base64EncodedString()
             request.setValue(base64State, forHTTPHeaderField: "X-State")
         }
         
-        // 2. Compression (GZIP)
-        // The API expects the body to be the GZIP stream of the raw RGB bytes.
         guard let compressedBody = rawRGBBytes.gzipped() else {
             throw VitalLensError.processingError("Failed to compress video batch")
         }
@@ -156,10 +161,10 @@ public actor APIClient {
     
     /// Uploads a video file chunk to the file processing endpoint.
     /// Uses standard JSON body with Base64 video and state in the payload (No Compression).
-    public func processVideoChunk(
+    public func inferFile(
         rawRGBBytes: Data,
-        metadata: [String: String],
-        state: [Float]?
+        state: [Float]?,
+        model: String?
     ) async throws -> VitalLensResult {
         
         let url = baseURL.appendingPathComponent("file")
@@ -181,13 +186,9 @@ public actor APIClient {
             let stateData = state.withUnsafeBufferPointer { Data(buffer: $0) }
             payload["state"] = stateData.base64EncodedString()
         }
-        
-        for (key, value) in metadata {
-            if let numberValue = Double(value) {
-                payload[key] = numberValue
-            } else {
-                payload[key] = value
-            }
+
+        if let model = model {
+            payload["model"] = model
         }
         
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -196,15 +197,10 @@ public actor APIClient {
         let result: VitalLensResult = try await perform(request: request)
         
         // Timestamp synthesis fix (from previous step)
-        if result.time.isEmpty, let n = result.sampleCount {
-            let fps = Double(metadata["fps"] ?? "30.0") ?? 30.0
-            let synthesizedTime = (0..<n).map { Double($0) / fps }
-            
+        if result.time.isEmpty, let n = result.sampleCount {            
             return VitalLensResult(
                 face: result.face,
                 signals: result.signals,
-                time: synthesizedTime,
-                fps: fps,
                 modelUsed: result.modelUsed,
                 state: result.state,
                 message: result.message,
@@ -260,15 +256,80 @@ public actor APIClient {
 
 // MARK: - InferenceStrategy Conformance
 
-extension APIClient: InferenceStrategy {
+extension APIInference: InferenceStrategy {
+
+    // TODO: Both should supply the min and max.
+    public var batchConstraints: BatchConstraints {
+        // API optimized constraints:
+        // - Min Stream (No State): 16 frames to establish signal
+        // - Min Stream (State): nInputs (e.g. 4) for low latency
+        // - Max Stream: 150 frames (5 seconds) to avoid timeouts/lag
+        // - File Max: 900 frames (30 seconds) for efficiency
+        return BatchConstraints(
+            streamMinNoState: 16,
+            streamMinWithState: self.cachedNInputs,
+            streamMax: 150,
+            fileMinNoState: 16,
+            fileMinWithState: self.cachedNInputs,
+            fileMax: 900
+        )
+    }
     
     public func resolveConfig() async throws -> ModelConfig {
         let response = try await self.resolveModel(requestedModel: nil)
         return response.config
     }
     
-    public func process(frames: Data, state: [Float]?, meta: [String : String]) async throws -> VitalLensResult {
-        // Route to the efficient streaming endpoint
-        return try await self.sendStreamBatch(rawRGBBytes: frames, state: state, model: nil)
+    public func infer(
+        window: [(InferenceUnit, InferenceContext)],
+        state: (any InferenceState)?,
+        mode: InferenceMode,
+        model: String?
+    ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
+        
+        // 1. Flatten the window into a single Data blob
+        var combinedData = Data()
+        for item in window {
+            switch item.0 {
+            case .rgbData(let data):
+                combinedData.append(data)
+            case .pixelBuffer:
+                throw VitalLensError.processingError("APIInference received raw PixelBuffer. Ensure the Transformer is configured for API mode.")
+            }
+        }
+
+        let currentState = (state as? APIState)?.data
+        
+        // 2. Dispatch
+        let result: VitalLensResult
+        switch mode {
+        case .stream:
+            result = try await self.inferStream(rawRGBBytes: combinedData, state: currentState, model: model)
+        case .file:
+            result = try await self.inferFile(rawRGBBytes: combinedData, state: currentState, model: model)
+        }
+
+        var nextState: APIState? = nil
+        if let stateData = result.state?.data, // The Base64 string from Python backend
+           let decoded = Data(base64Encoded: stateData) {
+            
+            let floatArray = decoded.withUnsafeBytes { 
+                Array($0.bindMemory(to: Float.self)) 
+            }
+            nextState = APIState(data: floatArray)
+        }
+
+        let cleanResult = VitalLensResult(
+            face: result.face,
+            signals: result.signals,
+            time: result.time,
+            fps: result.fps,
+            modelUsed: result.modelUsed,
+            state: nil, // Hiding it here since we return it in the tuple
+            message: result.message,
+            sampleCount: result.sampleCount
+        )
+        
+        return (cleanResult, nextState)
     }
 }

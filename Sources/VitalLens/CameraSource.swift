@@ -19,13 +19,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     private var simulatorTask: Task<Void, Never>?
     
     /// The stream of video frames.
-    var stream: AsyncStream<SendablePixelBuffer> {
+    var stream: AsyncStream<InputFrame> {
         AsyncStream { continuation in
             self.continuation = continuation
         }
     }
     
-    private var continuation: AsyncStream<SendablePixelBuffer>.Continuation?
+    private var continuation: AsyncStream<InputFrame>.Continuation?
     
     override init() {
         super.init()
@@ -152,7 +152,17 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        continuation?.yield(SendablePixelBuffer(pixelBuffer))
+        
+        // Derive metadata from the internal session state
+        // TODO: Read this from the connection or device properties
+        let frame = InputFrame(
+            buffer: SendablePixelBuffer(pixelBuffer),
+            orientation: .up,
+            isMirrored: true,
+            timestamp: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        )
+        
+        continuation?.yield(frame)
     }
     
     // MARK: - Simulator Fallback

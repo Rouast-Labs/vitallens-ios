@@ -2,9 +2,9 @@ import XCTest
 import Compression
 @testable import VitalLensCore
 
-final class APIClientTests: XCTestCase {
+final class APIInferenceTests: XCTestCase {
     
-    var apiClient: APIClient!
+    var APIInference: APIInference!
     var session: URLSession!
     
     override func setUp() {
@@ -27,7 +27,7 @@ final class APIClientTests: XCTestCase {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
         
         // 2. Initialize with NO proxy, but with the mock env
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session, environment: mockEnv)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session, environment: mockEnv)
         
         MockURLProtocol.requestHandler = { request in
             // 3. Verify the request hits the Dev URL
@@ -36,7 +36,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
 
     func testEnvironmentAPIKey_IsUsed_WhenExplicitKeyIsNil() async throws {
@@ -44,7 +44,7 @@ final class APIClientTests: XCTestCase {
         let mockEnv = ["VITALLENS_API_KEY": "env_secret_key"]
         
         // 2. Initialize with nil explicit key
-        apiClient = APIClient(apiKey: nil, proxyURL: nil, session: session, environment: mockEnv)
+        APIInference = APIInference(apiKey: nil, proxyURL: nil, session: session, environment: mockEnv)
         
         MockURLProtocol.requestHandler = { request in
             // 3. Verify the header uses the environment key
@@ -52,14 +52,14 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
 
     func testExplicitKey_Overrides_EnvironmentKey() async throws {
         // 1. Conflict: Env has one key, Init has another
         let mockEnv = ["VITALLENS_API_KEY": "env_key"]
         
-        apiClient = APIClient(apiKey: "explicit_key", proxyURL: nil, session: session, environment: mockEnv)
+        APIInference = APIInference(apiKey: "explicit_key", proxyURL: nil, session: session, environment: mockEnv)
         
         MockURLProtocol.requestHandler = { request in
             // 2. Verify Explicit wins
@@ -67,7 +67,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
 
     func testExplicitProxy_Overrides_EnvironmentBaseURL() async throws {
@@ -75,7 +75,7 @@ final class APIClientTests: XCTestCase {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
         let proxy = URL(string: "https://my-proxy.com")!
         
-        apiClient = APIClient(apiKey: "key", proxyURL: proxy, session: session, environment: mockEnv)
+        APIInference = APIInference(apiKey: "key", proxyURL: proxy, session: session, environment: mockEnv)
         
         MockURLProtocol.requestHandler = { request in
             // 2. Verify Proxy wins
@@ -88,7 +88,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
     
     func testDevEnvironment_SendsAuthHeader() async throws {
@@ -96,7 +96,7 @@ final class APIClientTests: XCTestCase {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
         
         // 2. Init with API key (explicit or env doesn't matter, just needs to exist)
-        apiClient = APIClient(apiKey: "secret", proxyURL: nil, session: session, environment: mockEnv)
+        APIInference = APIInference(apiKey: "secret", proxyURL: nil, session: session, environment: mockEnv)
         
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "dev.example.com")
@@ -108,25 +108,25 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
     
     // MARK: - Headers & Auth
     
     func testAPIKeyHeaderIsSet_DirectCall() async throws {
-        apiClient = APIClient(apiKey: "test_key_123", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "test_key_123", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "test_key_123")
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
     
     func testProxyIgnoresAPIKey() async throws {
         let proxy = URL(string: "https://my-proxy.com")!
-        apiClient = APIClient(apiKey: "should_be_ignored", proxyURL: proxy, session: session)
+        APIInference = APIInference(apiKey: "should_be_ignored", proxyURL: proxy, session: session)
         
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "my-proxy.com")
@@ -135,20 +135,20 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
         }
         
-        _ = try await apiClient.resolveModel(requestedModel: nil)
+        _ = try await APIInference.resolveModel(requestedModel: nil)
     }
     
     // MARK: - Error Handling
     
     func testQuotaExceededError() async {
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
             return (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!, nil)
         }
         
         do {
-            _ = try await apiClient.resolveModel(requestedModel: nil)
+            _ = try await APIInference.resolveModel(requestedModel: nil)
             XCTFail("Should have thrown error")
         } catch let error as VitalLensError {
             XCTAssertEqual(error, VitalLensError.quotaExceeded)
@@ -158,14 +158,14 @@ final class APIClientTests: XCTestCase {
     }
     
     func testServerError() async {
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
             return (HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!, nil)
         }
         
         do {
-            _ = try await apiClient.resolveModel(requestedModel: nil)
+            _ = try await APIInference.resolveModel(requestedModel: nil)
             XCTFail("Should have thrown error")
         } catch {
             if let vlError = error as? VitalLensError, case .serverError(let code, _) = vlError {
@@ -179,7 +179,7 @@ final class APIClientTests: XCTestCase {
     // MARK: - Logic: Resolve Model
     
     func testResolveModelQueryParam() async throws {
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
@@ -202,7 +202,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
         }
         
-        let response = try await apiClient.resolveModel(requestedModel: "vitallens-2.0")
+        let response = try await APIInference.resolveModel(requestedModel: "vitallens-2.0")
         XCTAssertEqual(response.resolvedModel, "vitallens-2.0")
         XCTAssertEqual(response.config.nInputs, 4)
     }
@@ -210,7 +210,7 @@ final class APIClientTests: XCTestCase {
     // MARK: - Logic: Streaming (Compression & Headers)
     
     func testStreamBatchRequestConstruction() async throws {
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
         let dummyState: [Float] = [0.1, 0.2]
         // Create repeating data that is highly compressible
@@ -255,7 +255,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
         }
         
-        _ = try await apiClient.sendStreamBatch(
+        _ = try await APIInference.sendStreamBatch(
             rawRGBBytes: dummyData,
             state: dummyState,
             model: "vitallens-2.0"
@@ -265,7 +265,7 @@ final class APIClientTests: XCTestCase {
     // MARK: - Logic: File Upload (JSON & Body State)
     
     func testFileEndpointRequestConstruction() async throws {
-        apiClient = APIClient(apiKey: "key", proxyURL: nil, session: session)
+        APIInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
         let dummyState: [Float] = [0.5, 0.6]
         let dummyData = Data([0x01, 0x02, 0x03, 0x04])
@@ -303,7 +303,7 @@ final class APIClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
         }
         
-        _ = try await apiClient.processVideoChunk(
+        _ = try await APIInference.processVideoChunk(
             rawRGBBytes: dummyData,
             metadata: metadata,
             state: dummyState
@@ -311,8 +311,8 @@ final class APIClientTests: XCTestCase {
     }
 
     func testStrategyConformance() async throws {
-        // Ensure APIClient satisfies the InferenceStrategy protocol requirements at runtime
-        let strategy: InferenceStrategy = APIClient(apiKey: "test", proxyURL: nil, session: session)
+        // Ensure APIInference satisfies the InferenceStrategy protocol requirements at runtime
+        let strategy: InferenceStrategy = APIInference(apiKey: "test", proxyURL: nil, session: session)
         
         MockURLProtocol.requestHandler = { request in
             let json = """

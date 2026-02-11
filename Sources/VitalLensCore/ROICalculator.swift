@@ -30,46 +30,27 @@ public struct ROICalculator {
         // Rounding to pixel boundaries is the responsibility of the ImageProcessor.
         return applyRelativeChange(to: faceRect, change: upperBodyInsets)
     }
-    
-    // MARK: - Validation
-    
-    /// Checks if a face is sufficiently contained within an existing ROI.
-    ///
-    /// This is used to determine if the subject has moved enough to require a new ROI buffer,
-    /// or if the current buffer is still valid.
-    ///
-    /// - Parameters:
-    ///   - face: The current normalized face bounding box.
-    ///   - roi: The existing normalized ROI being tracked.
-    ///   - thresholds: The minimum containment ratios required (width/height coverage).
-    /// - Returns: `true` if the face is adequately covered by the ROI.
-    public static func isFace(
-        _ face: CGRect,
-        sufficientlyInsideROI roi: CGRect,
-        thresholds: (width: CGFloat, height: CGFloat) = (0.5, 0.5)
-    ) -> Bool {
-        let faceRight = face.maxX
-        let faceBottom = face.maxY
-        let roiRight = roi.maxX
-        let roiBottom = roi.maxY
+
+    /// Calculates the Intersection over Union (IoU) between two rects.
+    /// Used to determine if a new detection belongs to an existing buffer.
+    public static func computeIoU(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let intersection = a.intersection(b)
+        let iArea = intersection.width * intersection.height
         
-        let requiredWidth = thresholds.width * face.width
-        let requiredHeight = thresholds.height * face.height
+        // If they don't intersect, area is 0
+        if intersection.isNull || iArea <= 0 { return 0.0 }
         
-        // Check if the ROI contains enough of the face
-        let isWidthInside = (faceRight - roi.minX >= requiredWidth) && (roiRight - face.minX >= requiredWidth)
-        let isHeightInside = (faceBottom - roi.minY >= requiredHeight) && (roiBottom - face.minY >= requiredHeight)
+        let aArea = a.width * a.height
+        let bArea = b.width * b.height
         
-        return isWidthInside && isHeightInside
+        let uArea = aArea + bArea - iArea
+        return uArea > 0 ? (iArea / uArea) : 0.0
     }
-    
+
     // MARK: - Private Helpers
     
     /// Applies relative coordinate changes to a rect and clamps result to [0.0, 1.0].
-    private static func applyRelativeChange(
-        to rect: CGRect,
-        change: [CGFloat]
-    ) -> CGRect {
+    private static func applyRelativeChange(to rect: CGRect, change: [CGFloat]) -> CGRect {
         let w = rect.width
         let h = rect.height
         
@@ -83,7 +64,6 @@ public struct ROICalculator {
         var newMaxX = rect.maxX + chRight
         var newMaxY = rect.maxY + chBottom
         
-        // Clamp to valid normalized range
         newX = max(0, min(newX, 1.0))
         newY = max(0, min(newY, 1.0))
         newMaxX = max(0, min(newMaxX, 1.0))

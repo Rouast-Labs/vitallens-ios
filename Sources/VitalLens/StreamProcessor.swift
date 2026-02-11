@@ -1,10 +1,19 @@
 import Foundation
 import AVFoundation
 import VitalLensCore
+import CoreVideo
 
 #if canImport(UIKit)
 import UIKit
 #endif
+
+/// A transformation closure that converts a raw CVPixelBuffer into an InferenceUnit.
+/// - Parameters:
+///   - buffer: The raw camera frame.
+///   - roi: The normalized Region of Interest.
+///   - config: The model configuration (e.g. input size).
+/// - Returns: An InferenceUnit (either RGB data or a PixelBuffer).
+public typealias FrameTransformer = @Sendable (CVPixelBuffer, CGRect, ModelConfig) throws -> InferenceUnit
 
 /// The engine that coordinates the camera, face detection, and API inference loop.
 actor StreamProcessor {
@@ -14,63 +23,74 @@ actor StreamProcessor {
     #endif
     
     private let detector: any FaceDetecting
-    private let processor: ImageProcessor
-    
     private let strategy: any InferenceStrategy
+    private let transformer: FrameTransformer
     
     private let bufferManager: BufferManager
     private let vitalsEstimator: VitalsEstimateManager
     
     private var config: ModelConfig?
-    private var detectionInterval: TimeInterval = 0.5
-    
-    private var lastFaceRect: CGRect?
-    private var lastDetectionTime: Date = .distantPast
     private var isPaused: Bool = false
-    
+        
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
-    
-    // MARK: - Concurrency Control
-    /// A signaling mechanism to wake up the inference loop when new frames arrive.
     private var frameSignal: AsyncStream<Void>.Continuation?
-    /// The long-running task that handles API communication.
     private var inferenceTask: Task<Void, Never>?
-    
+
+    // Default Processor (Retained if no custom transformer is provided)
+    private let defaultImageProcessor = ImageProcessor()
+
     init(
         strategy: any InferenceStrategy,
-        detector: any FaceDetecting = FaceDetector(),
-        camera: (any CameraStreaming)? = nil
+        roiStrategy: (any ROIStrategy)? = nil,
+        camera: (any CameraStreaming)? = nil,
+        transformer: FrameTransformer? = nil
     ) {
         #if canImport(UIKit)
         self.camera = camera ?? CameraSource()
         #endif
 
-        self.detector = detector
-        self.processor = ImageProcessor()
         self.strategy = strategy
+        // Default to Face Detection if no strategy provided
+        self.roiStrategy = roiStrategy ?? FaceROIStrategy()
+        
         self.bufferManager = BufferManager()
         self.vitalsEstimator = VitalsEstimateManager()
+        
+        // Default Transformer: Convert to RGB Data using ImageProcessor
+        if let transformer = transformer {
+            self.transformer = transformer
+        } else {
+            // Capture the processor instance for the closure
+            let processor = self.defaultImageProcessor
+            self.transformer = { buffer, roi, config in
+                let data = try processor.process(
+                    pixelBuffer: buffer, 
+                    roi: roi, 
+                    targetSize: config.inputSize
+                )
+                return .rgbData(data)
+            }
+        }
     }
     
     /// Starts the processing loop.
     /// - Parameter preview: A sendable wrapper containing the UIView (iOS Only).
     func start(preview: SendableUIPreview? = nil) async throws -> AsyncStream<VitalLensResult> {
         
-        // 1. Resolve Config (Blocking Init)
+        // 1. Prepare Config
         self.config = try await strategy.resolveConfig()
         self.isPaused = false
         
-        // 2. Setup Signaling for the Inference Loop
+        // 2. Setup Signaling for Inference Loop
         let signalStream = AsyncStream<Void> { continuation in
             self.frameSignal = continuation
         }
         
-        // 3. Spawn the Inference Loop (Detached)
-        // This runs independently of the camera and will not block ingestion.
         self.inferenceTask = Task {
             await self.runInferenceLoop(source: signalStream)
         }
         
+        // 3. Start Camera (Main Actor)
         #if canImport(UIKit)
         if let wrapper = preview, let view = wrapper.view as? UIView {
             await MainActor.run { camera.showPreview(on: view) }
@@ -78,14 +98,15 @@ actor StreamProcessor {
         try await camera.start()
         #endif
         
+        // 4. Return Output Stream
         return AsyncStream { continuation in
             self.outputContinuation = continuation
             
             #if canImport(UIKit)
             Task {
-                for await safeBuffer in camera.stream {
+                for await frame in camera.stream {
                     if !self.isPaused {
-                        await self.processFrame(safeBuffer)
+                        await self.processFrame(frame)
                     }
                 }
             }
@@ -93,7 +114,6 @@ actor StreamProcessor {
         }
     }
     
-    /// Pauses camera and processing without killing the stream.
     func pause() async {
         self.isPaused = true
         #if canImport(UIKit)
@@ -101,7 +121,6 @@ actor StreamProcessor {
         #endif
     }
     
-    /// Resumes camera and processing.
     func resume() async throws {
         self.isPaused = false
         #if canImport(UIKit)
@@ -115,7 +134,6 @@ actor StreamProcessor {
         camera.stop()
         #endif
         
-        // Kill the background inference loop
         inferenceTask?.cancel()
         frameSignal?.finish()
         inferenceTask = nil
@@ -130,56 +148,56 @@ actor StreamProcessor {
         }
     }
     
-    // MARK: - Process 1: Ingestion Loop (High Frequency)
+    // MARK: - Frame Processing
     
-    /// Processes a single frame. Driven by the camera (e.g., 30 FPS).
-    /// This method must remain fast and non-blocking.
-    func processFrame(_ pixelBuffer: SendablePixelBuffer) async {
+    /// Called on every frame arrival.
+    func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
         
-        // A. Face Detection (Fire-and-Forget)
-        let now = Date()
-        if now.timeIntervalSince(lastDetectionTime) > detectionInterval {
-            Task {
-                if let rect = try? await detector.detectFace(in: pixelBuffer, orientation: .up) {
-                    self.updateFaceRect(rect)
-                }
-            }
-            self.lastDetectionTime = now
-        }
+        let pixelBuffer = frame.buffer
+        let orientation = frame.orientation
+        let isMirrored = frame.isMirrored
+        let timestamp = frame.timestamp
         
-        // B. Process & Accumulate (Synchronous & Fast)
+        // Ask Strategy for ROIs using the correct orientation
+        let targets = await roiStrategy.determineROIs(in: pixelBuffer, orientation: orientation)
+        
+        // Sync with Buffer Manager (Handles Overlap/Drift)
         let activeROIs = await bufferManager.updateAndGetActiveROIs(
-            faceRect: lastFaceRect,
+            targets: targets,
+            constraints: strategy.batchConstraints,
             config: config
         )
         
         if activeROIs.isEmpty { return }
         
         let buffer = pixelBuffer.buffer
+        
+        // Transform & Append
         for item in activeROIs {
-            // High-performance vDSP cropping/scaling (< 2ms)
-            if let rawBytes = try? processor.process(
-                pixelBuffer: buffer,
-                roi: item.roi,
-                targetSize: config.inputSize
-            ) {
-                await bufferManager.append(bufferId: item.id, data: rawBytes)
+            do {
+                let unit = try transformer(buffer, item.roi, config)
+
+                let context = InferenceContext(
+                    timestamp: timestamp,
+                    orientation: orientation,
+                    isMirrored: isMirrored,
+                    roi: item.roi
+                )
+                
+                await bufferManager.append(bufferId: item.id, unit: unit, context: context)
+            } catch {
+                print("[StreamProcessor] Transform failed: \(error)")
             }
         }
         
-        // C. Signal Inference Loop
+        // Wake up inference loop
         frameSignal?.yield()
     }
     
-    private func updateFaceRect(_ rect: CGRect) {
-        self.lastFaceRect = rect
-    }
+    // MARK: - Inference Loop
     
-    // MARK: - Process 2: Inference Loop (Variable Frequency)
-    
-    /// The background loop that manages API communication.
-    /// It drains the buffer (handling dynamic batch sizes) and maintains state continuity.
+    /// Background task that monitors buffers and triggers inference when ready.
     private func runInferenceLoop(source: AsyncStream<Void>) async {
         print("[StreamProcessor] Inference Loop Started")
         
@@ -189,32 +207,33 @@ actor StreamProcessor {
         for await _ in source {
             if Task.isCancelled { break }
             
-            while let buffer = await bufferManager.getReadyBuffer() {
+            // Check if any buffer is ready for the current mode (.stream)
+            while let buffer = await bufferManager.getReadyBuffer(mode: .stream) {
                 if Task.isCancelled { break }
                 
+                // Backoff logic
                 if consecutiveErrors > 0 {
                     let delay = pow(2.0, Double(consecutiveErrors)) * 0.1
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
                 
-                guard let payload = await buffer.consume() else { break }
-                let state = await bufferManager.getState()
+                // Consume returns generic units
+                guard let window = await buffer.consume() else { break }
+                let currentState = await bufferManager.getState()
                 
                 do {
-                    let rawResult = try await strategy.process(
-                        frames: payload,
-                        state: state,
-                        meta: [:]
+                    let (rawResult, newState) = try await strategy.infer(
+                        window: window,
+                        state: currentState,
+                        mode: .stream,
+                        model: nil
                     )
                     
                     consecutiveErrors = 0
                     
-                    if let stateData = rawResult.state?.data,
-                    let decoded = Data(base64Encoded: stateData) {
-                        let newState = decoded.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-                        await bufferManager.updateState(newState)
-                    }
+                    await bufferManager.updateState(newState)
                     
+                    // Estimate Vitals
                     if let config = self.config {
                         let refined = await vitalsEstimator.process(chunk: rawResult, config: config)
                         outputContinuation?.yield(refined)
@@ -225,11 +244,9 @@ actor StreamProcessor {
                     print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
                     
                     if consecutiveErrors >= maxRetries {
-                        print("[StreamProcessor] Max retries hit. Resetting State & Buffers.")
-                        
-                        await bufferManager.reset() 
+                        print("[StreamProcessor] Max retries hit. Resetting State.")
+                        await bufferManager.reset()
                         await vitalsEstimator.reset()
-                        
                         consecutiveErrors = 0
                     }
                 }

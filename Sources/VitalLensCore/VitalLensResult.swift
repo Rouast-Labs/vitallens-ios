@@ -1,6 +1,10 @@
 import Foundation
 import CoreGraphics
 
+/// A marker protocol for auxiliary data attached to a result.
+/// Implement this in the host app to attach custom data (e.g. debug images, attention masks).
+public protocol ResultAuxiliaryData: Sendable {}
+
 /// The raw output from an inference strategy (API or CoreML).
 /// All physiological data is represented as time-series arrays matching the frame count.
 public struct VitalLensResult: Codable, Sendable {
@@ -13,6 +17,10 @@ public struct VitalLensResult: Codable, Sendable {
     public let state: StateData?
     public let message: String?
     public let sampleCount: Int?
+
+    /// Optional container for non-codable, local-only data (e.g. Debug images, MLMultiArray masks).
+    /// This property is ignored during JSON encoding/decoding.
+    public var auxiliary: (any ResultAuxiliaryData)? 
 
     // MARK: - Computed Convenience Accessors
     
@@ -37,7 +45,8 @@ public struct VitalLensResult: Codable, Sendable {
         modelUsed: String? = nil,
         state: StateData? = nil,
         message: String? = nil,
-        sampleCount: Int? = nil
+        sampleCount: Int? = nil,
+        auxiliary: (any ResultAuxiliaryData)? = nil
     ) {
         self.face = face
         self.signals = signals
@@ -47,15 +56,22 @@ public struct VitalLensResult: Codable, Sendable {
         self.state = state
         self.message = message
         self.sampleCount = sampleCount
+        self.auxiliary = auxiliary
     }
     
     // MARK: - Dynamic Decoding
     
+    // TODO: Unsure about this
     struct DynamicKey: CodingKey {
         var stringValue: String
         init?(stringValue: String) { self.stringValue = stringValue }
         var intValue: Int? { return nil }
         init?(intValue: Int) { return nil }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case face, signals, time, fps, modelUsed, state, message, sampleCount
+        case vital_signs = "vital_signs" // Ensure this mapping exists if strictly decoding
     }
     
     public init(from decoder: Decoder) throws {

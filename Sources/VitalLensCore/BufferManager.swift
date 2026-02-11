@@ -2,9 +2,6 @@ import Foundation
 import CoreGraphics
 
 /// Manages multiple `FrameBuffer` instances to handle changes in Region of Interest (ROI) and face movement.
-///
-/// This actor ensures that when a face moves significantly (drift), a new buffer is created to track the new ROI,
-/// while existing buffers continue to process data until they are flushed or pruned.
 public actor BufferManager {
     
     // MARK: - Types
@@ -25,103 +22,111 @@ public actor BufferManager {
     private struct ManagedBuffer {
         let id: String
         let buffer: FrameBuffer
+        /// The timestamp of the last time this buffer was matched to an ROI.
+        var lastUsed: TimeInterval
     }
     
     // MARK: - Properties
     
     private var buffers: [String: ManagedBuffer] = [:]
     
-    /// The recurrent state (RNN) from the API, cached to be injected into the next ready buffer.
-    private var rnnState: [Float]?
+    private var state: (any InferenceState)?
 
     public init() {}
     
     // MARK: - Core Logic
     
-    /// Evaluates the current face detection against existing buffers and determines which ROIs need processing.
+    /// Evaluates incoming target ROIs against existing buffers.
     ///
     /// - Parameters:
-    ///   - faceRect: The normalized bounding box of the face (Top-Left origin), or `nil` if no face is detected.
-    ///   - config: The model configuration containing ROI calculation rules.
-    /// - Returns: A list of `ActiveBufferROI` that the caller must process and feed back via `append`.
+    ///   - targets: List of desired ROIs for the current frame.
+    ///   - constraints: Batch limits for new buffers.
+    ///   - config: Model configuration.
+    /// - Returns: List of active buffer IDs and the ROIs they should use.
     public func updateAndGetActiveROIs(
-        faceRect: CGRect?,
+        targets: [CGRect],
+        constraints: BatchConstraints,
         config: ModelConfig
     ) -> [ActiveBufferROI] {
         let now = Date().timeIntervalSince1970
+        var active: [ActiveBufferROI] = []
         
-        // 1. New Buffer Creation Logic
-        if let face = faceRect {
+        // Threshold for "Same Buffer". 0.9 means 90% overlap required.
+        // If overlap drops below this (due to face drift or rotation), we create a new buffer.
+        let iouThreshold: CGFloat = 0.90
+        
+        for target in targets {
+            // Find the best matching existing buffer
+            var bestMatchID: String?
+            var bestIoU: CGFloat = -1.0
             
-            // Calculate the ideal ROI for the current face position
-            let idealROI = ROICalculator.calculateROI(
-                from: face,
-                method: config.roiMethod,
-                frameSize: CGSize(width: 1, height: 1)
-            )
-            
-            // Check if the face is sufficiently covered by any existing buffer
-            let isCovered = buffers.values.contains { managed in
-                return ROICalculator.isFace(face, sufficientlyInsideROI: managed.buffer.roi)
+            for (id, managed) in buffers {
+                let overlap = ROICalculator.computeIoU(target, managed.buffer.roi)
+                if overlap > bestIoU {
+                    bestIoU = overlap
+                    bestMatchID = id
+                }
             }
             
-            // If the face has drifted out of all existing ROIs, create a new buffer
-            if !isCovered {
-                let id = UUID().uuidString
-                let newBuffer = FrameBuffer(roi: idealROI, config: config, timestamp: now)
-                buffers[id] = ManagedBuffer(id: id, buffer: newBuffer)
+            if let matchID = bestMatchID, bestIoU >= iouThreshold {
+                // Keep using existing buffer
+                buffers[matchID]?.lastUsed = now
+                active.append(ActiveBufferROI(id: matchID, roi: buffers[matchID]!.buffer.roi))
+            } else {
+                // Create new buffer
+                let newID = UUID().uuidString
+                let newBuffer = FrameBuffer(roi: target, config: config, constraints: constraints, timestamp: now)
+                buffers[newID] = ManagedBuffer(id: newID, buffer: newBuffer, lastUsed: now)
+                active.append(ActiveBufferROI(id: newID, roi: target))
             }
         }
         
-        // 2. Return ROIs for all active buffers
-        return buffers.values.map {
-            ActiveBufferROI(id: $0.id, roi: $0.buffer.roi)
+        // Cleanup old buffers (unused for > 5 seconds)
+        // This handles cases where a face leaves the frame or device rotates.
+        for (id, managed) in buffers {
+            if now - managed.lastUsed > 5.0 {
+                buffers.removeValue(forKey: id)
+            }
         }
+        
+        return active
     }
     
-    /// Appends processed frame data to a specific buffer.
-    ///
-    /// - Parameters:
-    ///   - bufferId: The UUID of the target buffer.
-    ///   - data: The raw RGB bytes of the processed frame.
-    public func append(bufferId: String, data: Data) async {
+    /// Appends a processed inference unit to a specific buffer.
+    public func append(bufferId: String, unit: InferenceUnit, context: InferenceContext) async {
         guard let wrapper = buffers[bufferId] else { return }
-        await wrapper.buffer.append(frameData: data)
+        await wrapper.buffer.append(unit: unit, context: context)
     }
     
-    /// Retrieves the most appropriate buffer that is ready for transmission.
-    /// Prioritizes the most recently created buffer (i.e., the one tracking the newest ROI).
-    ///
-    /// - Returns: The ready `FrameBuffer`, or `nil` if no buffer meets the readiness criteria.
-    public func getReadyBuffer() async -> FrameBuffer? {
-        let hasState = (rnnState != nil && !rnnState!.isEmpty)
+    public func getReadyBuffer(mode: InferenceMode) async -> FrameBuffer? {
+        let hasState = (state != nil)
         var readyBuffers: [FrameBuffer] = []
         
         for wrapper in buffers.values {
-            if await wrapper.buffer.isReady(hasState: hasState) {
+            if await wrapper.buffer.isReady(hasState: hasState, mode: mode) {
                 readyBuffers.append(wrapper.buffer)
             }
         }
         
-        // Sort by creation time (descending) to prioritize the newest ROI
+        // Prioritize newest buffer (most relevant ROI)
         return readyBuffers.sorted { $0.createdAt > $1.createdAt }.first
     }
     
     // MARK: - State Management
     
-    /// Updates the cached RNN state from the API response.
-    public func updateState(_ state: [Float]) {
-        self.rnnState = state
+    /// Updates the cached state from the API response.
+    public func updateState(_ newState: (any InferenceState)?) {
+        self.state = newState
     }
     
-    /// Retrieves the current cached RNN state.
-    public func getState() -> [Float]? {
-        return rnnState
+    /// Retrieves the current cached state.
+    public func getState() -> (any InferenceState)? {
+        return state
     }
     
     /// Clears all buffers and state.
     public func reset() {
         buffers.removeAll()
-        rnnState = nil
+        state = nil
     }
 }

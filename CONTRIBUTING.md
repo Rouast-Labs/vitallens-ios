@@ -69,7 +69,7 @@ Tests involving `CameraSource` or `VitalLensUI` components must be run inside an
 2. Select an iOS Simulator (e.g., iPhone 15 Pro).
 3. Press **Cmd + U**.
 
-> **Note:** `APIClientTests` uses a Mock URLProtocol, so it does not hit the real API. No API Key is required for standard testing.
+> **Note:** `APIInference` uses a Mock URLProtocol, so it does not hit the real API. No API Key is required for standard testing.
 
 ---
 
