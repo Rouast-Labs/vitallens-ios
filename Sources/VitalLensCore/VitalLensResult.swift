@@ -18,24 +18,23 @@ public struct VitalLensResult: Codable, Sendable {
     public let message: String?
     public let sampleCount: Int?
 
-    /// Optional container for non-codable, local-only data (e.g. Debug images, MLMultiArray masks).
-    /// This property is ignored during JSON encoding/decoding.
+    /// Optional container for non-codable, local-only data (e.g. Debug images).
     public var auxiliary: (any ResultAuxiliaryData)? 
 
-    // MARK: - Computed Convenience Accessors
+    // MARK: - Convenience Accessors
     
+    // Consolidated: specific vitals map directly to the signals dictionary
     public var ppg: TimeSeries? { signals["ppg_waveform"] }
     public var resp: TimeSeries? { signals["respiratory_waveform"] }    
-    public var sbp: TimeSeries? { signals["sbp"] }
-    public var dbp: TimeSeries? { signals["dbp"] }
-    public var spo2: TimeSeries? { signals["spo2"] }
-
+    
     public var heartRate: TimeSeries? { signals["heart_rate"] }
     public var respiratoryRate: TimeSeries? { signals["respiratory_rate"] }
     public var hrvSdnn: TimeSeries? { signals["hrv_sdnn"] }
     public var hrvRmssd: TimeSeries? { signals["hrv_rmssd"] }
-    public var ppgWaveform: TimeSeries? { signals["ppg_waveform"] }
-    public var respiratoryWaveform: TimeSeries? { signals["respiratory_waveform"] }
+    
+    public var sbp: TimeSeries? { signals["sbp"] }
+    public var dbp: TimeSeries? { signals["dbp"] }
+    public var spo2: TimeSeries? { signals["spo2"] }
 
     public init(
         face: FaceData,
@@ -59,9 +58,8 @@ public struct VitalLensResult: Codable, Sendable {
         self.auxiliary = auxiliary
     }
     
-    // MARK: - Dynamic Decoding
+    // MARK: - Codable Implementation
     
-    // TODO: Unsure about this
     struct DynamicKey: CodingKey {
         var stringValue: String
         init?(stringValue: String) { self.stringValue = stringValue }
@@ -71,7 +69,7 @@ public struct VitalLensResult: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case face, signals, time, fps, modelUsed, state, message, sampleCount
-        case vital_signs = "vital_signs" // Ensure this mapping exists if strictly decoding
+        case vital_signs = "vital_signs"  
     }
     
     public init(from decoder: Decoder) throws {
@@ -87,14 +85,16 @@ public struct VitalLensResult: Codable, Sendable {
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
         
+        // Handle dynamic vital_signs dictionary
         if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
             var tempSignals = [String: TimeSeries]()
             for key in vitalsContainer.allKeys {
-                // Try decoding as standard TimeSeries (arrays)
+                
+                // Primary: Try decoding as TimeSeries array
                 if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
                     tempSignals[key.stringValue] = signal
                 } 
-                // Fallback: Try decoding as Scalar (value/confidence numbers) and wrap in array
+                // Fallback: Try decoding as legacy ScalarResponse
                 else if let scalar = try? vitalsContainer.decode(ScalarResponse.self, forKey: key) {
                     tempSignals[key.stringValue] = TimeSeries(scalar: scalar)
                 }

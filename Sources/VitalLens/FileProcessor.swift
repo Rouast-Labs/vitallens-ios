@@ -143,6 +143,8 @@ actor FileProcessor {
                         mode: .file,
                         model: nil
                     )
+
+                    currentState = newState
                     
                     if accumulatedResult == nil {
                         accumulatedResult = result
