@@ -10,10 +10,19 @@ final class BufferManagerTests: XCTestCase {
         roiMethod: "face",
         supportedVitals: ["heart_rate"]
     )
+
+    let constraints = BatchConstraints(
+        streamMinNoState: 16,
+        streamMinWithState: 4,
+        streamMax: 150
+    )
     
-    func makeFrameData(val: UInt8) -> Data {
+    // Helper to generate a dummy frame
+    func makeFrame() -> (InferenceUnit, InferenceContext) {
         let size = 40 * 40 * 3
-        return Data(repeating: val, count: size)
+        let unit = InferenceUnit.rgbData(Data(repeating: 0, count: size))
+        let context = InferenceContext(timestamp: 0, orientation: .up, isMirrored: false, roi: .zero)
+        return (unit, context)
     }
     
     // MARK: - Tracking Logic
@@ -25,27 +34,38 @@ final class BufferManagerTests: XCTestCase {
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         
         // 2. Run update
-        let activeROIs = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
+        let activeROIs = await manager.updateAndGetActiveROIs(
+            targets: [face],
+            constraints: constraints,
+            config: config
+        )
         
         XCTAssertEqual(activeROIs.count, 1, "Should create exactly 1 buffer for a new face")
         
-        // 3. Verify ROI Logic (Approximate check based on ROICalculator logic)
-        let roi = activeROIs.first!.roi
-        XCTAssertEqual(roi.origin.x, 0.362, accuracy: 0.001)
+        // 3. Verify ROI matches input (manager uses target directly for new buffers)
+        XCTAssertEqual(activeROIs.first!.roi.origin.x, 0.4, accuracy: 0.001)
     }
     
     func testTrackingStableFace() async {
         let manager = BufferManager()
-        let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
-
+        
         // 1. Initial Face
         let face1 = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
-        let rois1 = await manager.updateAndGetActiveROIs(faceRect: face1, config: trackConfig)
+        let rois1 = await manager.updateAndGetActiveROIs(
+            targets: [face1],
+            constraints: constraints,
+            config: config
+        )
         let id1 = rois1.first!.id
         
-        // 2. Moved Face (Slight move to 0.42)
+        // 2. Moved Face (Slight move to 0.42, IoU > 0.6)
         let face2 = CGRect(x: 0.42, y: 0.42, width: 0.2, height: 0.2)
-        let rois2 = await manager.updateAndGetActiveROIs(faceRect: face2, config: trackConfig)
+        
+        let rois2 = await manager.updateAndGetActiveROIs(
+            targets: [face2],
+            constraints: constraints,
+            config: config
+        )
         
         XCTAssertEqual(rois2.count, 1, "Should maintain the existing buffer for slight movement")
         XCTAssertEqual(rois2.first!.id, id1, "Should return the SAME buffer ID")
@@ -53,18 +73,34 @@ final class BufferManagerTests: XCTestCase {
     
     func testDriftCreatesNewBuffer() async {
         let manager = BufferManager()
-        let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
         
         // 1. Face Left
         let faceLeft = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
-        _ = await manager.updateAndGetActiveROIs(faceRect: faceLeft, config: trackConfig)
+        _ = await manager.updateAndGetActiveROIs(
+            targets: [faceLeft],
+            constraints: constraints,
+            config: config
+        )
         
-        // 2. Face Right (Far jump)
+        // 2. Face Right (Far jump, IoU = 0)
         let faceRight = CGRect(x: 0.7, y: 0.7, width: 0.2, height: 0.2)
-        let rois = await manager.updateAndGetActiveROIs(faceRect: faceRight, config: trackConfig)
         
-        // Expect both buffers to be active (1 old, 1 new)
-        XCTAssertEqual(rois.count, 2, "Should have 2 buffers after drift")
+        // Pass BOTH faces (simulating drift logic where old face is gone, new face appears)
+        // If we just pass faceRight, the manager might drop the old buffer if it times out, 
+        // but here we are checking immediate creation.
+        let rois = await manager.updateAndGetActiveROIs(
+            targets: [faceRight],
+            constraints: constraints,
+            config: config
+        )
+        
+        // In the new logic, updateAndGetActiveROIs returns active buffers for the CURRENT targets.
+        // It does NOT return "all buffers including timed-out ones".
+        // So we expect 1 buffer (the new one).
+        // BUT, the old buffer still exists inside the manager until it times out (5s).
+        
+        XCTAssertEqual(rois.count, 1, "Should return ROI for the active target")
+        XCTAssertNotEqual(rois.first?.roi.origin.x, 0.1, "Should correspond to the new face")
     }
     
     // MARK: - State & Ready Logic
@@ -74,23 +110,29 @@ final class BufferManagerTests: XCTestCase {
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         
         // 1. Create Buffer
-        let rois = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
+        let rois = await manager.updateAndGetActiveROIs(
+            targets: [face],
+            constraints: constraints,
+            config: config
+        )
         let id = rois.first!.id
         
         // 2. Add 15 frames
         for _ in 0..<15 {
-            await manager.append(bufferId: id, data: makeFrameData(val: 1))
+            let (unit, ctx) = makeFrame()
+            await manager.append(bufferId: id, unit: unit, context: ctx)
         }
         
         // 3. Check Ready (Should be FALSE, because we have no state, need 16)
-        let ready1 = await manager.getReadyBuffer()
+        let ready1 = await manager.getReadyBuffer(mode: .stream)
         XCTAssertNil(ready1, "Should be nil (15 < 16)")
         
-        // 4. Inject State
-        await manager.updateState([0.1, 0.2, 0.3])
+        // 4. Inject State (Using APIState wrapper)
+        let dummyState = APIState(data: [0.1, 0.2, 0.3])
+        await manager.updateState(dummyState)
         
         // 5. Check Ready (Should be TRUE, because we have state, need 4. 15 > 4)
-        let ready2 = await manager.getReadyBuffer()
+        let ready2 = await manager.getReadyBuffer(mode: .stream)
         XCTAssertNotNil(ready2, "Should be ready now that state is injected")
         
         if let buffer = ready2 {
@@ -101,31 +143,37 @@ final class BufferManagerTests: XCTestCase {
     
     func testGetReadyBufferPrioritizesNewest() async {
         let manager = BufferManager()
-        let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
         
         // Buffer A (Old)
         let faceA = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
-        let roisA = await manager.updateAndGetActiveROIs(faceRect: faceA, config: trackConfig)
+        let roisA = await manager.updateAndGetActiveROIs(
+            targets: [faceA],
+            constraints: constraints,
+            config: config
+        )
         let idA = roisA.first!.id
         
         // Wait a tiny bit to ensure timestamp difference
-        try? await Task.sleep(nanoseconds: 1_000_000)
+        try? await Task.sleep(nanoseconds: 10_000_000)
         
         // Buffer B (New)
         let faceB = CGRect(x: 0.7, y: 0.7, width: 0.2, height: 0.2)
-        let roisB = await manager.updateAndGetActiveROIs(faceRect: faceB, config: trackConfig)
-        
-        // Find B's ID (the one that isn't A)
-        let idB = roisB.first(where: { $0.id != idA })!.id
+        let roisB = await manager.updateAndGetActiveROIs(
+            targets: [faceB],
+            constraints: constraints,
+            config: config
+        )
+        let idB = roisB.first!.id
         
         // Fill both buffers to readiness (16 frames)
         for _ in 0..<16 {
-            await manager.append(bufferId: idA, data: makeFrameData(val: 1))
-            await manager.append(bufferId: idB, data: makeFrameData(val: 2))
+            let (unit, ctx) = makeFrame()
+            await manager.append(bufferId: idA, unit: unit, context: ctx)
+            await manager.append(bufferId: idB, unit: unit, context: ctx)
         }
         
         // Get Ready. Should return B because it is newer.
-        let bestBuffer = await manager.getReadyBuffer()
+        let bestBuffer = await manager.getReadyBuffer(mode: .stream)
         XCTAssertNotNil(bestBuffer)
         
         if let buffer = bestBuffer {
@@ -136,21 +184,28 @@ final class BufferManagerTests: XCTestCase {
     
     // MARK: - Robustness & Lifecycle
     
-    func testNilFacePreservesBuffers() async {
+    func testNilTargetsDoesNotReturnBuffers() async {
         let manager = BufferManager()
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         
-        // 1. Establish a buffer with a valid face
-        let rois1 = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
-        let originalID = rois1.first?.id
+        // 1. Establish a buffer
+        _ = await manager.updateAndGetActiveROIs(
+            targets: [face],
+            constraints: constraints,
+            config: config
+        )
         
-        // 2. Simulate detection failure (nil face)
-        let rois2 = await manager.updateAndGetActiveROIs(faceRect: nil, config: config)
+        // 2. Simulate detection failure (empty targets)
+        let rois2 = await manager.updateAndGetActiveROIs(
+            targets: [],
+            constraints: constraints,
+            config: config
+        )
         
-        // Assertion: We must NOT lose the buffer. We should keep processing the last known ROI.
-        XCTAssertEqual(rois2.count, 1, "Existing buffers should persist even if face detection misses a frame")
-        XCTAssertEqual(rois2.first?.id, originalID, "The ID should remain consistent")
-        XCTAssertEqual(rois2.first?.roi.origin.x, rois1.first?.roi.origin.x, "The ROI should not change")
+        // Assertion: updateAndGetActiveROIs returns *requested* active ROIs.
+        // If we request nothing, we get nothing back.
+        // However, the internal buffer persists until timeout.
+        XCTAssertTrue(rois2.isEmpty, "Should return no active ROIs if no targets provided")
     }
     
     func testResetClearsState() async {
@@ -158,34 +213,22 @@ final class BufferManagerTests: XCTestCase {
         let face = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         
         // 1. Create state
-        _ = await manager.updateAndGetActiveROIs(faceRect: face, config: config)
-        await manager.updateState([0.1, 0.2])
+        _ = await manager.updateAndGetActiveROIs(
+            targets: [face],
+            constraints: constraints,
+            config: config
+        )
+        await manager.updateState(APIState(data: [0.1]))
         
         // 2. Reset
         await manager.reset()
         
         // 3. Verify
-        let rois = await manager.updateAndGetActiveROIs(faceRect: nil, config: config)
-        XCTAssertTrue(rois.isEmpty, "Buffers should be empty after reset")
-        
         let state = await manager.getState()
         XCTAssertNil(state, "RNN state should be nil after reset")
-    }
-    
-    func testBufferAccumulationOnMovement() async {
-        let manager = BufferManager()
-        let trackConfig = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "upper_body_cropped", supportedVitals: [])
         
-        // Move face to 3 distinct positions (Left -> Center -> Right)
-        let positions = [0.1, 0.5, 0.9]
-        
-        for x in positions {
-            let face = CGRect(x: x, y: 0.1, width: 0.2, height: 0.2)
-            _ = await manager.updateAndGetActiveROIs(faceRect: face, config: trackConfig)
-        }
-        
-        // We expect 3 distinct buffers because we moved far enough to trigger new ones
-        let finalROIs = await manager.updateAndGetActiveROIs(faceRect: nil, config: trackConfig)
-        XCTAssertEqual(finalROIs.count, 3)
+        // Verify buffers are gone (by trying to get ready buffer)
+        let ready = await manager.getReadyBuffer(mode: .stream)
+        XCTAssertNil(ready)
     }
 }

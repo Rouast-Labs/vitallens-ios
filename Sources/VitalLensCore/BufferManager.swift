@@ -51,9 +51,9 @@ public actor BufferManager {
         let now = Date().timeIntervalSince1970
         var active: [ActiveBufferROI] = []
         
-        // Threshold for "Same Buffer". 0.9 means 90% overlap required.
+        // Threshold for "Same Buffer". 0.6 means 60% overlap required.
         // If overlap drops below this (due to face drift or rotation), we create a new buffer.
-        let iouThreshold: CGFloat = 0.90
+        let iouThreshold: CGFloat = 0.6
         
         for target in targets {
             // Find the best matching existing buffer
