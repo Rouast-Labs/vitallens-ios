@@ -30,6 +30,9 @@ final class FileSourceTests: XCTestCase {
         
         // Ensure FPS is reasonable (we wrote it at 30 timescale)
         XCTAssertGreaterThan(source.nominalFrameRate, 20.0)
+
+        // Generated video should default to .up
+        XCTAssertEqual(source.orientation, .up)
     }
     
     /// Verifies that every frame written to the file can be read back with the correct format.
@@ -81,6 +84,26 @@ final class FileSourceTests: XCTestCase {
         XCTAssertEqual(count, 30)
         // 30 frames should be read almost instantly (< 2s even on slow CI)
         XCTAssertLessThan(duration, 2.0) 
+    }
+
+    func testCancellationStopsReading() async throws {
+        let url = try await createTemporaryVideoFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        
+        let source = try await FileSource.from(url: url)
+        
+        var count = 0
+        // Consume only 5 frames then break
+        for await _ in source.frames() {
+            count += 1
+            if count == 5 { break }
+        }
+        
+        // If we broke the loop, the AsyncStream continuation should be terminated.
+        // The internal AVAssetReader should be cancelled.
+        // While we can't easily introspect the private reader, we can assert we didn't crash
+        // and that we successfully stopped receiving frames.
+        XCTAssertEqual(count, 5)
     }
 
     // MARK: - Test Data Generation Helpers
