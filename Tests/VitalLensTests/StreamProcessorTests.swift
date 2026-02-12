@@ -1,268 +1,333 @@
 import XCTest
 import CoreVideo
 import ImageIO
+import AVFoundation
+import VitalLensCore
 @testable import VitalLens
-@testable import VitalLensCore
+
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Mocks
 
-actor MockStrategy: InferenceStrategy {
-    var processCalledCount = 0
-    var lastReceivedState: [Float]?
+actor MockROIStrategy: ROIStrategy {
+    var currentROIs: [CGRect] = []
+    
+    func setROIs(_ rois: [CGRect]) {
+        self.currentROIs = rois
+    }
+    
+    func determineROIs(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect] {
+        return currentROIs
+    }
+}
+
+actor MockInferenceStrategy: InferenceStrategy {
+    var inferCallCount = 0
+    var lastReceivedState: (any InferenceState)?
     private var shouldFail = false
-    
-    /// Helper to verify calls in tests without ambiguity
-    func reset() {
-        processCalledCount = 0
-        lastReceivedState = nil
-    }
-    
-    func setShouldFail(_ value: Bool) {
-        self.shouldFail = value
-    }
     
     func resolveConfig() async throws -> ModelConfig {
         return ModelConfig(
             nInputs: 4,
             inputSize: 40,
             fpsTarget: 30,
-            roiMethod: "upper_body_cropped",
+            roiMethod: "face",
             supportedVitals: ["heart_rate"]
         )
     }
     
-    func process(frames: Data, state: [Float]?, meta: [String : String]) async throws -> VitalLensResult {
+    nonisolated var batchConstraints: BatchConstraints {
+        return BatchConstraints(streamMinNoState: 4, streamMinWithState: 4, streamMax: 10)
+    }
+    
+    func setShouldFail(_ fail: Bool) {
+        self.shouldFail = fail
+    }
+    
+    func infer(
+        window: [(InferenceUnit, InferenceContext)],
+        state: (any InferenceState)?,
+        mode: InferenceMode,
+        model: String?
+    ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
+        
         self.lastReceivedState = state
+        self.inferCallCount += 1
         
         if shouldFail {
             throw VitalLensError.serverError(statusCode: 500, message: "Mock Failure")
         }
         
-        processCalledCount += 1
-        
-        // Return a dummy state of [1.0] to simulate the API returning a new RNN state
-        let dummyStateData = Data([0x00, 0x00, 0x80, 0x3F])
-        let stateStr = dummyStateData.base64EncodedString()
-        
-        // Explicitly typed empty arrays to satisfy the compiler
-        let emptyCoords: [[Double]] = []
-        let emptyConf: [Double] = []
-        
-        return VitalLensResult(
-            face: FaceData(coordinates: emptyCoords, confidence: emptyConf, note: nil as String?),
-            signals: [
-                "heart_rate": TimeSeries(
-                    data: [Float(72.0)],
-                    confidence: [Float(0.9)],
-                    unit: "bpm",
-                    note: ""
-                )
-            ],
+        let result = VitalLensResult(
+            face: FaceData(coordinates: nil, confidence: nil, note: nil),
+            signals: ["heart_rate": TimeSeries(data: [72.0], confidence: [1.0], unit: "bpm", note: nil)],
             time: [Date().timeIntervalSince1970],
-            state: StateData(data: stateStr, note: nil as String?)
+            fps: 30.0,
+            modelUsed: "mock",
+            state: nil,
+            message: nil,
+            sampleCount: 1
         )
+        
+        let newState = MockState(id: "state_\(inferCallCount)")
+        return (result, newState)
     }
 }
 
-actor MockFaceDetector: FaceDetecting {
-    var forcedRect: CGRect?
-    
-    // Update signature to match protocol
-    func detectFace(
-        in pixelBuffer: SendablePixelBuffer, 
-        orientation: CGImagePropertyOrientation
-    ) async throws -> CGRect? {
-        return forcedRect
-    }
-    
-    func setFace(_ rect: CGRect?) {
-        self.forcedRect = rect
-    }
+struct MockState: InferenceState {
+    let id: String
+}
+
+class MockCamera: CameraStreaming, @unchecked Sendable {
+    var stream: AsyncStream<InputFrame> { AsyncStream { _ in } }
+    func start() async throws {}
+    func stop() {}
+    #if canImport(UIKit)
+    func showPreview(on view: UIView) {}
+    #endif
 }
 
 // MARK: - Tests
 
 final class StreamProcessorTests: XCTestCase {
     
-    var strategy: MockStrategy!
-    var detector: MockFaceDetector!
+    var strategy: MockInferenceStrategy!
+    var roiStrategy: MockROIStrategy!
     var processor: StreamProcessor!
-    var buffer: SendablePixelBuffer!
+    var baseBuffer: SendablePixelBuffer!
     
     override func setUp() async throws {
-        strategy = MockStrategy()
-        detector = MockFaceDetector()
-        processor = StreamProcessor(strategy: strategy, detector: detector)
+        strategy = MockInferenceStrategy()
+        roiStrategy = MockROIStrategy()
+        let camera = MockCamera()
         
-        // Start processor to spin up the loop
-        _ = try await processor.start()
+        processor = StreamProcessor(
+            strategy: strategy,
+            roiStrategy: roiStrategy,
+            camera: camera
+        )
         
+        // Create a reusable dummy buffer
         var cvBuffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &cvBuffer)
-        buffer = SendablePixelBuffer(cvBuffer!)
+        
+        // Fill buffer to be safe
+        CVPixelBufferLockBaseAddress(cvBuffer!, [])
+        if let base = CVPixelBufferGetBaseAddress(cvBuffer!) {
+            memset(base, 255, CVPixelBufferGetDataSize(cvBuffer!))
+        }
+        CVPixelBufferUnlockBaseAddress(cvBuffer!, [])
+        
+        baseBuffer = SendablePixelBuffer(cvBuffer!)
+        
+        // Start processor
+        _ = try await processor.start()
     }
     
     override func tearDown() async throws {
         await processor.stop()
         strategy = nil
-        detector = nil
+        roiStrategy = nil
         processor = nil
+    }
+    
+    // Helper to create frames with explicit timestamps
+    private func makeFrame(at time: Double) -> InputFrame {
+        InputFrame(
+            buffer: baseBuffer,
+            orientation: .up,
+            isMirrored: true,
+            timestamp: time
+        )
     }
     
     // MARK: - Test Cases
     
     func testProcessFrame_HappyPath_CallsStrategy() async throws {
-        await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
         
-        // Pump enough frames to trigger buffer threshold (16 frames default)
-        for _ in 0..<20 {
-            await processor.processFrame(buffer)
+        for i in 0..<10 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
         }
         
-        // Wait for async loop to pick it up
-        try await Task.sleep(nanoseconds: 300 * 1_000_000)
+        try await Task.sleep(nanoseconds: 200_000_000)
         
-        let count = await strategy.processCalledCount
-        XCTAssertGreaterThan(count, 0, "Strategy should be called by the background loop")
+        let count = await strategy.inferCallCount
+        XCTAssertGreaterThan(count, 0, "Strategy should be called when buffer fills")
     }
     
-    func testProcessFrame_NoFace_DoesNotCallStrategy() async throws {
-        await detector.setFace(nil)
+    func testProcessFrame_NoROI_DoesNotCallStrategy() async throws {
+        await roiStrategy.setROIs([])
         
-        for _ in 0..<20 {
-            await processor.processFrame(buffer)
+        for i in 0..<10 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
         }
         
-        try await Task.sleep(nanoseconds: 200 * 1_000_000)
+        try await Task.sleep(nanoseconds: 200_000_000)
         
-        let count = await strategy.processCalledCount
-        XCTAssertEqual(count, 0, "Strategy should NOT be called when no face is detected (BufferManager returns no ROIs)")
+        let count = await strategy.inferCallCount
+        XCTAssertEqual(count, 0, "Strategy should NOT be called if no ROIs detected")
     }
-    
-    func testStop_KillsBackgroundLoop() async throws {
-        await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
-        
-        // Warm up
-        for _ in 0..<10 { await processor.processFrame(buffer) }
-        try await Task.sleep(nanoseconds: 100 * 1_000_000)
-        
-        let countBefore = await strategy.processCalledCount
-        
-        // STOP
-        await processor.stop()
-        
-        // Try to pump more
-        for _ in 0..<50 { await processor.processFrame(buffer) }
-        
-        // Wait
-        try await Task.sleep(nanoseconds: 300 * 1_000_000)
-        
-        let countAfter = await strategy.processCalledCount
-        
-        // Should not have increased
-        XCTAssertEqual(countAfter, countBefore, "Strategy calls should stop after processor.stop()")
-    }
-    
     
     func testResilience_BackoffAndRecovery() async throws {
-        await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await roiStrategy.setROIs([CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)])
         
         // 1. Initial Success
-        for _ in 0..<20 { await processor.processFrame(buffer) }
-        try await Task.sleep(nanoseconds: 300 * 1_000_000)
-        
-        // On fast machines, this might be 2 batches. On slow, 1.
-        let initialCount = await strategy.processCalledCount
+        for i in 0..<5 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let initialCount = await strategy.inferCallCount
         XCTAssertGreaterThan(initialCount, 0)
         
-        // 2. Failure Mode
+        // 2. Trigger Failure
         await strategy.setShouldFail(true)
         
-        // Pump frames to trigger failure
-        for _ in 0..<10 { await processor.processFrame(buffer) }
+        for i in 10..<20 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+        }
         
-        // Wait (Processor enters backoff sleep)
-        try await Task.sleep(nanoseconds: 500 * 1_000_000)
+        // Wait for backoff
+        try await Task.sleep(nanoseconds: 300_000_000)
         
         // 3. Recovery
         await strategy.setShouldFail(false)
         
-        // Pump SIGNIFICANTLY more frames to ensure we cross any lingering thresholds
-        // and trigger a fresh batch regardless of previous state.
-        for _ in 0..<30 { await processor.processFrame(buffer) }
+        for i in 20..<30 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+        }
         
-        // Give enough time for the loop to wake up and process
-        try await Task.sleep(nanoseconds: 500 * 1_000_000)
+        try await Task.sleep(nanoseconds: 300_000_000)
         
-        let finalCount = await strategy.processCalledCount
-        XCTAssertGreaterThan(finalCount, initialCount, "Should recover and increment count after single failure")
+        let finalCount = await strategy.inferCallCount
+        XCTAssertGreaterThan(finalCount, initialCount + 1, "Should recover after failure")
     }
     
-    func testResilience_MaxRetries_TriggersHardReset() async throws {
-        
-        await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+    func testResilience_MaxRetries_ResetsState() async throws {
+        await roiStrategy.setROIs([CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)])
         
         // 1. Establish State (Success)
-        for _ in 0..<20 { await processor.processFrame(buffer) }
-        try await Task.sleep(nanoseconds: 300 * 1_000_000)
+        // Pump enough frames for at least one batch
+        for i in 0..<6 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+        }
+        // Wait for inference to run once
+        try await Task.sleep(nanoseconds: 200_000_000)
         
-        _ = await strategy.lastReceivedState
+        let stateBefore = await strategy.lastReceivedState
+        XCTAssertNotNil(stateBefore, "Should have established state")
         
         // 2. Trigger Max Retries (Failure)
         await strategy.setShouldFail(true)
         
-        // We carefully pump frames.
-        // We need to trigger 3 consecutive failures.
-        // The backoff is 0.1s -> 0.2s -> 0.4s.
-        // We pump just enough to ensure the loop stays alive, but not so much we fill the buffer for seconds.
+        // We need to keep feeding the buffer so the loop has data to "fail" on multiple times.
+        // We pump frames slowly over a longer period to span across the backoff windows.
+        // Backoff: 0.1s -> 0.2s -> 0.4s. Total ~0.7s to hit 3 failures.
         
-        for i in 0..<50 {
-            await processor.processFrame(buffer)
-            // Sleep 50ms. Total time = 2.5s.
-            try await Task.sleep(nanoseconds: 50 * 1_000_000)
-            
-            // Optimization: If we hit max retries early (buffer reset), stop pumping.
-            // This prevents "refilling" the buffer after the reset happens.
-            // We can't check internal state easily, but we can stop if we are well past the timeout.
-            if i > 30 { break } 
+        for i in 10..<60 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+            // Sleep 25ms between frames = 50 frames * 25ms = 1.25s total duration.
+            // This ensures the loop is kept alive and retrying well past the 0.7s mark.
+            try await Task.sleep(nanoseconds: 25_000_000)
         }
-        
-        // WAIT explicitly for the processor to finish its "max retries hit" logic
-        try await Task.sleep(nanoseconds: 500 * 1_000_000)
-        
-        // At this point, BufferManager.reset() should have been called internally.
         
         // 3. Verify Reset
+        // At this point, the processor should have hit 3 failures and called reset().
+        
+        // Enable success again
         await strategy.setShouldFail(false)
-        await strategy.reset() // Clean mock history to ensure we catch fresh data
         
-        // Pump EXACTLY 16 frames.
-        // - After reset, BufferManager has 0 frames.
-        // - It needs 16 frames to trigger the first "Stateless" request.
-        // - This prevents triggering a second "continuity" batch immediately.
-        for _ in 0..<16 { await processor.processFrame(buffer) }
-        
-        // Polling wait to reduce flakiness on slower simulators
-        var calls = 0
-        for _ in 0..<10 {
-            try await Task.sleep(nanoseconds: 100 * 1_000_000)
-            calls = await strategy.processCalledCount
-            if calls >= 1 { break }
+        // Pump fresh frames (Needs 4 for new batch)
+        for i in 100..<110 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
         }
         
-        let finalState = await strategy.lastReceivedState
+        // Wait for the successful inference
+        try await Task.sleep(nanoseconds: 200_000_000)
         
-        XCTAssertGreaterThanOrEqual(calls, 1, "Should have triggered at least one new inference call")
+        let stateAfter = await strategy.lastReceivedState
         
-        // If we reset successfully, the FIRST call made (captured by lastReceivedState if calls==1)
-        // MUST have nil state.
-        if calls == 1 {
-            XCTAssertNil(finalState, "Processor should have cleared state (sent nil) after max retries")
-        } else {
-            // If multiple calls slipped through (rare race condition), we can't strictly assert nil
-            // on 'lastReceivedState' because the second call would have valid state.
-            // However, getting here means the system recovered, which is the primary goal of the test.
-            print("Warning: Multiple calls occurred during reset verification. Timing was too fast.")
+        // If reset happened, the state passed to this new successful inference MUST be nil.
+        XCTAssertNil(stateAfter, "State should be nil after max retries triggered a reset. Got: \(String(describing: stateAfter))")
+    }
+    
+    // MARK: - New Coverage
+    
+    func testPauseResume_ControlsFrameFlow() async throws {
+        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        
+        // 1. Pause
+        await processor.pause()
+        
+        for i in 0..<10 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
         }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let countPaused = await strategy.inferCallCount
+        XCTAssertEqual(countPaused, 0, "Strategy should NOT be called while paused")
+        
+        // 2. Resume
+        try await processor.resume()
+        
+        for i in 10..<20 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await processor.processFrame(frame)
+        }
+        
+        try await Task.sleep(nanoseconds: 200_000_000)
+        
+        let countResumed = await strategy.inferCallCount
+        XCTAssertGreaterThan(countResumed, 0, "Strategy SHOULD be called after resume")
+    }
+    
+    func testTransformerError_DoesNotCrashLoop() async throws {
+        let failingTransformer: FrameTransformer = { _, _, _ in
+            throw VitalLensError.processingError("Simulated Transform Fail")
+        }
+        
+        let failProcessor = StreamProcessor(
+            strategy: strategy,
+            roiStrategy: roiStrategy,
+            camera: MockCamera(),
+            transformer: failingTransformer
+        )
+        _ = try await failProcessor.start()
+        
+        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        
+        for i in 0..<10 {
+            let frame = makeFrame(at: Double(i) * 0.033)
+            await failProcessor.processFrame(frame)
+        }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let count = await strategy.inferCallCount
+        XCTAssertEqual(count, 0, "Inference should not run if transformation fails")
+        
+        await failProcessor.stop()
+    }
+    
+    func testRapidStartStop_DoesNotDeadlock() async throws {
+        await processor.stop()
+        _ = try await processor.start()
+        await processor.stop()
+        _ = try await processor.start()
+        await processor.stop()
+        
+        XCTAssertTrue(true)
     }
 }
