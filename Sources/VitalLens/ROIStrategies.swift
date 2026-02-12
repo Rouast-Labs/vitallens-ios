@@ -46,7 +46,7 @@ public actor FaceROIStrategy: ROIStrategy {
             // Start detection detached so we don't block the current frame return
             Task {
                 let rois = await performDetection(in: buffer, orientation: orientation)
-                await self.updateROIs(rois, time: now)
+                self.updateROIs(rois, time: now)
             }
         }
         
@@ -72,22 +72,5 @@ public actor FaceROIStrategy: ROIStrategy {
         }
         self.lastDetectionTime = time
         self.isDetecting = false
-    }
-}
-
-// MARK: - Static Strategy (For Legacy App)
-
-/// Returns a fixed ROI provided by an external source (e.g. App Settings).
-/// Ignores the actual video content.
-public struct StaticROIStrategy: ROIStrategy {
-    
-    private let roiProvider: @Sendable () -> CGRect
-    
-    public init(roiProvider: @escaping @Sendable () -> CGRect) {
-        self.roiProvider = roiProvider
-    }
-    
-    public func determineROIs(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect] {
-        return [roiProvider()]
     }
 }
