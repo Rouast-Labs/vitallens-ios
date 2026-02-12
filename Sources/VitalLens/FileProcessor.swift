@@ -136,14 +136,12 @@ actor FileProcessor {
             
             if await buffer.isReady(hasState: currentState != nil, mode: .file) {
                 if let window = await buffer.consume() {
-                    
                     let (result, newState) = try await strategy.infer(
                         window: window,
                         state: currentState,
                         mode: .file,
                         model: nil
                     )
-
                     currentState = newState
                     
                     if accumulatedResult == nil {
@@ -162,14 +160,12 @@ actor FileProcessor {
         
         // Handle remaining frames (Flush final partial batch)
         if let window = await buffer.consume(), window.count >= config.nInputs {
-            
             let (result, _) = try await strategy.infer(
                 window: window,
                 state: currentState,
                 mode: .file,
                 model: nil
             )
-            
             if accumulatedResult == nil {
                 accumulatedResult = result
             } else {
@@ -185,13 +181,17 @@ actor FileProcessor {
             throw VitalLensError.processingError("Video too short or no result generated.")
         }
         
-        // Hydrate Time: Ensure the time array matches the actual video duration.
-        // The API might return normalized or indexed time; we want absolute video time.
-        if let count = final.sampleCount {
+        // Robustly determine count (fallback to time array length if sampleCount is nil)
+        var count = final.sampleCount ?? final.time.count
+        if count == 0, let firstSignal = final.signals.values.first {
+            count = firstSignal.data.count
+        }
+        
+        if count > 0 {
             let duration = Double(count) / nominalFPS
+            // Generate clean, evenly spaced timestamps based on file FPS
             let timeSteps = stride(from: 0.0, to: duration, by: 1.0 / nominalFPS)
             
-            // Reconstruct result with correct timing and FPS info
             final = VitalLensResult(
                 face: final.face,
                 signals: final.signals,
@@ -205,15 +205,5 @@ actor FileProcessor {
         }
         
         return final
-    }
-}
-
-// MARK: - Helpers
-
-extension StateData {
-    /// Decodes the Base64 state string back into a Float array.
-    func toFloatArray() -> [Float]? {
-        guard let data = Data(base64Encoded: self.data) else { return nil }
-        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
     }
 }
