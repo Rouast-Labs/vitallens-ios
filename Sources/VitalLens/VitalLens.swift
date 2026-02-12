@@ -76,14 +76,16 @@ public final class VitalLens: @unchecked Sendable {
     }
 
     /// Internal init for testing
-    init(strategy: any InferenceStrategy, detector: any FaceDetecting = FaceDetector()) {
+    internal init(processor: StreamProcessor) {
         self.apiKey = "test"
-        self.method = .vitalLens
-        self.faceDetectionFrequency = 1.0
+        self.method = .vitalLens2
+        self.faceDetectionFrequency = 0.5
         self.globalROI = nil
         self.proxyURL = nil
-        self.strategy = strategy
+        self.streamProcessor = processor 
+        self.strategy = APIInference(apiKey: "test") 
         self.customSource = nil
+        
         setupLifecycleObservers()
     }
 

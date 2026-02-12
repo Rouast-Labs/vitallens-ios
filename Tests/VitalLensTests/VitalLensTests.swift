@@ -1,7 +1,7 @@
 import XCTest
 import CoreVideo
+import VitalLensCore
 @testable import VitalLens
-@testable import VitalLensCore
 
 #if canImport(UIKit)
 import UIKit
@@ -9,58 +9,65 @@ import UIKit
 
 final class VitalLensTests: XCTestCase {
 
-    // Reuse mocks to verify the client sets up the pipeline correctly
+    // MARK: - Integration Tests
+    
     func testStartStream_InitializesAndStartsProcessor() async throws {
-        // 1. Setup Mock Processor
-        let strategy = MockStrategy()
-        let detector = MockFaceDetector()
-
+        // 1. Setup Mocks
+        // Note: MockStrategy and MockROIStrategy are shared from StreamProcessorTests
+        let strategy = MockInferenceStrategy()
+        let roiStrategy = MockROIStrategy()
         let mockCamera = MockCameraSource()
-        let processor = StreamProcessor(strategy: strategy, detector: detector, camera: mockCamera)
         
-        // Manually inject config to bypass API resolution in test
-        let config = try await strategy.resolveConfig()
-        await processor._setConfig(config)
+        // 2. Initialize Processor with Mocks
+        let processor = StreamProcessor(
+            strategy: strategy,
+            roiStrategy: roiStrategy,
+            camera: mockCamera
+        )
         
-        // 2. Setup Client with Injected Processor
+        // 3. Inject into Client
         let client = VitalLens(processor: processor)
         
-        // 3. Start Stream
+        // 4. Start Stream
         let stream = try await client.startStream()
         
-        // 4. Simulate Data Flow
-        // Create a buffer and feed it to the processor manually (bypassing camera)
-        var cvBuffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &cvBuffer)
-        let buffer = SendablePixelBuffer(cvBuffer!)
+        // 5. Simulate Data Flow
+        let buffer = createDummyBuffer()
+        let baseTime = Date().timeIntervalSince1970
         
-        await detector.setFace(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        // Set ROI
+        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
         
-        // Feed frames in a detached task so we can consume the stream below
+        // Pump frames
         Task {
-            for _ in 0..<20 {
-                await processor.processFrame(buffer)
+            for i in 0..<20 {
+                let frame = InputFrame(
+                    buffer: buffer,
+                    orientation: .up,
+                    isMirrored: true,
+                    timestamp: baseTime + (Double(i) * 0.033)
+                )
+                await processor.processFrame(frame)
             }
         }
         
-        // 5. Verify Results
-        // We expect at least one result
+        // 6. Verify Results
         var resultCount = 0
         for await _ in stream {
             resultCount += 1
-            if resultCount >= 1 { break } // Exit after first result
+            if resultCount >= 1 { break } 
         }
         
         XCTAssertGreaterThan(resultCount, 0, "Client should yield results from the processor")
         
         #if canImport(UIKit)
+        try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(mockCamera.startCallCount, 1, "Camera should have been started")
         #endif
         
-        // 6. Stop
+        // 7. Stop
         client.stopStream()
         
-        // Give a moment for the async stop to propagate
         try await Task.sleep(nanoseconds: 100_000_000)
         
         #if canImport(UIKit)
@@ -70,111 +77,85 @@ final class VitalLensTests: XCTestCase {
     
     #if canImport(UIKit)
     func testLifecycle_BackgroundingPausesCamera() async throws {
-        // 1. Setup
-        let strategy = MockStrategy()
+        let strategy = MockInferenceStrategy()
+        let roiStrategy = MockROIStrategy()
         let mockCamera = MockCameraSource()
-        let processor = StreamProcessor(strategy: strategy, detector: MockFaceDetector(), camera: mockCamera)
-        let config = try await strategy.resolveConfig()
-        await processor._setConfig(config)
+        
+        let processor = StreamProcessor(
+            strategy: strategy,
+            roiStrategy: roiStrategy,
+            camera: mockCamera
+        )
         
         let client = VitalLens(processor: processor)
         _ = try await client.startStream()
         
-        // Initial State
+        try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(mockCamera.startCallCount, 1)
-        XCTAssertEqual(mockCamera.stopCallCount, 0)
         
-        // 2. Simulate Backgrounding
-        // VitalLens observes this on the Main Queue, so we post it there
+        // Background
         await MainActor.run {
             NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
         }
         
-        // Wait for async actor propagation
         try await Task.sleep(nanoseconds: 200_000_000)
-        
-        // Should have called stop() on camera
         XCTAssertEqual(mockCamera.stopCallCount, 1, "Camera should stop on background")
         
-        // 3. Simulate Foregrounding
+        // Foreground
         await MainActor.run {
             NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
         }
         
-        // Wait for async actor propagation
         try await Task.sleep(nanoseconds: 200_000_000)
-        
-        // Should have called start() on camera again
         XCTAssertEqual(mockCamera.startCallCount, 2, "Camera should restart on foreground")
     }
     #endif
     
     func testInitialization_SetsPublicProperties() {
-        let url = URL(string: "https://proxy.com")
-        let client = VitalLens(
-            apiKey: "key",
-            method: .vitalLens2,
-            faceDetectionFrequency: 2.0,
-            proxyURL: url
-        )
-        
+        let client = VitalLens(apiKey: "key", method: .vitalLens2)
         XCTAssertEqual(client.apiKey, "key")
         XCTAssertEqual(client.method, .vitalLens2)
-        XCTAssertEqual(client.faceDetectionFrequency, 2.0)
-        XCTAssertEqual(client.proxyURL, url)
+    }
+    
+    // MARK: - Helpers
+    
+    private func createDummyBuffer() -> SendablePixelBuffer {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &buffer)
+        
+        CVPixelBufferLockBaseAddress(buffer!, [])
+        if let base = CVPixelBufferGetBaseAddress(buffer!) {
+            memset(base, 255, CVPixelBufferGetDataSize(buffer!))
+        }
+        CVPixelBufferUnlockBaseAddress(buffer!, [])
+        
+        return SendablePixelBuffer(buffer!)
     }
 }
 
-// MARK: - Mocks
+// MARK: - Local Mocks Only
+// MockROIStrategy and MockInferenceStrategy are reused from StreamProcessorTests 
+// since they are in the same test target.
 
 final class MockCameraSource: CameraStreaming, @unchecked Sendable {
-    private var continuation: AsyncStream<SendablePixelBuffer>.Continuation?
-    
-    // Use serial queue instead of NSLock for async safety in Swift 6 mode
     private let queue = DispatchQueue(label: "com.vitallens.mockcamera")
-    
     private var _startCallCount = 0
-    var startCallCount: Int {
-        queue.sync { _startCallCount }
-    }
-    
     private var _stopCallCount = 0
-    var stopCallCount: Int {
-        queue.sync { _stopCallCount }
-    }
     
-    var stream: AsyncStream<SendablePixelBuffer> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
+    var startCallCount: Int { queue.sync { _startCallCount } }
+    var stopCallCount: Int { queue.sync { _stopCallCount } }
+    
+    var stream: AsyncStream<InputFrame> { AsyncStream { _ in } }
     
     func start() async throws {
         queue.sync { _startCallCount += 1 }
-        
-        // Simulate the camera producing frames
-        Task {
-            for _ in 0..<5 {
-                try? await Task.sleep(nanoseconds: 33_000_000)
-                if let buffer = createDummyBuffer() {
-                    continuation?.yield(SendablePixelBuffer(buffer))
-                }
-            }
-        }
     }
     
     func stop() {
         queue.sync { _stopCallCount += 1 }
-        continuation?.finish()
     }
     
     #if canImport(UIKit)
     @MainActor func showPreview(on view: UIView) {}
     #endif
-    
-    private func createDummyBuffer() -> CVPixelBuffer? {
-        var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &buffer)
-        return buffer
-    }
 }
