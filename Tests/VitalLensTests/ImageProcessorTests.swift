@@ -1,6 +1,7 @@
 import XCTest
 import CoreVideo
 import Accelerate
+import ImageIO
 @testable import VitalLens
 @testable import VitalLensCore
 
@@ -144,6 +145,69 @@ final class ImageProcessorTests: XCTestCase {
         // If vImage added padding, the size would likely be larger (e.g. aligned to 16/32 bytes per row)
         // For 40px width: 40 * 3 = 120 bytes per row. 120 is not a power of 2, 
         // ensuring we catch alignment issues if they exist.
+    }
+
+    // MARK: - Legacy App Support Tests (CoreML Path)
+    
+    func testProcessToPixelBuffer_FormatAndOrientation() throws {
+        // CoreML path REQUIRES YUV input according to the implementation check
+        // Let's create a YUV buffer with "Red" (Y=76, U=84, V=255)
+        let buffer = try createYUVPixelBuffer(width: 100, height: 100, y: 76, u: 84, v: 255)
+        
+        // 1. Process with NO rotation
+        let outputUp = try processor.processToPixelBuffer(
+            pixelBuffer: buffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1),
+            targetSize: 40,
+            orientation: .up,
+            isMirrored: false
+        )
+        
+        XCTAssertEqual(CVPixelBufferGetWidth(outputUp), 40)
+        XCTAssertEqual(CVPixelBufferGetHeight(outputUp), 40)
+        XCTAssertEqual(CVPixelBufferGetPixelFormatType(outputUp), kCVPixelFormatType_32ARGB, "Legacy path must return ARGB")
+        
+        // 2. Process with Rotation (Left) -> Should effectively swap dimensions if non-square, but here we output square 40x40.
+        // We verify it doesn't crash and returns valid buffer.
+        let outputLeft = try processor.processToPixelBuffer(
+            pixelBuffer: buffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1),
+            targetSize: 40,
+            orientation: .left,
+            isMirrored: false
+        )
+        
+        // Verify rotation didn't corrupt dimensions
+        XCTAssertEqual(CVPixelBufferGetWidth(outputLeft), 40)
+        
+        // 3. Process with Mirroring
+        let outputMirrored = try processor.processToPixelBuffer(
+            pixelBuffer: buffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1),
+            targetSize: 40,
+            orientation: .up,
+            isMirrored: true
+        )
+        XCTAssertNotNil(outputMirrored)
+    }
+    
+    func testProcessToPixelBuffer_UnsupportedInput_Throws() throws {
+        // Feed BGRA to the legacy path (which expects YUV)
+        let bgraBuffer = try createBGRAPixelBuffer(width: 100, height: 100, r: 255, g: 0, b: 0)
+        
+        XCTAssertThrowsError(try processor.processToPixelBuffer(
+            pixelBuffer: bgraBuffer,
+            roi: .init(x: 0, y: 0, width: 1, height: 1),
+            targetSize: 40,
+            orientation: .up,
+            isMirrored: false
+        )) { error in
+            if let e = error as? VitalLensError, case .processingError(let msg) = e {
+                XCTAssertTrue(msg.contains("Unsupported format"), "Should reject non-YUV inputs for this path")
+            } else {
+                XCTFail("Wrong error: \(error)")
+            }
+        }
     }
     
     // MARK: - Helpers

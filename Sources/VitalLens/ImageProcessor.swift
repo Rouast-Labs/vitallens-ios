@@ -74,7 +74,7 @@ public final class ImageProcessor: @unchecked Sendable {
         }
     }
 
-    /// Optimized pipeline for Local CoreML (Matches Legacy App logic exactly).
+    /// Optimized pipeline for Local CoreML.
     /// Performs Crop -> Scale -> YUVtoARGB -> Rotate -> Reflect in efficient passes.
     /// Returns: CVPixelBuffer (kCVPixelFormatType_32ARGB)
     public func processToPixelBuffer(
