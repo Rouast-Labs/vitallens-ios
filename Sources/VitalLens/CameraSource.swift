@@ -177,7 +177,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
                 try? await Task.sleep(nanoseconds: 33_333_333)
                 
                 if let buffer = createSimulatorBuffer() {
-                    continuation?.yield(SendablePixelBuffer(buffer))
+                    let frame = InputFrame(
+                        buffer: SendablePixelBuffer(buffer),
+                        orientation: .up,
+                        isMirrored: true,
+                        timestamp: Date().timeIntervalSince1970
+                    )
+                    continuation?.yield(frame)
                 }
             }
         }

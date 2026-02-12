@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import CoreVideo
 @preconcurrency import Accelerate
 import VitalLensCore

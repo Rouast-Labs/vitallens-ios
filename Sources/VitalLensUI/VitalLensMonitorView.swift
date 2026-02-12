@@ -146,7 +146,7 @@ public struct VitalLensMonitorView: View {
             self.respRate = String(format: "%.0f", rr)
         }
         
-        if showWaveforms, let ppgChunk = result.ppgWaveform?.data {
+        if showWaveforms, let ppgChunk = result.ppg?.data {
             self.ppgHistory.append(contentsOf: ppgChunk.map { Double($0) })
             if self.ppgHistory.count > maxHistoryPoints {
                 self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints)
