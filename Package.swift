@@ -17,19 +17,39 @@ let package = Package(
         .library(
             name: "VitalLensInference",
             targets: ["VitalLensInference"]
+        ),
+        .library(
+            name: "VitalLensCore",
+            targets: ["VitalLensCore"]
         )
     ],
     targets: [
-        // Inference: Pure Logic (Networking, Math, State). No UI dependencies.
+        // The Precompiled Rust Binary
+        .binaryTarget(
+            name: "VitalLensCoreFFI", 
+            path: "Frameworks/VitalLensCoreFFI.xcframework"
+        ),
+
+        // The Swift Wrapper for the Rust Core
+        .target(
+            name: "VitalLensCore",
+            dependencies: ["VitalLensCoreFFI"],
+            path: "Sources/VitalLensCore",
+            swiftSettings: [
+                .swiftLanguageMode(.v5) 
+            ]
+        ),
+
+        // Inference: Pure Logic (Networking, State). No UI dependencies.
         .target(
             name: "VitalLensInference",
-            dependencies: []
+            dependencies: ["VitalLensCore"]
         ),
         
         // Lib: The Pipeline (Camera, Face Detection). Depends on Core.
         .target(
             name: "VitalLens",
-            dependencies: ["VitalLensInference"]
+            dependencies: ["VitalLensInference", "VitalLensCore"]
         ),
         
         // UI: SwiftUI Components. Depends on Lib.
@@ -41,13 +61,13 @@ let package = Package(
         // Inference Logic Tests
         .testTarget(
             name: "VitalLensInferenceTests",
-            dependencies: ["VitalLensInference"]
+            dependencies: ["VitalLensInference", "VitalLensCore"]
         ),
 
         // Integration Tests (Runs on iOS Simulator)
         .testTarget(
             name: "VitalLensTests",
-            dependencies: ["VitalLens", "VitalLensInference"],
+            dependencies: ["VitalLens", "VitalLensInference", "VitalLensCore"],
             resources: [
                 .copy("Resources/sample_video_2.mp4")
             ]
