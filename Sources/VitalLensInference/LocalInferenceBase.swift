@@ -1,5 +1,6 @@
 import Foundation
 import CoreVideo
+import VitalLensCore
 
 /// A generic base strategy for running local CoreML models.
 /// Consumers must subclass this to inject their specific model logic.

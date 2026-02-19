@@ -1,6 +1,7 @@
 import XCTest
 import AVFoundation
 import CoreVideo
+import VitalLensCore
 import VitalLensInference
 @testable import VitalLens
 

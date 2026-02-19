@@ -2,6 +2,7 @@ import XCTest
 import CoreVideo
 import ImageIO
 import AVFoundation
+import VitalLensCore
 import VitalLensInference
 @testable import VitalLens
 

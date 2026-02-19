@@ -1,4 +1,5 @@
 import Foundation
+import VitalLensCore
 import zlib
 
 public struct APIState: InferenceState {

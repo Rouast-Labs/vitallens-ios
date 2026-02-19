@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import VitalLensInference
+import VitalLensCore
 import CoreVideo
 
 #if canImport(UIKit)
@@ -27,7 +28,7 @@ actor StreamProcessor {
     private let transformer: FrameTransformer
     
     private let bufferManager: BufferManager
-    private let vitalsEstimator: VitalsEstimateManager
+    private var session: VitalLensCore.Session?
     
     private var config: ModelConfig?
     private var isPaused: Bool = false
@@ -50,11 +51,8 @@ actor StreamProcessor {
         #endif
 
         self.strategy = strategy
-        // Default to Face Detection if no strategy provided
-        self.roiStrategy = roiStrategy ?? FaceROIStrategy()
-        
+        self.roiStrategy = roiStrategy ?? FaceROIStrategy()        
         self.bufferManager = BufferManager()
-        self.vitalsEstimator = VitalsEstimateManager()
         
         // Default Transformer: Convert to RGB Data using ImageProcessor
         if let transformer = transformer {
@@ -79,6 +77,11 @@ actor StreamProcessor {
         
         // 1. Prepare Config
         self.config = try await strategy.resolveConfig()
+        let constraints = try await strategy.batchConstraints
+
+        await bufferManager.initialize(config: self.config!, constraints: constraints)
+        self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
+        
         self.isPaused = false
         
         // 2. Setup Signaling for Inference Loop
@@ -144,7 +147,7 @@ actor StreamProcessor {
         
         Task {
             await bufferManager.reset()
-            await vitalsEstimator.reset()
+            // TODO reset session?
         }
     }
     
@@ -153,40 +156,22 @@ actor StreamProcessor {
     /// Called on every frame arrival.
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
-        
-        let pixelBuffer = frame.buffer
-        let orientation = frame.orientation
-        let isMirrored = frame.isMirrored
-        let timestamp = frame.timestamp
-        
-        // Ask Strategy for ROIs using the correct orientation
-        let targets = await roiStrategy.determineROIs(in: pixelBuffer, orientation: orientation)
-        
-        guard let constraints = try? await strategy.batchConstraints else {
-            print("Warning: Skipping frame (Inference configuration not ready)")
-            return
-        }
 
-        // Sync with Buffer Manager (Handles Overlap/Drift)
-        let activeROIs = await bufferManager.updateAndGetActiveROIs(
-            targets: targets,
-            constraints: constraints,
-            config: config
-        )
+        let targets = await roiStrategy.determineROIs(in: frame.buffer, orientation: frame.orientation)
+        let activeROIs = await bufferManager.updateAndGetActiveROIs(targets: targets, config: config)
         
         if activeROIs.isEmpty { return }
-        
-        let buffer = pixelBuffer.buffer
+        let cvBuffer = frame.buffer.buffer
         
         // Transform & Append
         for item in activeROIs {
             do {
-                let unit = try transformer(buffer, item.roi, config)
+                let unit = try transformer(cvBuffer, item.roi, config)
 
                 let context = InferenceContext(
-                    timestamp: timestamp,
-                    orientation: orientation,
-                    isMirrored: isMirrored,
+                    timestamp: frame.timestamp,
+                    orientation: frame.orientation,
+                    isMirrored: frame.isMirrored,
                     roi: item.roi
                 )
                 
@@ -204,26 +189,21 @@ actor StreamProcessor {
     
     /// Background task that monitors buffers and triggers inference when ready.
     private func runInferenceLoop(source: AsyncStream<Void>) async {
-        print("[StreamProcessor] Inference Loop Started")
-        
+        print("[StreamProcessor] Inference Loop Started")        
         var consecutiveErrors = 0
-        let maxRetries = 3
         
         for await _ in source {
             if Task.isCancelled { break }
             
-            // Check if any buffer is ready for the current mode (.stream)
-            while let buffer = await bufferManager.getReadyBuffer(mode: .stream) {
+            while let command = await bufferManager.poll(mode: .stream) {
                 if Task.isCancelled { break }
                 
-                // Backoff logic
                 if consecutiveErrors > 0 {
                     let delay = pow(2.0, Double(consecutiveErrors)) * 0.1
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 }
                 
-                // Consume returns generic units
-                guard let window = await buffer.consume() else { break }
+                guard let window = await bufferManager.execute(command: command) else { break }
                 let currentState = await bufferManager.getState()
                 
                 do {
@@ -238,28 +218,27 @@ actor StreamProcessor {
                     
                     await bufferManager.updateState(newState)
                     
-                    // Estimate Vitals
-                    if let config = self.config {
-                        let refined = await vitalsEstimator.process(chunk: rawResult, config: config)
+                    if let sess = self.session {
+                        let chunk = rawResult.toInputChunk()
+                        let sessionResult = sess.processChunk(chunk: chunk, mode: .incremental)
+                        let refined = sessionResult.toVitalLensResult(
+                            originalState: rawResult.state,
+                            message: rawResult.message,
+                            modelUsed: rawResult.modelUsed
+                        )
                         outputContinuation?.yield(refined)
                     }
                     
                 } catch {
                     consecutiveErrors += 1
                     print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
-                    
-                    if consecutiveErrors >= maxRetries {
-                        print("[StreamProcessor] Max retries hit. Resetting State.")
+                    if consecutiveErrors >= 3 {
                         await bufferManager.reset()
-                        await vitalsEstimator.reset()
+                        self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
                         consecutiveErrors = 0
                     }
                 }
             }
         }
-    }
-    
-    func _setConfig(_ config: ModelConfig) {
-        self.config = config
     }
 }

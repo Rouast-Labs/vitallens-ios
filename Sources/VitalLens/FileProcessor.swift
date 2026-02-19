@@ -1,4 +1,5 @@
 import Foundation
+import VitalLensCore
 import VitalLensInference
 import CoreVideo
 
@@ -11,13 +12,11 @@ actor FileProcessor {
     private let url: URL
     private let processor: ImageProcessor
     private let detector: any FaceDetecting
-    private let vitalsEstimator: VitalsEstimateManager
     
     init(url: URL, detector: any FaceDetecting = FaceDetector()) {
         self.url = url
         self.detector = detector
         self.processor = ImageProcessor()
-        self.vitalsEstimator = VitalsEstimateManager()
     }
     
     /// Execute the full processing pipeline.
@@ -104,9 +103,9 @@ actor FileProcessor {
         
         // Use a local FrameBuffer instance.
         // We don't need BufferManager here because we aren't handling drift/multiple faces.
-        let buffer = FrameBuffer(roi: roi, mode: .file, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: roi, mode: .file, config: config)
+        let session = VitalLensCore.Session(config: config.toSessionConfig())
         
-        var accumulatedResult: VitalLensResult?
         var currentState: (any InferenceState)? = nil
         var totalFramesProcessed = 0
         
@@ -129,83 +128,43 @@ actor FileProcessor {
                 roi: roi,
                 targetSize: config.inputSize
             ) {
-                await buffer.append(unit: .rgbData(bytes), context: context)
+                buffer.append(unit: .rgbData(bytes), context: context)
             }
             
             totalFramesProcessed += 1
             
             print("framesProcessed: \(totalFramesProcessed)")
 
-            if await buffer.isOptimal(hasState: currentState != nil, mode: .file) {
-                if let window = await buffer.consume() {
-                    let (result, newState) = try await strategy.infer(
-                        window: window,
-                        state: currentState,
-                        mode: .file,
-                        model: nil
-                    )
+            if buffer.count >= constraints.fileMax {
+                let command = InferenceCommand(bufferId: "file", takeCount: UInt32(constraints.fileMax), keepCount: UInt32(max(0, config.nInputs - 1)))
+                if let window = buffer.execute(command: command) {
+                    let (result, newState) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
                     currentState = newState
-                    
-                    if accumulatedResult == nil {
-                        accumulatedResult = result
-                    } else {
-                        // Aggregate signals using the VitalsEstimateManager logic
-                        accumulatedResult = await vitalsEstimator.process(
-                            chunk: result,
-                            mode: .complete,
-                            config: config
-                        )
-                    }
+                    _ = session.processChunk(chunk: result.toInputChunk(), mode: .incremental)
                 }
             }
         }
         
-        // Handle remaining frames (Flush final partial batch)
-        if let window = await buffer.consume(), window.count >= config.nInputs {
-            let (result, _) = try await strategy.infer(
-                window: window,
-                state: currentState,
-                mode: .file,
-                model: nil
-            )
-            if accumulatedResult == nil {
-                accumulatedResult = result
-            } else {
-                accumulatedResult = await vitalsEstimator.process(
-                    chunk: result,
-                    mode: .complete,
-                    config: config
-                )
+        var finalMessage: String?
+        var finalModelUsed: String?
+        if buffer.count >= config.nInputs {
+            let command = InferenceCommand(bufferId: "file", takeCount: UInt32(buffer.count), keepCount: 0)
+            if let window = buffer.execute(command: command) {
+                let (result, _) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
+                _ = session.processChunk(chunk: result.toInputChunk(), mode: .incremental)
+                finalMessage = result.message
+                finalModelUsed = result.modelUsed
             }
         }
         
-        guard var final = accumulatedResult else {
-            throw VitalLensError.processingError("Video too short or no result generated.")
-        }
+        // Pass empty global chunk to trigger full history derivation
+        let emptyChunk = InputChunk(timestamp: [], signals: [:], confidences: [:], face: nil)
+        let globalResult = session.processChunk(chunk: emptyChunk, mode: .global)
         
-        // Robustly determine count (fallback to time array length if sampleCount is nil)
-        var count = final.sampleCount ?? final.time.count
-        if count == 0, let firstSignal = final.signals.values.first {
-            count = firstSignal.data.count
-        }
-        
-        if count > 0 {
-            let duration = Double(count) / nominalFPS
-            // Generate clean, evenly spaced timestamps based on file FPS
-            let timeSteps = stride(from: 0.0, to: duration, by: 1.0 / nominalFPS)
-            
-            final = VitalLensResult(
-                face: final.face,
-                signals: final.signals,
-                time: Array(timeSteps),
-                fps: nominalFPS,
-                modelUsed: final.modelUsed,
-                state: final.state,
-                message: final.message,
-                sampleCount: count
-            )
-        }
-        
-        return final
+        return globalResult.toVitalLensResult(
+            originalState: nil,
+            message: finalMessage,
+            modelUsed: finalModelUsed
+        )
     }
 }

@@ -528,7 +528,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
-public protocol BufferManagerProtocol : AnyObject {
+public protocol BufferPlannerProtocol : AnyObject {
     
     func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: Bool, flush: Bool)  -> ExecutionPlan
     
@@ -538,8 +538,8 @@ public protocol BufferManagerProtocol : AnyObject {
     
 }
 
-open class BufferManager:
-    BufferManagerProtocol {
+open class BufferPlanner:
+    BufferPlannerProtocol {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
     /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
@@ -573,12 +573,12 @@ open class BufferManager:
     @_documentation(visibility: private)
 #endif
     public func uniffiClonePointer() -> UnsafeMutableRawPointer {
-        return try! rustCall { uniffi_vitallens_core_fn_clone_buffermanager(self.pointer, $0) }
+        return try! rustCall { uniffi_vitallens_core_fn_clone_bufferplanner(self.pointer, $0) }
     }
 public convenience init(config: BufferConfig) {
     let pointer =
         try! rustCall() {
-    uniffi_vitallens_core_fn_constructor_buffermanager_new(
+    uniffi_vitallens_core_fn_constructor_bufferplanner_new(
         FfiConverterTypeBufferConfig.lower(config),$0
     )
 }
@@ -590,7 +590,7 @@ public convenience init(config: BufferConfig) {
             return
         }
 
-        try! rustCall { uniffi_vitallens_core_fn_free_buffermanager(pointer, $0) }
+        try! rustCall { uniffi_vitallens_core_fn_free_bufferplanner(pointer, $0) }
     }
 
     
@@ -598,7 +598,7 @@ public convenience init(config: BufferConfig) {
     
 open func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: Bool, flush: Bool) -> ExecutionPlan {
     return try!  FfiConverterTypeExecutionPlan.lift(try! rustCall() {
-    uniffi_vitallens_core_fn_method_buffermanager_poll(self.uniffiClonePointer(),
+    uniffi_vitallens_core_fn_method_bufferplanner_poll(self.uniffiClonePointer(),
         FfiConverterDictionaryStringUInt32.lower(currentCounts),
         FfiConverterTypeInferenceMode.lower(mode),
         FfiConverterBool.lower(hasState),
@@ -609,7 +609,7 @@ open func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: B
     
 open func registerRoi(targetRoi: Rect, timestamp: Double) -> BufferAction {
     return try!  FfiConverterTypeBufferAction.lift(try! rustCall() {
-    uniffi_vitallens_core_fn_method_buffermanager_register_roi(self.uniffiClonePointer(),
+    uniffi_vitallens_core_fn_method_bufferplanner_register_roi(self.uniffiClonePointer(),
         FfiConverterTypeRect.lower(targetRoi),
         FfiConverterDouble.lower(timestamp),$0
     )
@@ -617,7 +617,7 @@ open func registerRoi(targetRoi: Rect, timestamp: Double) -> BufferAction {
 }
     
 open func reset() {try! rustCall() {
-    uniffi_vitallens_core_fn_method_buffermanager_reset(self.uniffiClonePointer(),$0
+    uniffi_vitallens_core_fn_method_bufferplanner_reset(self.uniffiClonePointer(),$0
     )
 }
 }
@@ -628,20 +628,20 @@ open func reset() {try! rustCall() {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeBufferManager: FfiConverter {
+public struct FfiConverterTypeBufferPlanner: FfiConverter {
 
     typealias FfiType = UnsafeMutableRawPointer
-    typealias SwiftType = BufferManager
+    typealias SwiftType = BufferPlanner
 
-    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> BufferManager {
-        return BufferManager(unsafeFromRawPointer: pointer)
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> BufferPlanner {
+        return BufferPlanner(unsafeFromRawPointer: pointer)
     }
 
-    public static func lower(_ value: BufferManager) -> UnsafeMutableRawPointer {
+    public static func lower(_ value: BufferPlanner) -> UnsafeMutableRawPointer {
         return value.uniffiClonePointer()
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BufferManager {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BufferPlanner {
         let v: UInt64 = try readInt(&buf)
         // The Rust code won't compile if a pointer won't fit in a UInt64.
         // We have to go via `UInt` because that's the thing that's the size of a pointer.
@@ -652,7 +652,7 @@ public struct FfiConverterTypeBufferManager: FfiConverter {
         return try lift(ptr!)
     }
 
-    public static func write(_ value: BufferManager, into buf: inout [UInt8]) {
+    public static func write(_ value: BufferPlanner, into buf: inout [UInt8]) {
         // This fiddling is because `Int` is the thing that's the same size as a pointer.
         // The Rust code won't compile if a pointer won't fit in a `UInt64`.
         writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
@@ -665,15 +665,15 @@ public struct FfiConverterTypeBufferManager: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeBufferManager_lift(_ pointer: UnsafeMutableRawPointer) throws -> BufferManager {
-    return try FfiConverterTypeBufferManager.lift(pointer)
+public func FfiConverterTypeBufferPlanner_lift(_ pointer: UnsafeMutableRawPointer) throws -> BufferPlanner {
+    return try FfiConverterTypeBufferPlanner.lift(pointer)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeBufferManager_lower(_ value: BufferManager) -> UnsafeMutableRawPointer {
-    return FfiConverterTypeBufferManager.lower(value)
+public func FfiConverterTypeBufferPlanner_lower(_ value: BufferPlanner) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeBufferPlanner.lower(value)
 }
 
 
@@ -722,11 +722,11 @@ open class Session:
     public func uniffiClonePointer() -> UnsafeMutableRawPointer {
         return try! rustCall { uniffi_vitallens_core_fn_clone_session(self.pointer, $0) }
     }
-public convenience init(config: ModelConfig) {
+public convenience init(config: SessionConfig) {
     let pointer =
         try! rustCall() {
     uniffi_vitallens_core_fn_constructor_session_new(
-        FfiConverterTypeModelConfig.lower(config),$0
+        FfiConverterTypeSessionConfig.lower(config),$0
     )
 }
     self.init(unsafeFromRawPointer: pointer)
@@ -1333,104 +1333,6 @@ public func FfiConverterTypeInputChunk_lower(_ value: InputChunk) -> RustBuffer 
 }
 
 
-public struct ModelConfig {
-    public var name: String
-    public var supportedVitals: [String]
-    public var fpsTarget: Float
-    public var inputSize: UInt64
-    public var nInputs: UInt64
-    public var roiMethod: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(name: String, supportedVitals: [String], fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
-        self.name = name
-        self.supportedVitals = supportedVitals
-        self.fpsTarget = fpsTarget
-        self.inputSize = inputSize
-        self.nInputs = nInputs
-        self.roiMethod = roiMethod
-    }
-}
-
-
-
-extension ModelConfig: Equatable, Hashable {
-    public static func ==(lhs: ModelConfig, rhs: ModelConfig) -> Bool {
-        if lhs.name != rhs.name {
-            return false
-        }
-        if lhs.supportedVitals != rhs.supportedVitals {
-            return false
-        }
-        if lhs.fpsTarget != rhs.fpsTarget {
-            return false
-        }
-        if lhs.inputSize != rhs.inputSize {
-            return false
-        }
-        if lhs.nInputs != rhs.nInputs {
-            return false
-        }
-        if lhs.roiMethod != rhs.roiMethod {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(name)
-        hasher.combine(supportedVitals)
-        hasher.combine(fpsTarget)
-        hasher.combine(inputSize)
-        hasher.combine(nInputs)
-        hasher.combine(roiMethod)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeModelConfig: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelConfig {
-        return
-            try ModelConfig(
-                name: FfiConverterString.read(from: &buf), 
-                supportedVitals: FfiConverterSequenceString.read(from: &buf), 
-                fpsTarget: FfiConverterFloat.read(from: &buf), 
-                inputSize: FfiConverterUInt64.read(from: &buf), 
-                nInputs: FfiConverterUInt64.read(from: &buf), 
-                roiMethod: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: ModelConfig, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterSequenceString.write(value.supportedVitals, into: &buf)
-        FfiConverterFloat.write(value.fpsTarget, into: &buf)
-        FfiConverterUInt64.write(value.inputSize, into: &buf)
-        FfiConverterUInt64.write(value.nInputs, into: &buf)
-        FfiConverterString.write(value.roiMethod, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeModelConfig_lift(_ buf: RustBuffer) throws -> ModelConfig {
-    return try FfiConverterTypeModelConfig.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeModelConfig_lower(_ value: ModelConfig) -> RustBuffer {
-    return FfiConverterTypeModelConfig.lower(value)
-}
-
-
 public struct Rect {
     public var x: Float
     public var y: Float
@@ -1513,23 +1415,111 @@ public func FfiConverterTypeRect_lower(_ value: Rect) -> RustBuffer {
 }
 
 
+public struct SessionConfig {
+    public var supportedVitals: [String]
+    public var fpsTarget: Float
+    public var inputSize: UInt64
+    public var nInputs: UInt64
+    public var roiMethod: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(supportedVitals: [String], fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
+        self.supportedVitals = supportedVitals
+        self.fpsTarget = fpsTarget
+        self.inputSize = inputSize
+        self.nInputs = nInputs
+        self.roiMethod = roiMethod
+    }
+}
+
+
+
+extension SessionConfig: Equatable, Hashable {
+    public static func ==(lhs: SessionConfig, rhs: SessionConfig) -> Bool {
+        if lhs.supportedVitals != rhs.supportedVitals {
+            return false
+        }
+        if lhs.fpsTarget != rhs.fpsTarget {
+            return false
+        }
+        if lhs.inputSize != rhs.inputSize {
+            return false
+        }
+        if lhs.nInputs != rhs.nInputs {
+            return false
+        }
+        if lhs.roiMethod != rhs.roiMethod {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(supportedVitals)
+        hasher.combine(fpsTarget)
+        hasher.combine(inputSize)
+        hasher.combine(nInputs)
+        hasher.combine(roiMethod)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSessionConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionConfig {
+        return
+            try SessionConfig(
+                supportedVitals: FfiConverterSequenceString.read(from: &buf), 
+                fpsTarget: FfiConverterFloat.read(from: &buf), 
+                inputSize: FfiConverterUInt64.read(from: &buf), 
+                nInputs: FfiConverterUInt64.read(from: &buf), 
+                roiMethod: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SessionConfig, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.supportedVitals, into: &buf)
+        FfiConverterFloat.write(value.fpsTarget, into: &buf)
+        FfiConverterUInt64.write(value.inputSize, into: &buf)
+        FfiConverterUInt64.write(value.nInputs, into: &buf)
+        FfiConverterString.write(value.roiMethod, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionConfig_lift(_ buf: RustBuffer) throws -> SessionConfig {
+    return try FfiConverterTypeSessionConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionConfig_lower(_ value: SessionConfig) -> RustBuffer {
+    return FfiConverterTypeSessionConfig.lower(value)
+}
+
+
 public struct SessionResult {
     public var timestamp: [Double]
     public var face: FaceResult?
     public var signals: [String: SignalResult]
     public var fps: Float
     public var message: String
-    public var modelUsed: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(timestamp: [Double], face: FaceResult?, signals: [String: SignalResult], fps: Float, message: String, modelUsed: String) {
+    public init(timestamp: [Double], face: FaceResult?, signals: [String: SignalResult], fps: Float, message: String) {
         self.timestamp = timestamp
         self.face = face
         self.signals = signals
         self.fps = fps
         self.message = message
-        self.modelUsed = modelUsed
     }
 }
 
@@ -1552,9 +1542,6 @@ extension SessionResult: Equatable, Hashable {
         if lhs.message != rhs.message {
             return false
         }
-        if lhs.modelUsed != rhs.modelUsed {
-            return false
-        }
         return true
     }
 
@@ -1564,7 +1551,6 @@ extension SessionResult: Equatable, Hashable {
         hasher.combine(signals)
         hasher.combine(fps)
         hasher.combine(message)
-        hasher.combine(modelUsed)
     }
 }
 
@@ -1580,8 +1566,7 @@ public struct FfiConverterTypeSessionResult: FfiConverterRustBuffer {
                 face: FfiConverterOptionTypeFaceResult.read(from: &buf), 
                 signals: FfiConverterDictionaryStringTypeSignalResult.read(from: &buf), 
                 fps: FfiConverterFloat.read(from: &buf), 
-                message: FfiConverterString.read(from: &buf), 
-                modelUsed: FfiConverterString.read(from: &buf)
+                message: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -1591,7 +1576,6 @@ public struct FfiConverterTypeSessionResult: FfiConverterRustBuffer {
         FfiConverterDictionaryStringTypeSignalResult.write(value.signals, into: &buf)
         FfiConverterFloat.write(value.fps, into: &buf)
         FfiConverterString.write(value.message, into: &buf)
-        FfiConverterString.write(value.modelUsed, into: &buf)
     }
 }
 
@@ -2374,22 +2358,22 @@ private var initializationResult: InitializationResult = {
     if (uniffi_vitallens_core_checksum_func_is_contained() != 19341) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_buffermanager_poll() != 8934) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_poll() != 49505) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_buffermanager_register_roi() != 41859) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_register_roi() != 44264) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_buffermanager_reset() != 120) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_reset() != 56277) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_method_session_process_chunk() != 32523) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_constructor_buffermanager_new() != 61793) {
+    if (uniffi_vitallens_core_checksum_constructor_bufferplanner_new() != 8442) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_constructor_session_new() != 47585) {
+    if (uniffi_vitallens_core_checksum_constructor_session_new() != 18885) {
         return InitializationResult.apiChecksumMismatch
     }
 

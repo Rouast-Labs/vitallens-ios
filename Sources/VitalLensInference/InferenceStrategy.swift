@@ -1,17 +1,12 @@
 import Foundation
 import CoreVideo
 import ImageIO
+import VitalLensCore
 
 /// A thread-safe wrapper for CVPixelBuffer
 public struct SendablePixelBuffer: @unchecked Sendable {
     public let buffer: CVPixelBuffer
     public init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
-}
-
-/// Defines the target endpoint behavior.
-public enum InferenceMode: Sendable {
-    case stream 
-    case file
 }
 
 /// Represents the unit of data to be processed.
