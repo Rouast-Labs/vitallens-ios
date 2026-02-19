@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "VitalLensCore"
-               BuildableName = "VitalLensCore"
-               BlueprintName = "VitalLensCore"
+               BlueprintIdentifier = "VitalLensInference"
+               BuildableName = "VitalLensInference"
+               BlueprintName = "VitalLensInference"
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
@@ -50,9 +50,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "VitalLensCore"
-            BuildableName = "VitalLensCore"
-            BlueprintName = "VitalLensCore"
+            BlueprintIdentifier = "VitalLensInference"
+            BuildableName = "VitalLensInference"
+            BlueprintName = "VitalLensInference"
             ReferencedContainer = "container:">
          </BuildableReference>
       </MacroExpansion>

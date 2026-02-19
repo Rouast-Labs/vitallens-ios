@@ -1,7 +1,7 @@
 import Foundation
 import CoreVideo
 import ImageIO
-import VitalLensCore
+import VitalLensInference
 
 /// A strategy that determines which regions of the video frame should be processed.
 public protocol ROIStrategy: Sendable {

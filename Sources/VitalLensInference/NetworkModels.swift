@@ -22,20 +22,10 @@ public struct ResolveModelResponse: Codable, Sendable {
 /// Configuration parameters for a specific VitalLens model.
 /// These parameters dictate how the client should preprocess video data.
 public struct ModelConfig: Codable, Sendable {
-    /// The number of frames required for a single inference batch (temporal depth).
     public let nInputs: Int
-    
-    /// The required width/height of the input video frames (e.g., 40 for 40x40).
     public let inputSize: Int
-    
-    /// The target frame rate expected by the model.
     public let fpsTarget: Double
-    
-    /// The method used to calculate the Region of Interest (ROI) from a face detection.
-    /// Typically "upper_body_cropped".
     public let roiMethod: String
-    
-    /// A list of vital signs supported by this model (e.g., "heart_rate", "hrv_sdnn").
     public let supportedVitals: [String]
     
     public init(nInputs: Int, inputSize: Int, fpsTarget: Double, roiMethod: String, supportedVitals: [String]) {

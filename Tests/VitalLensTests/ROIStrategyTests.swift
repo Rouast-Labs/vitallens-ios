@@ -1,7 +1,7 @@
 import XCTest
 import CoreVideo
 import ImageIO
-import VitalLensCore
+import VitalLensInference
 @testable import VitalLens
 
 final class ROIStrategyTests: XCTestCase {

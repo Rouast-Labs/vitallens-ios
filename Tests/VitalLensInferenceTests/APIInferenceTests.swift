@@ -1,6 +1,6 @@
 import XCTest
 import zlib
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class APIInferenceTests: XCTestCase {
     
@@ -188,7 +188,8 @@ final class APIInferenceTests: XCTestCase {
         
         XCTAssertEqual(config.nInputs, 4)
         XCTAssertEqual(config.inputSize, 40)
-        XCTAssertGreaterThan(strategy.batchConstraints.streamMax, 0)
+        let constraints = try await strategy.batchConstraints
+        XCTAssertGreaterThan(constraints.streamMax, 0)
     }
     
     // MARK: - Logic: Streaming (Compression & Headers)

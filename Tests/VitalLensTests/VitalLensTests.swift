@@ -1,6 +1,6 @@
 import XCTest
 import CoreVideo
-import VitalLensCore
+import VitalLensInference
 @testable import VitalLens
 
 #if canImport(UIKit)

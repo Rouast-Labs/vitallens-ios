@@ -1,5 +1,5 @@
 import XCTest
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class BufferManagerTests: XCTestCase {
     
@@ -12,8 +12,8 @@ final class BufferManagerTests: XCTestCase {
     )
 
     let constraints = BatchConstraints(
-        streamMinNoState: 16,
-        streamMinWithState: 4,
+        minNoState: 16,
+        minWithState: 4,
         streamMax: 150
     )
     

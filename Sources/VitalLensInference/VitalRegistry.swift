@@ -76,10 +76,6 @@ public final class VitalRegistry: Sendable {
             id: "spo2", displayName: "SpO2", unit: "%", color: .orange,
             derivation: .average, frequencyBounds: nil, valueBounds: 80...100
         ),
-        "stress_index": VitalMeta(
-            id: "stress_index", displayName: "Stress", unit: "", color: .purple,
-            derivation: .latest, frequencyBounds: nil, valueBounds: 0...100
-        )
     ]
     
     public func getMeta(for key: String) -> VitalMeta {

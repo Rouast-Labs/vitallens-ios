@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreVideo
-import VitalLensCore
+import VitalLensInference
 import ImageIO
 
 #if canImport(UIKit)

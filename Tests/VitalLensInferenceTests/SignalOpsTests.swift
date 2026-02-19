@@ -1,6 +1,6 @@
 import XCTest
 import Accelerate
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class SignalOpsTests: XCTestCase {
 

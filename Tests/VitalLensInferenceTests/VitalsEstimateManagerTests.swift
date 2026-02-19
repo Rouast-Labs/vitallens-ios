@@ -1,5 +1,5 @@
 import XCTest
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class VitalsEstimateManagerTests: XCTestCase {
     
@@ -27,7 +27,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         let ppgData = ppg ?? (0..<count).map { Float($0 + 1) }
         let confData = ppgConf ?? Array(repeating: 1.0, count: count)
         
-        // NEW: Store in the signals map
+        // Store in the signals map
         signals["ppg_waveform"] = TimeSeries(
             data: ppgData,
             confidence: confData,
@@ -41,7 +41,6 @@ final class VitalsEstimateManagerTests: XCTestCase {
             note: nil
         )
         
-        // NEW: Use the dynamic initializer
         return VitalLensResult(
             face: face,
             signals: signals,
@@ -60,13 +59,12 @@ final class VitalsEstimateManagerTests: XCTestCase {
         
         XCTAssertEqual(result.time, [1.0, 2.0, 3.0, 4.0])
         
-        // UPDATED: Access via .ppg convenience accessor
         guard let ppg = result.ppg?.data else { XCTFail("PPG missing"); return }
         
         XCTAssertEqual(ppg.count, 4)
         XCTAssertEqual(ppg[0], 10.0, accuracy: 0.01)
-        XCTAssertEqual(ppg[1], 21.0, accuracy: 0.01) // Average of 20 and 22
-        XCTAssertEqual(ppg[2], 32.0, accuracy: 0.01) // Average of 30 and 34
+        XCTAssertEqual(ppg[1], 21.0, accuracy: 0.01)
+        XCTAssertEqual(ppg[2], 32.0, accuracy: 0.01)
         XCTAssertEqual(ppg[3], 40.0, accuracy: 0.01)
     }
     
@@ -169,7 +167,7 @@ final class VitalsEstimateManagerTests: XCTestCase {
         
         let result = await manager.process(chunk: chunk, mode: .complete, config: highFPSConfig)
         
-        // UPDATED: Use .latest?.value for scalars
+        // TODO: Instead check that HR is a single val, not data
         XCTAssertNotNil(result.heartRate?.latest?.value)
         if let hr = result.heartRate?.latest?.value {
             XCTAssertEqual(hr, 60.0, accuracy: 1.0)

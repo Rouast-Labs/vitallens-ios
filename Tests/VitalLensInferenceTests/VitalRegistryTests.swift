@@ -1,6 +1,6 @@
 import XCTest
 import SwiftUI
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class VitalRegistryTests: XCTestCase {
     

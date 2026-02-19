@@ -1,7 +1,7 @@
 import Foundation
 import Vision
 import CoreImage
-import VitalLensCore
+import VitalLensInference
 import ImageIO
 import CoreML
 

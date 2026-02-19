@@ -15,21 +15,21 @@ let package = Package(
             targets: ["VitalLens", "VitalLensUI"]
         ),
         .library(
-            name: "VitalLensCore",
-            targets: ["VitalLensCore"]
+            name: "VitalLensInference",
+            targets: ["VitalLensInference"]
         )
     ],
     targets: [
-        // Core: Pure Logic (Networking, Math, State). No UI dependencies.
+        // Inference: Pure Logic (Networking, Math, State). No UI dependencies.
         .target(
-            name: "VitalLensCore",
+            name: "VitalLensInference",
             dependencies: []
         ),
         
         // Lib: The Pipeline (Camera, Face Detection). Depends on Core.
         .target(
             name: "VitalLens",
-            dependencies: ["VitalLensCore"]
+            dependencies: ["VitalLensInference"]
         ),
         
         // UI: SwiftUI Components. Depends on Lib.
@@ -38,16 +38,16 @@ let package = Package(
             dependencies: ["VitalLens"]
         ),
         
-        // Core Logic Tests
+        // Inference Logic Tests
         .testTarget(
-            name: "VitalLensCoreTests",
-            dependencies: ["VitalLensCore"]
+            name: "VitalLensInferenceTests",
+            dependencies: ["VitalLensInference"]
         ),
 
         // Integration Tests (Runs on iOS Simulator)
         .testTarget(
             name: "VitalLensTests",
-            dependencies: ["VitalLens", "VitalLensCore"],
+            dependencies: ["VitalLens", "VitalLensInference"],
             resources: [
                 .copy("Resources/sample_video_2.mp4")
             ]

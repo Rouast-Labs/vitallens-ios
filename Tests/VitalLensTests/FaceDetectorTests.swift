@@ -2,7 +2,7 @@ import XCTest
 import AVFoundation
 import Vision
 import CoreVideo
-import VitalLensCore
+import VitalLensInference
 @testable import VitalLens
 
 final class FaceDetectorTests: XCTestCase {

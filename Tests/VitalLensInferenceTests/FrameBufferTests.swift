@@ -1,5 +1,5 @@
 import XCTest
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class FrameBufferTests: XCTestCase {
     
@@ -14,9 +14,10 @@ final class FrameBufferTests: XCTestCase {
     
     // Explicit constraints for testing
     let constraints = BatchConstraints(
-        streamMinNoState: 16,
-        streamMinWithState: 4,
-        streamMax: 150
+        minNoState: 16,
+        minWithState: 4,
+        streamMax: 120,
+        fileMax: 900
     )
     
     // Helper to create a dummy unit and context
@@ -37,39 +38,39 @@ final class FrameBufferTests: XCTestCase {
     }
     
     func testInitialization() async {
-        let buffer = FrameBuffer(roi: .zero, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: .zero, mode: .stream, config: config, constraints: constraints)
         
         // Mode is now required
-        let ready = await buffer.isReady(hasState: false, mode: .stream)
+        let ready = await buffer.isReady(hasState: false)
         XCTAssertFalse(ready, "Buffer should not be ready initially")
     }
     
     func testAppendAndReadyLogic() async {
-        let buffer = FrameBuffer(roi: .zero, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: .zero, mode: .stream, config: config, constraints: constraints)
         
-        // 1. Initial State (No external state): Needs 16 frames (streamMinNoState)
+        // 1. Initial State (No external state): Needs 16 frames (minNoState)
         for i in 0..<15 {
             let (unit, ctx) = makeFrame(index: i)
             await buffer.append(unit: unit, context: ctx)
         }
         
-        let readyNoState = await buffer.isReady(hasState: false, mode: .stream)
+        let readyNoState = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyNoState, "Should wait for 16 frames when no state exists")
         
         // With state, 15 frames > 4 (streamMinWithState), so it WOULD be ready.
-        let readyWithState = await buffer.isReady(hasState: true, mode: .stream)
+        let readyWithState = await buffer.isReady(hasState: true)
         XCTAssertTrue(readyWithState, "Should be ready with 15 frames if state context exists")
         
         // Add 16th frame
         let (unit, ctx) = makeFrame(index: 15)
         await buffer.append(unit: unit, context: ctx)
         
-        let readyAfter = await buffer.isReady(hasState: false, mode: .stream)
+        let readyAfter = await buffer.isReady(hasState: false)
         XCTAssertTrue(readyAfter, "Should be ready at 16 frames (Stateless threshold)")
     }
     
     func testConsumeMaintainsOverlap() async {
-        let buffer = FrameBuffer(roi: .zero, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: .zero, mode: .stream, config: config, constraints: constraints)
         
         // Fill 16 frames (indices 0...15)
         for i in 0..<16 {
@@ -98,11 +99,11 @@ final class FrameBufferTests: XCTestCase {
         // Total internal buffer is now 4 frames: [13, 14, 15, 16]
         
         // Check Ready with State
-        let readyStateful = await buffer.isReady(hasState: true, mode: .stream)
+        let readyStateful = await buffer.isReady(hasState: true)
         XCTAssertTrue(readyStateful, "Should be ready immediately with state + 4 frames total")
         
         // Check Ready WITHOUT State (e.g. if API call failed)
-        let readyStateless = await buffer.isReady(hasState: false, mode: .stream)
+        let readyStateless = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyStateless, "Should NOT be ready if state was lost (needs 16 frames again)")
         
         // Consume second batch
@@ -122,19 +123,19 @@ final class FrameBufferTests: XCTestCase {
     }
     
     func testClear() async {
-        let buffer = FrameBuffer(roi: .zero, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: .zero, mode: .stream, config: config, constraints: constraints)
         
         for i in 0..<16 {
             let (unit, ctx) = makeFrame(index: i)
             await buffer.append(unit: unit, context: ctx)
         }
         
-        let readyBefore = await buffer.isReady(hasState: false, mode: .stream)
+        let readyBefore = await buffer.isReady(hasState: false)
         XCTAssertTrue(readyBefore)
         
         await buffer.clear()
         
-        let readyAfter = await buffer.isReady(hasState: false, mode: .stream)
+        let readyAfter = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyAfter)
         
         // Verify behavior after clear
@@ -144,17 +145,17 @@ final class FrameBufferTests: XCTestCase {
         }
         
         // If we don't have state, 4 frames isn't enough (need 16)
-        let readyStateless = await buffer.isReady(hasState: false, mode: .stream)
+        let readyStateless = await buffer.isReady(hasState: false)
         XCTAssertFalse(readyStateless)
         
         // If we DO have state, 4 frames IS enough (minWithState is 4)
-        let readyStateful = await buffer.isReady(hasState: true, mode: .stream)
+        let readyStateful = await buffer.isReady(hasState: true)
         XCTAssertTrue(readyStateful)
     }
     
     func testOverflowProtection() async {
         // Logic in FrameBuffer: if count > streamMax * 2 (300), drop frames.
-        let buffer = FrameBuffer(roi: .zero, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: .zero, mode: .stream, config: config, constraints: constraints)
         
         // Append 500 frames
         for i in 0..<500 {
@@ -162,7 +163,7 @@ final class FrameBufferTests: XCTestCase {
             await buffer.append(unit: unit, context: ctx)
         }
         
-        let ready = await buffer.isReady(hasState: false, mode: .stream)
+        let ready = await buffer.isReady(hasState: false)
         XCTAssertTrue(ready)
         
         guard let payload = await buffer.consume() else { return }

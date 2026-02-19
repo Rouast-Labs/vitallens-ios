@@ -3,7 +3,7 @@ import CoreVideo
 import Accelerate
 import ImageIO
 @testable import VitalLens
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class ImageProcessorTests: XCTestCase {
     

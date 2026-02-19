@@ -1,5 +1,5 @@
 import XCTest
-@testable import VitalLensCore
+@testable import VitalLensInference
 
 final class VitalLensResultTests: XCTestCase {
     

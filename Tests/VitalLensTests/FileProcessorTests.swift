@@ -1,7 +1,7 @@
 import XCTest
 import AVFoundation
 import CoreVideo
-import VitalLensCore
+import VitalLensInference
 @testable import VitalLens
 
 final class FileProcessorTests: XCTestCase {
@@ -112,8 +112,7 @@ final class FileProcessorTests: XCTestCase {
         
         var batchConstraints: BatchConstraints {
             return BatchConstraints(
-                streamMinNoState: 4, streamMinWithState: 4, streamMax: 30,
-                fileMinNoState: 4, fileMinWithState: 4, fileMax: 100
+                minNoState: 16, minWithState: 4, streamMax: 30, fileMax: 100
             )
         }
         

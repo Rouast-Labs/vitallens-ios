@@ -1,5 +1,5 @@
 import XCTest
-import VitalLensCore
+import VitalLensInference
 import CoreVideo
 @testable import VitalLens
 

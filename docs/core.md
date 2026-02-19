@@ -1,13 +1,13 @@
 # VitalLens Core
 
-The `VitalLensCore` module contains the pure logic, math, and data structures used by the library. It has no dependencies on `AVFoundation` or `UIKit`, making it safe to run on **macOS**, **watchOS**, or in **Server-Side Swift**.
+The `VitalLensInference` module contains the pure logic, math, and data structures used by the library. It has no dependencies on `AVFoundation` or `UIKit`, making it safe to run on **macOS**, **watchOS**, or in **Server-Side Swift**.
 
 ## Signal Processing (`SignalOps`)
 
 We expose our high-performance, vDSP-based signal processing engine publicly. You can use these primitives to analyze your own data arrays, even if they didn't come from the VitalLens API.
 
 ```swift
-import VitalLensCore
+import VitalLensInference
 
 let rawPPG: [Float] = ... // Your data
 

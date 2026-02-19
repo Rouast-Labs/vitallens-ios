@@ -1,5 +1,7 @@
 import Foundation
 
+// TODO: We need to enforce that only the signals supported by model are derived & contained in result
+
 /// Defines how the manager should format the output waveforms.
 public enum WaveformMode: Sendable {
     /// Returns only the new data points generated since the last call.
@@ -113,10 +115,10 @@ public actor VitalsEstimateManager {
         config: ModelConfig?
     ) -> VitalLensResult {
         
-        // 1. Merge Time & Calculate Overlap
+        // Merge time and calculate iverlap
         let overlapCount = mergeTimestamps(newTimes: chunk.time)
         
-        // 2. Merge Face Data
+        // Merge face data
         if let coords = chunk.face.coordinates, let conf = chunk.face.confidence {
             faceNote = chunk.face.note
             let safeOverlap = min(overlapCount, coords.count)
@@ -133,7 +135,7 @@ public actor VitalsEstimateManager {
             }
         }
         
-        // 3. Merge All Signals (Dynamic)
+        // 3. Merge all signals (dynamic)
         for (key, series) in chunk.signals {
             // Ensure buffers exist
             if signalBuffers[key] == nil {
@@ -141,23 +143,23 @@ public actor VitalsEstimateManager {
                 signalConfidences[key] = SignalBuffer()
             }
             
-            // Merge Data
+            // Merge data
             signalBuffers[key]?.merge(data: series.data, overlapCount: overlapCount, unit: series.unit)
             
-            // Merge Confidence
+            // Merge confidence
             signalConfidences[key]?.merge(data: series.confidence, overlapCount: overlapCount, unit: nil)
         }
         
-        // 4. Prune History
+        // Prune history
         pruneInternalState(keeping: maxInternalHistory)
         
-        // 5. Calculate FPS
+        // Calculate fps
         let fps = calculateEffectiveFPS() ?? Float(config?.fpsTarget ?? 30.0)
         
-        // 6. Derive Vitals (Logic Engine)
+        // Derive vitals
         let derivedSignals = performDerivations(fps: fps)
         
-        // 7. Construct Final Output
+        // Construct final output
         return constructOutput(
             originalResult: chunk,
             derivedSignals: derivedSignals,
@@ -166,41 +168,44 @@ public actor VitalsEstimateManager {
         )
     }
     
-    // MARK: - Derivation Logic
+    // MARK: - Derivation logic
     
     private func performDerivations(fps: Float) -> [String: TimeSeries] {
         var results = [String: TimeSeries]()
         
-        // We iterate through our buffers to see what source data we have
+        // TODO: Approach should instead iterate all registry items
         for (key, buffer) in signalBuffers {
             let meta = VitalRegistry.shared.getMeta(for: key)
             let data = buffer.computeAverage()
             let conf = signalConfidences[key]?.computeAverage() ?? Array(repeating: 1.0, count: data.count)
             
-            // 1. Always include the source waveform in the output
+            // Include the source waveform in the output
             results[key] = TimeSeries(data: data, confidence: conf, unit: buffer.unit ?? meta.unit, note: nil)
             
-            // 2. Perform Derivation based on Registry
+            // Perform derivation based on registry
             switch meta.derivation {
-                
+            
+            // TODO: Our cases need to be different, or we need to define closures in the vital registry
             case .rateFromFFT:
                 // e.g. ppg_waveform -> heart_rate
                 // e.g. respiratory_waveform -> respiratory_rate
                 
+                // TODO: Min estimation window should be defined in registry and used here
                 if data.count >= minEstimationWindow,
                    let bounds = meta.frequencyBounds,
-                   let rate = SignalOps.estimateRate(from: SignalOps.standardize(SignalOps.detrend(data, fs: fps)),
+                   let rate = SignalOps.estimateRate(from: data,
                                                      fs: fps,
                                                      minRate: Float(bounds.lowerBound),
                                                      maxRate: Float(bounds.upperBound)) {
                     
-                    let targetKey = key == "ppg_waveform" ? "heart_rate" : "respiratory_rate"
+                    let targetKey = key == "ppg_waveform" ? "heart_rate" : "respiratory_rate" // TODO This is not good. SHould have alt keys in registry
                     let targetMeta = VitalRegistry.shared.getMeta(for: targetKey)
                     let scalarConf = averageConfidence(conf)
                     
                     results[targetKey] = createScalarTimeSeries(value: rate, conf: scalarConf, count: data.count, unit: targetMeta.unit)
                     
                     // Special Case: HRV (only if source was PPG)
+                    // TODO: What's this
                     if key == "ppg_waveform" && data.count >= minHRVWindow {
                         calculateHRV(ppg: data, fps: fps, hr: rate, conf: scalarConf, count: data.count, into: &results)
                     }
@@ -232,22 +237,25 @@ public actor VitalsEstimateManager {
     }
     
     private func calculateHRV(ppg: [Float], fps: Float, hr: Float, conf: Float, count: Int, into results: inout [String: TimeSeries]) {
+        // TODO: Probs no standardization and detrending
         let clean = SignalOps.standardize(SignalOps.detrend(ppg, fs: fps))
         let peaks = SignalOps.findPeaks(in: clean, fs: fps, hr: hr)
         
         if let sdnn = SignalOps.calculateSDNN(peaks: peaks, fs: fps) {
             let meta = VitalRegistry.shared.getMeta(for: "hrv_sdnn")
+            // TODO: This has been misunderstood. Should be single value
             results["hrv_sdnn"] = createScalarTimeSeries(value: Float(sdnn), conf: conf, count: count, unit: meta.unit)
         }
         
         if let rmssd = SignalOps.calculateRMSSD(peaks: peaks, fs: fps) {
             let meta = VitalRegistry.shared.getMeta(for: "hrv_rmssd")
+            // TODO: This has been misunderstood. Should be single value
             results["hrv_rmssd"] = createScalarTimeSeries(value: Float(rmssd), conf: conf, count: count, unit: meta.unit)
         }
     }
     
     // Helper to create a TimeSeries that represents a single scalar value repeated across the timeline
-    // This maintains the "Everything is an array" contract while providing a value for every frame.
+    // TODO: Not sure if needed
     private func createScalarTimeSeries(value: Float, conf: Float, count: Int, unit: String) -> TimeSeries {
         return TimeSeries(
             data: Array(repeating: value, count: count),

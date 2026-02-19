@@ -43,53 +43,60 @@ public struct InferenceContext: Sendable {
 }
 
 /// Defines the buffering constraints for a specific strategy.
-// TODO: These could depend on the model too, though.
 public struct BatchConstraints: Sendable {
-    /// The minimum number of frames required to process a stream batch without state (Cold Start).
-    public let streamMinNoState: Int
-    /// The minimum number of frames required to process a stream batch with state (Steady State).
-    public let streamMinWithState: Int
-    /// The maximum number of frames allowed in a stream batch (Latency Ceiling).
+    // Hardcoded infrastructure constants
+    private static let maxBase64BytesForFrames = 5_760_000
+    private static let maxStreamPolicyFrames = 150
+    private static let base64Overhead = 1.3333
+
+    private let minNoState: Int
+    private let minWithState: Int
     public let streamMax: Int
-    
-    /// The minimum number of frames required to process a file batch without state.
-    public let fileMinNoState: Int
-    /// The minimum number of frames required to process a file batch with state.
-    public let fileMinWithState: Int
-    /// The maximum number of frames allowed in a file batch (Payload Size Ceiling).
     public let fileMax: Int
     
-    public init(
-        streamMinNoState: Int = 16,
-        streamMinWithState: Int = 4,
-        streamMax: Int = 150,
-        fileMinNoState: Int = 16,
-        fileMinWithState: Int = 4,
-        fileMax: Int = 900
-    ) {
-        self.streamMinNoState = streamMinNoState
-        self.streamMinWithState = streamMinWithState
+    public init(for config: ModelConfig) {
+        // Determine minimums
+        self.minWithState = config.nInputs
+        self.minNoState = max(16, config.nInputs)
+        
+        // Calculate physical max based on payload constraints
+        let bytesPerFrame = config.inputSize * config.inputSize * 3
+        let rawCapacityBytes = Double(Self.maxBase64BytesForFrames) / Self.base64Overhead
+        let calculatedMax = Int(floor(rawCapacityBytes / Double(bytesPerFrame)))
+        
+        // Assign Mode-specific maximums
+        self.fileMax = calculatedMax
+        self.streamMax = min(Self.maxStreamPolicyFrames, calculatedMax)
+    }
+
+    public init(minNoState: Int, minWithState: Int, streamMax: Int, fileMax: Int = 0) {
+        self.minNoState = minNoState
+        self.minWithState = minWithState
         self.streamMax = streamMax
-        self.fileMinNoState = fileMinNoState
-        self.fileMinWithState = fileMinWithState
         self.fileMax = fileMax
     }
     
-    /// Returns the ideal batch size for the current context.
-    public func threshold(mode: InferenceMode, hasState: Bool) -> Int {
+    public func minToSend(hasState: Bool) -> Int {
+        return hasState ? minWithState : minNoState
+    }
+
+    public func maxToSend(mode: InferenceMode) -> Int {
         switch mode {
         case .stream:
-            return hasState ? streamMinWithState : streamMinNoState
+            return streamMax
         case .file:
-            return hasState ? fileMinWithState : fileMinNoState
+            return fileMax
         }
     }
-    
-    /// Returns the hard overflow limit for the current context.
-    public func maxLimit(mode: InferenceMode) -> Int {
+
+    public func optimalToSend(mode: InferenceMode, hasState: Bool) -> Int {
         switch mode {
-        case .stream: return streamMax
-        case .file: return fileMax
+        case .stream:
+            // Low latency: send as soon as valid
+            return hasState ? minWithState : minNoState
+        case .file:
+            // High throughput: wait until batch is full
+            return fileMax
         }
     }
 }
@@ -100,7 +107,7 @@ public protocol InferenceState: Sendable {}
 public protocol InferenceStrategy: Sendable {
 
     /// Defines the buffering limits for this specific strategy.
-    var batchConstraints: BatchConstraints { get }
+    var batchConstraints: BatchConstraints { get async throws }
     
     /// Resolves the model configuration (input size, FPS, etc.) required by this strategy.
     func resolveConfig() async throws -> ModelConfig

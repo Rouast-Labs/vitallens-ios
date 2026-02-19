@@ -1,6 +1,6 @@
 import Foundation
 import AVFoundation
-import VitalLensCore
+import VitalLensInference
 import CoreVideo
 
 #if canImport(UIKit)
@@ -162,10 +162,15 @@ actor StreamProcessor {
         // Ask Strategy for ROIs using the correct orientation
         let targets = await roiStrategy.determineROIs(in: pixelBuffer, orientation: orientation)
         
+        guard let constraints = try? await strategy.batchConstraints else {
+            print("Warning: Skipping frame (Inference configuration not ready)")
+            return
+        }
+
         // Sync with Buffer Manager (Handles Overlap/Drift)
         let activeROIs = await bufferManager.updateAndGetActiveROIs(
             targets: targets,
-            constraints: strategy.batchConstraints,
+            constraints: constraints,
             config: config
         )
         

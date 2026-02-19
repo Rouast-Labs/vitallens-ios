@@ -31,7 +31,7 @@ Select the targets you need:
 
 - `VitalLens`: Main client logic.
 - `VitalLensUI`: Pre-built SwiftUI views (Recommended).
-- `VitalLensCore`: Pure logic/math (No Camera dependencies).
+- `VitalLensInference`: Pure logic/math (No Camera dependencies).
 
 ## Quickstart
 

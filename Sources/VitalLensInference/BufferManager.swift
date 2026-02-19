@@ -75,7 +75,7 @@ public actor BufferManager {
             } else {
                 // Create new buffer
                 let newID = UUID().uuidString
-                let newBuffer = FrameBuffer(roi: target, config: config, constraints: constraints, timestamp: now)
+                let newBuffer = FrameBuffer(roi: target, mode: .stream, config: config, constraints: constraints, timestamp: now)
                 buffers[newID] = ManagedBuffer(id: newID, buffer: newBuffer, lastUsed: now)
                 active.append(ActiveBufferROI(id: newID, roi: target))
             }
@@ -103,7 +103,7 @@ public actor BufferManager {
         var readyBuffers: [FrameBuffer] = []
         
         for wrapper in buffers.values {
-            if await wrapper.buffer.isReady(hasState: hasState, mode: mode) {
+            if await wrapper.buffer.isReady(hasState: hasState) {
                 readyBuffers.append(wrapper.buffer)
             }
         }

@@ -2,7 +2,7 @@ import XCTest
 import CoreVideo
 import ImageIO
 import AVFoundation
-import VitalLensCore
+import VitalLensInference
 @testable import VitalLens
 
 #if canImport(UIKit)
@@ -39,7 +39,7 @@ actor MockInferenceStrategy: InferenceStrategy {
     }
     
     nonisolated var batchConstraints: BatchConstraints {
-        return BatchConstraints(streamMinNoState: 4, streamMinWithState: 4, streamMax: 10)
+        return BatchConstraints(minNoState: 16, minWithState: 4, streamMax: 10)
     }
     
     func setShouldFail(_ fail: Bool) {

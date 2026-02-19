@@ -13,8 +13,7 @@ open class LocalInferenceBase: InferenceStrategy, @unchecked Sendable {
     }
 
     public var batchConstraints: BatchConstraints {
-        // Default constraints for local inference (can be overridden)
-        BatchConstraints(streamMinNoState: config.nInputs, streamMinWithState: 1, streamMax: 30)
+        return BatchConstraints(for: config)
     }
 
     public func resolveConfig() async throws -> ModelConfig {

@@ -1,5 +1,5 @@
 import Foundation
-import VitalLensCore
+import VitalLensInference
 import CoreVideo
 
 /// Handles the two-pass processing of video files for high-accuracy vital sign estimation.
@@ -24,7 +24,7 @@ actor FileProcessor {
     func process(strategy: any InferenceStrategy, globalROI: CGRect? = nil) async throws -> VitalLensResult {
         // 1. Resolve Config & Constraints
         let config = try await strategy.resolveConfig()
-        let constraints = strategy.batchConstraints
+        let constraints = try await strategy.batchConstraints
         
         // 2. Establish ROI (Pass 1)
         let finalROI: CGRect
@@ -52,9 +52,9 @@ actor FileProcessor {
     private func performScanningPass(config: ModelConfig) async throws -> CGRect {
         let source = try await FileSource.from(url: url)
         
-        // We optimize by checking only a subset of frames (e.g. 2 Hz stride)
+        // We optimize by checking only a subset of frames (e.g. 1 Hz stride)
         // This is significantly faster than running face detection on every frame.
-        let stride = max(1, Int(source.nominalFrameRate * 0.5))
+        let stride = max(1, Int(source.nominalFrameRate * 1.0))
         var frameCount = 0
         var detections: [CGRect] = []
         
@@ -104,7 +104,7 @@ actor FileProcessor {
         
         // Use a local FrameBuffer instance.
         // We don't need BufferManager here because we aren't handling drift/multiple faces.
-        let buffer = FrameBuffer(roi: roi, config: config, constraints: constraints)
+        let buffer = FrameBuffer(roi: roi, mode: .file, config: config, constraints: constraints)
         
         var accumulatedResult: VitalLensResult?
         var currentState: (any InferenceState)? = nil
@@ -134,7 +134,9 @@ actor FileProcessor {
             
             totalFramesProcessed += 1
             
-            if await buffer.isReady(hasState: currentState != nil, mode: .file) {
+            print("framesProcessed: \(totalFramesProcessed)")
+
+            if await buffer.isOptimal(hasState: currentState != nil, mode: .file) {
                 if let window = await buffer.consume() {
                     let (result, newState) = try await strategy.infer(
                         window: window,

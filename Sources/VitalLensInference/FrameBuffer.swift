@@ -10,6 +10,9 @@ public actor FrameBuffer {
     /// The fixed ROI used for all frames in this buffer.
     public let roi: CGRect
     
+    /// The mode in which the buffer is being used.
+    public let mode: InferenceMode
+
     /// The configuration for the model using this buffer.
     private let config: ModelConfig
     
@@ -24,11 +27,13 @@ public actor FrameBuffer {
     
     public init(
         roi: CGRect,
+        mode: InferenceMode,
         config: ModelConfig,
         constraints: BatchConstraints,
         timestamp: TimeInterval = Date().timeIntervalSince1970
     ) {
         self.roi = roi
+        self.mode = mode
         self.config = config
         self.constraints = constraints
         self.createdAt = timestamp
@@ -42,15 +47,10 @@ public actor FrameBuffer {
     public func append(unit: InferenceUnit, context: InferenceContext) {
         buffer.append((unit, context))
         
-        // Overflow protection:
-        // Use the strategy's max limit + safety margin (e.g. 2x)
-        // Note: We currently assume 'stream' mode limits for general overflow protection 
-        // to prevent OOM in long running sessions.
-        let maxLimit = constraints.streamMax * 2
+        let maxLimit = constraints.maxToSend(mode: self.mode)
         
         if buffer.count > maxLimit {
             let dropCount = buffer.count - maxLimit
-            // NEVER drop below nInputs, or we break LSTM continuity
             let safeDrop = min(dropCount, buffer.count - config.nInputs)
             
             if safeDrop > 0 {
@@ -60,11 +60,15 @@ public actor FrameBuffer {
     }
     
     /// Checks if the buffer contains enough frames to be processed.
-    public func isReady(hasState: Bool, mode: InferenceMode) -> Bool {
-        let threshold = constraints.threshold(mode: mode, hasState: hasState)
-        
-        let requiredCount = max(config.nInputs, threshold)
-        return buffer.count >= requiredCount
+    public func isReady(hasState: Bool) -> Bool {
+        let threshold = constraints.minToSend(hasState: hasState)
+        return buffer.count >= threshold
+    }
+
+    /// Checks if the buffer contains enough frames for optimal processing.
+    public func isOptimal(hasState: Bool, mode: InferenceMode) -> Bool {
+        let threshold = constraints.optimalToSend(mode: mode, hasState: hasState)
+        return buffer.count >= threshold
     }
     
     /// Consumes the buffer for inference while retaining necessary context frames.

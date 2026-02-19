@@ -59,7 +59,7 @@ extension Data {
 // MARK: - Remote Inference
 
 /// Actor responsible for handling all network communication with the VitalLens API.
-public actor APIInference {
+public actor APIInference: InferenceStrategy {
     
     private let apiKey: String?
     private let proxyURL: URL?
@@ -67,9 +67,9 @@ public actor APIInference {
     private let environment: [String: String]
 
     private static let productionBaseURL = URL(string: "https://api.rouast.com/vitallens-v3")!
-    
-    // TODO: What is this. Maybe remove
-    nonisolated(unsafe) private var cachedNInputs: Int = 4
+
+    // Cache the config once resolved
+    private var config: ModelConfig?
     
     public init(
         apiKey: String? = nil, 
@@ -98,7 +98,7 @@ public actor APIInference {
     }
     
     // MARK: - Configuration
-    
+
     /// Contacts the API to determine the optimal configuration (FPS, Input Size) for the current user plan.
     public func resolveModel(requestedModel: String?) async throws -> ResolveModelResponse {
         var url = baseURL.appendingPathComponent("resolve-model")
@@ -113,9 +113,7 @@ public actor APIInference {
         request.httpMethod = "GET"
         addAuthHeaders(to: &request)
         
-        let response: ResolveModelResponse = try await perform(request: request)
-        self.cachedNInputs = response.config.nInputs
-        return response
+        return try await perform(request: request)
     }
     
     // MARK: - Streaming Endpoint
@@ -210,71 +208,24 @@ public actor APIInference {
 
         return result
     }
-    
-    // MARK: - Private Helpers
-    
-    private func addAuthHeaders(to request: inout URLRequest) {
-        // Only send API Key if NOT using a proxy (security best practice)
-        if proxyURL == nil, let key = apiKey {
-            request.setValue(key, forHTTPHeaderField: "X-Api-Key")
-        }
-    }
-    
-    private func perform<T: Decodable>(request: URLRequest) async throws -> T {
-        do {
-            let (data, response) = try await session.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw VitalLensError.networkError(URLError(.badServerResponse))
-            }
-            
-            switch httpResponse.statusCode {
-            case 200...299:
-                break
-            case 401, 403:
-                throw VitalLensError.invalidAPIKey
-            case 429:
-                throw VitalLensError.quotaExceeded
-            case 400...499:
-                let msg = try? JSONDecoder().decode(APIErrorResponse.self, from: data).message
-                throw VitalLensError.clientError(statusCode: httpResponse.statusCode, message: msg)
-            case 500...599:
-                throw VitalLensError.serverError(statusCode: httpResponse.statusCode, message: nil)
-            default:
-                throw VitalLensError.networkError(URLError(.badServerResponse))
-            }
-            
-            return try JSONDecoder().decode(T.self, from: data)
-            
-        } catch let error as VitalLensError {
-            throw error
-        } catch {
-            throw VitalLensError.networkError(error)
-        }
-    }
-}
 
-// MARK: - InferenceStrategy Conformance
-
-extension APIInference: InferenceStrategy {
-
-    // TODO: Both should supply the min and max.
-    public nonisolated var batchConstraints: BatchConstraints {
-        return BatchConstraints(
-            streamMinNoState: 16,
-            streamMinWithState: self.cachedNInputs,
-            streamMax: 150,
-            fileMinNoState: 16,
-            fileMinWithState: self.cachedNInputs,
-            fileMax: 900
-        )
-    }
+    // MARK: InferenceStrategy Conformance
     
     public func resolveConfig() async throws -> ModelConfig {
         let response = try await self.resolveModel(requestedModel: nil)
+        self.config = response.config
         return response.config
     }
-    
+
+    public var batchConstraints: BatchConstraints {
+        get throws {
+            guard let config = config else {
+                throw VitalLensError.processingError("Attempted to access constraints before resolving model config.")
+            }
+            return BatchConstraints(for: config)
+        }
+    }
+
     public func infer(
         window: [(InferenceUnit, InferenceContext)],
         state: (any InferenceState)?,
@@ -326,5 +277,46 @@ extension APIInference: InferenceStrategy {
         )
         
         return (cleanResult, nextState)
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func addAuthHeaders(to request: inout URLRequest) {
+        if let key = apiKey {
+            request.setValue(key, forHTTPHeaderField: "X-Api-Key")
+        }
+    }
+    
+    private func perform<T: Decodable>(request: URLRequest) async throws -> T {
+        do {
+            let (data, response) = try await session.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw VitalLensError.networkError(URLError(.badServerResponse))
+            }
+            
+            switch httpResponse.statusCode {
+            case 200...299:
+                break
+            case 401, 403:
+                throw VitalLensError.invalidAPIKey
+            case 429:
+                throw VitalLensError.quotaExceeded
+            case 400...499:
+                let msg = try? JSONDecoder().decode(APIErrorResponse.self, from: data).message
+                throw VitalLensError.clientError(statusCode: httpResponse.statusCode, message: msg)
+            case 500...599:
+                throw VitalLensError.serverError(statusCode: httpResponse.statusCode, message: nil)
+            default:
+                throw VitalLensError.networkError(URLError(.badServerResponse))
+            }
+            
+            return try JSONDecoder().decode(T.self, from: data)
+            
+        } catch let error as VitalLensError {
+            throw error
+        } catch {
+            throw VitalLensError.networkError(error)
+        }
     }
 }

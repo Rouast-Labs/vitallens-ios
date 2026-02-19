@@ -1,6 +1,6 @@
 import Foundation
 import CoreGraphics
-import VitalLensCore
+import VitalLensInference
 
 #if canImport(UIKit)
 import UIKit

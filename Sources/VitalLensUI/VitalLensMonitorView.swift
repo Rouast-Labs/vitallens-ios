@@ -1,6 +1,6 @@
 import SwiftUI
 import VitalLens
-import VitalLensCore
+import VitalLensInference
 #if canImport(UIKit)
 
 public struct VitalLensMonitorView: View {

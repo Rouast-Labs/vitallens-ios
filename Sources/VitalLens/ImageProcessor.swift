@@ -2,7 +2,7 @@ import Foundation
 import ImageIO
 import CoreVideo
 @preconcurrency import Accelerate
-import VitalLensCore
+import VitalLensInference
 
 /// A high-performance image processor using the Accelerate framework (vImage).
 /// It handles cropping, scaling, and format conversion (YUV/BGRA -> RGB) efficiently.

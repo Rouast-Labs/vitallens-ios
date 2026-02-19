@@ -36,7 +36,7 @@ You can build the library using the command line or Xcode.
 swift build
 
 # Build specific target (e.g. Core logic)
-swift build --target VitalLensCore
+swift build --target VitalLensInference
 ```
 
 ### Xcode
@@ -49,7 +49,7 @@ Simply select the `vitallens-ios` scheme and hit **Cmd + B**.
 
 The test suite is split into logic tests (Core) and integration tests.
 
-### VitalLensCore Tests (Logic)
+### VitalLensInference Tests (Logic)
 
 These tests cover the signal processing, math, and buffering logic. They **do not** require a simulator and run natively on macOS.
 
@@ -79,8 +79,8 @@ This repository is split into three distinct modules to ensure separation of con
 
 | Module | Description | Dependencies |
 | --- | --- | --- |
-| **`VitalLensCore`** | **The Brain.** Pure logic, math (`Accelerate`), data structures, and the `InferenceStrategy` protocol. Runs on macOS/iOS. | None |
-| **`VitalLens`** | **The Client.** Handles `AVCaptureSession`, Face Detection (Vision), and the `StreamProcessor` actor. Wires the Strategy to the Camera. | `VitalLensCore` |
+| **`VitalLensInference`** | **The Brain.** Pure logic, math (`Accelerate`), data structures, and the `InferenceStrategy` protocol. Runs on macOS/iOS. | None |
+| **`VitalLens`** | **The Client.** Handles `AVCaptureSession`, Face Detection (Vision), and the `StreamProcessor` actor. Wires the Strategy to the Camera. | `VitalLensInference` |
 | **`VitalLensUI`** | **The Views.** SwiftUI components (`ScanView`, `MonitorView`) and Charts. | `VitalLens` |
 
 ### Key Design Patterns
