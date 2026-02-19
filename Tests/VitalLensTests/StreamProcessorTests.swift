@@ -27,11 +27,12 @@ actor MockROIStrategy: ROIStrategy {
 actor MockInferenceStrategy: InferenceStrategy {
     var inferCallCount = 0
     var lastReceivedState: (any InferenceState)?
+    var stateHistory: [(any InferenceState)?] = [] // 1. Track all states
     private var shouldFail = false
     
     func resolveConfig() async throws -> ModelConfig {
         return ModelConfig(
-            nInputs: 4,
+            nInputs: 2,
             inputSize: 40,
             fpsTarget: 30,
             roiMethod: "face",
@@ -40,11 +41,15 @@ actor MockInferenceStrategy: InferenceStrategy {
     }
     
     nonisolated var batchConstraints: BatchConstraints {
-        return BatchConstraints(minNoState: 16, minWithState: 4, streamMax: 10)
+        return BatchConstraints(minNoState: 4, minWithState: 2, streamMax: 10)
     }
     
     func setShouldFail(_ fail: Bool) {
         self.shouldFail = fail
+    }
+    
+    func clearHistory() {
+        self.stateHistory.removeAll()
     }
     
     func infer(
@@ -55,6 +60,7 @@ actor MockInferenceStrategy: InferenceStrategy {
     ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
         
         self.lastReceivedState = state
+        self.stateHistory.append(state) // 2. Record it
         self.inferCallCount += 1
         
         if shouldFail {
@@ -214,52 +220,46 @@ final class StreamProcessorTests: XCTestCase {
     func testResilience_MaxRetries_ResetsState() async throws {
         await roiStrategy.setROIs([CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)])
         
-        // 1. Establish State (Success)
-        // Pump enough frames for at least one batch
+        // 1. Establish initial state
         for i in 0..<6 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
         }
-        // Wait for inference to run once
-        try await Task.sleep(nanoseconds: 200_000_000)
         
+        try await Task.sleep(nanoseconds: 200_000_000)
         let stateBefore = await strategy.lastReceivedState
         XCTAssertNotNil(stateBefore, "Should have established state")
         
-        // 2. Trigger Max Retries (Failure)
+        // 2. Trigger failures
         await strategy.setShouldFail(true)
-        
-        // We need to keep feeding the buffer so the loop has data to "fail" on multiple times.
-        // We pump frames slowly over a longer period to span across the backoff windows.
-        // Backoff: 0.1s -> 0.2s -> 0.4s. Total ~0.7s to hit 3 failures.
-        
         for i in 10..<60 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
-            // Sleep 25ms between frames = 50 frames * 25ms = 1.25s total duration.
-            // This ensures the loop is kept alive and retrying well past the 0.7s mark.
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         
-        // 3. Verify Reset
-        // At this point, the processor should have hit 3 failures and called reset().
+        // Wait for the final error to propagate and trigger the internal reset
+        try await Task.sleep(nanoseconds: 200_000_000)
         
-        // Enable success again
+        // 3. Recover and clear history so we only record new inferences
         await strategy.setShouldFail(false)
+        await strategy.clearHistory()
         
-        // Pump fresh frames (Needs 4 for new batch)
+        // 4. Send new valid frames
         for i in 100..<110 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
         }
         
-        // Wait for the successful inference
         try await Task.sleep(nanoseconds: 200_000_000)
         
-        let stateAfter = await strategy.lastReceivedState
+        let history = await strategy.stateHistory
         
-        // If reset happened, the state passed to this new successful inference MUST be nil.
-        XCTAssertNil(stateAfter, "State should be nil after max retries triggered a reset. Got: \(String(describing: stateAfter))")
+        // Assert the FIRST inference after the reset had a nil state
+        XCTAssertFalse(history.isEmpty, "Should have performed at least one successful inference after recovery")
+        if !history.isEmpty {
+            XCTAssertNil(history[0], "The FIRST inference after max retries MUST have a nil state due to the internal reset.")
+        }
     }
     
     // MARK: - New Coverage

@@ -24,10 +24,15 @@ public final class FrameBuffer {
         let take = Int(command.takeCount)
         let keep = Int(command.keepCount)
         
-        guard buffer.count >= take else { return nil }
+        // Prevent empty takes from crashing
+        guard take > 0, buffer.count >= take else { return nil }
         
         let payload = Array(buffer.prefix(take))
-        buffer.removeFirst(take - keep)  
+        
+        // Safety clamp: Never try to remove a negative amount of elements
+        let elementsToRemove = max(0, take - keep)
+        buffer.removeFirst(elementsToRemove)
+        
         return payload
     }
 }

@@ -283,7 +283,7 @@ public actor APIInference: InferenceStrategy {
     // MARK: - Private Helpers
     
     private func addAuthHeaders(to request: inout URLRequest) {
-        if let key = apiKey {
+        if proxyURL == nil, let key = apiKey {
             request.setValue(key, forHTTPHeaderField: "X-Api-Key")
         }
     }

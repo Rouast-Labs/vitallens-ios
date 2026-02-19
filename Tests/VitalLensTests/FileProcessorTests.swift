@@ -111,16 +111,15 @@ final class FileProcessorTests: XCTestCase {
         var resolveConfigCalled: Bool { queue.sync { _resolveConfigCalled } }
         var inferCallCount: Int { queue.sync { _inferCallCount } }
         
-        var batchConstraints: BatchConstraints {
-            return BatchConstraints(
-                minNoState: 16, minWithState: 4, streamMax: 30, fileMax: 100
-            )
+        nonisolated var batchConstraints: BatchConstraints {
+            // minWithState (2) is now > overlap (1), allowing the buffer to consume frames!
+            return BatchConstraints(minNoState: 4, minWithState: 2, streamMax: 10) 
         }
         
         func resolveConfig() async throws -> ModelConfig {
             queue.sync { _resolveConfigCalled = true }
             return ModelConfig(
-                nInputs: 4,
+                nInputs: 2,
                 inputSize: 40,
                 fpsTarget: 30.0,
                 roiMethod: "face",
@@ -130,25 +129,34 @@ final class FileProcessorTests: XCTestCase {
         
         func infer(window: [(InferenceUnit, InferenceContext)], state: (any InferenceState)?, mode: InferenceMode, model: String?) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
             
-            let time: Double = queue.sync {
+            let count = window.count
+            var times: [Double] = []
+            var datas: [Float] = []
+            var confs: [Float] = []
+            
+            let startT: Double = queue.sync {
                 _inferCallCount += 1
                 let t = _currentTime
-                // Increment time by 1 frame (30fps) for the next call
-                _currentTime += (1.0 / 30.0)
+                _currentTime += (Double(count) / 30.0)
                 return t
             }
             
-            // Return a result with a unique, increasing timestamp.
-            // This allows VitalsEstimateManager to correctly stitch them together.
+            // Map the number of output samples to the size of the input window
+            for i in 0..<count {
+                times.append(startT + Double(i) / 30.0)
+                datas.append(72.0)
+                confs.append(1.0)
+            }
+            
             let result = VitalLensResult(
                 face: FaceData(coordinates: nil, confidence: nil, note: nil),
-                signals: ["heart_rate": TimeSeries(data: [72.0], confidence: [1.0], unit: "bpm", note: nil)],
-                time: [time],
+                signals: ["heart_rate": TimeSeries(data: datas, confidence: confs, unit: "bpm", note: nil)],
+                time: times,
                 fps: 30.0,
                 modelUsed: "mock",
                 state: nil,
                 message: nil,
-                sampleCount: 1
+                sampleCount: count
             )
             return (result, state)
         }

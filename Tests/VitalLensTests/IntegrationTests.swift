@@ -5,16 +5,13 @@ import VitalLensInference
 final class IntegrationTests: XCTestCase {
 
     func testProcessSampleVideo_EndToEnd() async throws {
-        // 1. Fail fast if the environment is not configured
         guard let baseURLString = ProcessInfo.processInfo.environment["VITALLENS_BASE_URL"],
               let url = URL(string: baseURLString) else {
-            XCTFail("❌ Skipped: VITALLENS_BASE_URL not set or invalid.")
-            return
+            throw XCTSkip("❌ Skipped: VITALLENS_BASE_URL not set or invalid.")
         }
         
         guard let apiKey = ProcessInfo.processInfo.environment["VITALLENS_API_KEY"] else {
-            XCTFail("❌ Skipped: VITALLENS_API_KEY not set.")
-            return
+            throw XCTSkip("❌ Skipped: VITALLENS_API_KEY not set.")
         }
 
         // 2. Locate the real video file

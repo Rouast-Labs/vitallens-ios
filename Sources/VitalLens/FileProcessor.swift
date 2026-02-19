@@ -97,12 +97,9 @@ actor FileProcessor {
         strategy: any InferenceStrategy
     ) async throws -> VitalLensResult {
         
-        // Reset source to read from start
         let source = try await FileSource.from(url: url)
         let nominalFPS = Double(source.nominalFrameRate)
         
-        // Use a local FrameBuffer instance.
-        // We don't need BufferManager here because we aren't handling drift/multiple faces.
         let buffer = FrameBuffer(roi: roi, mode: .file, config: config)
         let session = VitalLensCore.Session(config: config.toSessionConfig())
         
@@ -110,7 +107,6 @@ actor FileProcessor {
         var totalFramesProcessed = 0
         
         for await frame in source.frames() {
-            // Timestamp is frame index / fps
             let timestamp = Double(totalFramesProcessed) / nominalFPS
             
             let context = InferenceContext(
@@ -120,9 +116,6 @@ actor FileProcessor {
                 roi: roi
             )
             
-            // Transform: Crop/Scale/Convert to RGB Data
-            // In the future, this could use a FrameTransformer if we needed local inference on files.
-            // For now, we assume API behavior (RGB Data).
             if let bytes = try? processor.process(
                 pixelBuffer: frame.buffer,
                 roi: roi,
@@ -132,11 +125,15 @@ actor FileProcessor {
             }
             
             totalFramesProcessed += 1
-            
             print("framesProcessed: \(totalFramesProcessed)")
 
-            if buffer.count >= constraints.fileMax {
-                let command = InferenceCommand(bufferId: "file", takeCount: UInt32(constraints.fileMax), keepCount: UInt32(max(0, config.nInputs - 1)))
+            // 1. SAFETY CLAMP: Only batch if fileMax > 0, and ensure keep <= take
+            if constraints.fileMax > 0 && buffer.count >= constraints.fileMax {
+                let take = UInt32(constraints.fileMax)
+                let keep = min(take, UInt32(max(0, config.nInputs - 1)))
+                
+                let command = InferenceCommand(bufferId: "file", takeCount: take, keepCount: keep)
+                
                 if let window = buffer.execute(command: command) {
                     let (result, newState) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
                     currentState = newState
@@ -146,7 +143,8 @@ actor FileProcessor {
         }
         
         var finalMessage: String?
-        var finalModelUsed: String?
+        var finalModelUsed: String? // 2. METADATA FIX: Track model used
+        
         if buffer.count >= config.nInputs {
             let command = InferenceCommand(bufferId: "file", takeCount: UInt32(buffer.count), keepCount: 0)
             if let window = buffer.execute(command: command) {
@@ -157,14 +155,10 @@ actor FileProcessor {
             }
         }
         
-        // Pass empty global chunk to trigger full history derivation
         let emptyChunk = InputChunk(timestamp: [], signals: [:], confidences: [:], face: nil)
         let globalResult = session.processChunk(chunk: emptyChunk, mode: .global)
         
-        return globalResult.toVitalLensResult(
-            originalState: nil,
-            message: finalMessage,
-            modelUsed: finalModelUsed
-        )
+        // 3. METADATA FIX: Pass modelUsed to the final result mapping
+        return globalResult.toVitalLensResult(originalState: nil, message: finalMessage, modelUsed: finalModelUsed)
     }
 }
