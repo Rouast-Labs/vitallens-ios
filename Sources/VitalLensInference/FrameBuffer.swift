@@ -12,6 +12,8 @@ public final class FrameBuffer {
 
     private let config: ModelConfig
     private var buffer: [(unit: InferenceUnit, context: InferenceContext)] = []
+
+    private let maxCapacity: Int
     
     public init(id: String, roi: CGRect, mode: InferenceMode, config: ModelConfig, timestamp: TimeInterval) {
         self.id = id
@@ -20,6 +22,7 @@ public final class FrameBuffer {
         self.config = config
         self.createdAt = timestamp
         self.lastSeen = timestamp
+        self.maxCapacity = mode == .file ? 1000 : max(150, Int(config.fpsTarget * 10))
     }
     
     public var count: Int { buffer.count }
@@ -27,6 +30,11 @@ public final class FrameBuffer {
     public func append(unit: InferenceUnit, context: InferenceContext) {
         buffer.append((unit, context))
         self.lastSeen = context.timestamp
+        
+        if buffer.count > maxCapacity {
+            let overflow = buffer.count - maxCapacity
+            buffer.removeFirst(overflow)
+        }
     }
     
     public func execute(command: InferenceCommand) -> [(unit: InferenceUnit, context: InferenceContext)]? {
