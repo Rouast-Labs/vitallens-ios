@@ -146,14 +146,11 @@ final class FrameBufferTests: XCTestCase {
         XCTAssertEqual(buffer.count, 0)
     }
 
-    // Helper from your old tests to track specific frames
     private func makeTrackedFrame(index: Int) -> (InferenceUnit, InferenceContext) {
         var data = Data(repeating: 0, count: 10)
         data[0] = UInt8(index % 255) // Store index in first byte
         return (.rgbData(data), createDummyContext(time: Double(index)))
     }
-
-    // MARK: - Restored Exhaustive Tests
     
     func testExecute_MaintainsCorrectDataAndOverlap() {
         let buffer = FrameBuffer(id: "buf", roi: .zero, mode: .stream, config: createConfig(), timestamp: 0)
