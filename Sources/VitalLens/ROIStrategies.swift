@@ -5,19 +5,19 @@ import VitalLensInference
 
 /// A strategy that determines which regions of the video frame should be processed.
 public protocol ROIStrategy: Sendable {
-    /// Determines the Regions of Interest for the current frame.
+    /// Determines the single Region of Interest for the current frame.
     /// This method is called on every frame and must remain fast/non-blocking.
     ///
     /// - Parameters:
     ///   - buffer: The current video frame.
     ///   - orientation: The orientation of the frame.
-    /// - Returns: A list of ROIs (normalized 0.0-1.0) to process.
-    func determineROIs(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect]
+    /// - Returns: A single ROI (normalized 0.0-1.0) to process, or nil.
+    func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect?
 }
 
 // MARK: - Face Detection Strategy (Default)
 
-/// Uses a FaceDetector to track faces and return their ROIs.
+/// Uses a FaceDetector to track faces and return their ROI.
 /// It throttles the expensive Vision detection calls internally and returns the last known stable ROI in between.
 public actor FaceROIStrategy: ROIStrategy {
     
@@ -25,8 +25,8 @@ public actor FaceROIStrategy: ROIStrategy {
     private let detectionInterval: TimeInterval
     private var lastDetectionTime: Date = .distantPast
     
-    // We cache the last known ROIs to return instantly between detections
-    private var currentROIs: [CGRect] = []
+    // We cache the last known ROI to return instantly between detections
+    private var currentROI: CGRect? = nil
     
     // Track if a detection is currently running to avoid queue pile-up
     private var isDetecting: Bool = false
@@ -36,7 +36,7 @@ public actor FaceROIStrategy: ROIStrategy {
         self.detectionInterval = interval
     }
     
-    public func determineROIs(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect] {
+    public func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
         let now = Date()
         
         // Check if we should run a new detection
@@ -45,30 +45,24 @@ public actor FaceROIStrategy: ROIStrategy {
             
             // Start detection detached so we don't block the current frame return
             Task {
-                let rois = await performDetection(in: buffer, orientation: orientation)
-                self.updateROIs(rois, time: now)
+                let roi = await performDetection(in: buffer, orientation: orientation)
+                self.updateROI(roi, time: now)
             }
         }
         
-        return currentROIs
+        return currentROI
     }
     
-    private func performDetection(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect] {
-        // We currently only support single face tracking for the API
+    private func performDetection(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
         if let rect = try? await detector.detectFace(in: buffer, orientation: orientation) {
-            // Apply smoothing or ROI calculation here if needed
-            // For now, we return the raw normalized face rect. 
-            // The BufferManager will handle ROI expansion via ModelConfig.
-            return [rect]
+            return rect
         }
-        return []
+        return nil
     }
     
-    private func updateROIs(_ rois: [CGRect], time: Date) {
-        // Only update if we found something (or maybe we want to clear it if lost?)
-        // For stability, let's keep the last known face if detection fails briefly.
-        if !rois.isEmpty {
-            self.currentROIs = rois
+    private func updateROI(_ roi: CGRect?, time: Date) {
+        if let roi = roi {
+            self.currentROI = roi
         }
         self.lastDetectionTime = time
         self.isDetecting = false

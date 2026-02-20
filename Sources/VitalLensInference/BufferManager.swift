@@ -25,28 +25,25 @@ public actor BufferManager {
         self.bufferPlanner = BufferPlanner(config: rustConfig)
     }
     
-    public func updateAndGetActiveROIs(targets: [CGRect], config: ModelConfig) -> [ActiveBufferROI] {
-        guard let planner = bufferPlanner else { return [] }
+    public func registerTarget(_ target: CGRect?, config: ModelConfig) {
+        guard let planner = bufferPlanner, let target = target else { return }
         let now = Date().timeIntervalSince1970
-        var active: [ActiveBufferROI] = []
         
-        for target in targets {
-            let action = planner.registerRoi(targetRoi: target.toRustRect(), timestamp: now)
-            let id = action.id
-            
-            switch action.action {
-            case .create:
-                let rect = action.roi != nil ? CGRect(x: CGFloat(action.roi!.x), y: CGFloat(action.roi!.y), width: CGFloat(action.roi!.width), height: CGFloat(action.roi!.height)) : target
-                let newBuffer = FrameBuffer(roi: rect, mode: .stream, config: config)
-                buffers[id] = newBuffer
-                active.append(ActiveBufferROI(id: id, roi: rect))
-            case .keepAlive:
-                if let buf = buffers[id] { active.append(ActiveBufferROI(id: id, roi: buf.roi)) }
-            case .ignore:
-                break
-            }
+        let action = planner.registerRoi(targetRoi: target.toRustRect(), timestamp: now)
+        let id = action.id
+
+        switch action.action {
+        case .create:
+            let rect = action.roi != nil ? CGRect(x: CGFloat(action.roi!.x), y: CGFloat(action.roi!.y), width: CGFloat(action.roi!.width), height: CGFloat(action.roi!.height)) : target
+            let newBuffer = FrameBuffer(roi: rect, mode: .stream, config: config)
+            buffers[id] = newBuffer
+        case .keepAlive, .ignore:
+            break
         }
-        return active
+    }
+
+    public func getAllBuffers() -> [ManagedBufferInfo] {
+        return buffers.map { ManagedBufferInfo(id: $0.key, roi: $0.value.roi) }
     }
     
     public func append(bufferId: String, unit: InferenceUnit, context: InferenceContext) {

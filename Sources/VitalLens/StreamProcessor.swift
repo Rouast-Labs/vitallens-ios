@@ -157,14 +157,15 @@ actor StreamProcessor {
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
 
-        let targets = await roiStrategy.determineROIs(in: frame.buffer, orientation: frame.orientation)
-        let activeROIs = await bufferManager.updateAndGetActiveROIs(targets: targets, config: config)
+        let target = await roiStrategy.determineROI(in: frame.buffer, orientation: frame.orientation)
+        await bufferManager.registerTarget(target, config: config)
         
-        if activeROIs.isEmpty { return }
+        let allBuffers = await bufferManager.getAllBuffers()
+        if allBuffers.isEmpty { return }
+
         let cvBuffer = frame.buffer.buffer
         
-        // Transform & Append
-        for item in activeROIs {
+        for item in allBuffers {
             do {
                 let unit = try transformer(cvBuffer, item.roi, config)
 
@@ -177,7 +178,7 @@ actor StreamProcessor {
                 
                 await bufferManager.append(bufferId: item.id, unit: unit, context: context)
             } catch {
-                print("[StreamProcessor] Transform failed: \(error)")
+                print("[StreamProcessor] Transform failed for buffer \(item.id): \(error)")
             }
         }
         
