@@ -110,10 +110,9 @@ final class FileProcessorTests: XCTestCase {
         
         var resolveConfigCalled: Bool { queue.sync { _resolveConfigCalled } }
         var inferCallCount: Int { queue.sync { _inferCallCount } }
-        
-        nonisolated var batchConstraints: BatchConstraints {
-            // minWithState (2) is now > overlap (1), allowing the buffer to consume frames!
-            return BatchConstraints(minNoState: 4, minWithState: 2, streamMax: 10) 
+
+        nonisolated var bufferConfig: BufferConfig {
+            return BufferConfig(minNoState: 4, minWithState: 2, streamMax: 10, fileMax: 10, overlap: 1)
         }
         
         func resolveConfig() async throws -> ModelConfig {

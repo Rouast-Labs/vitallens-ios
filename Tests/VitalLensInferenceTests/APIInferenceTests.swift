@@ -188,8 +188,8 @@ final class APIInferenceTests: XCTestCase {
         
         XCTAssertEqual(config.nInputs, 4)
         XCTAssertEqual(config.inputSize, 40)
-        let constraints = try await strategy.batchConstraints
-        XCTAssertGreaterThan(constraints.streamMax, 0)
+        let bufConfig = try await strategy.bufferConfig
+        XCTAssertGreaterThan(bufConfig.streamMax, 0)
     }
     
     // MARK: - Logic: Streaming (Compression & Headers)

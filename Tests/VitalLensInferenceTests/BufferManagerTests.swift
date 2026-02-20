@@ -5,16 +5,24 @@ import VitalLensCore
 
 final class BufferManagerTests: XCTestCase {
     
+    // MARK: - Mocks & Helpers
+    
     struct MockState: InferenceState, Equatable {
         let id: String
     }
     
     private func createConfig() -> ModelConfig {
-        return ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30.0, roiMethod: "face", supportedVitals: ["heart_rate"])
+        return ModelConfig(
+            nInputs: 4,
+            inputSize: 40,
+            fpsTarget: 30.0,
+            roiMethod: "face",
+            supportedVitals: ["heart_rate"]
+        )
     }
     
-    private func createConstraints() -> BatchConstraints {
-        return BatchConstraints(minNoState: 10, minWithState: 4, streamMax: 30, fileMax: 100)
+    private func createBufferConfig() -> BufferConfig {
+        return BufferConfig(minNoState: 10, minWithState: 4, streamMax: 30, fileMax: 100, overlap: 3)
     }
     
     private func createDummyUnit() -> InferenceUnit {
@@ -25,17 +33,24 @@ final class BufferManagerTests: XCTestCase {
         return InferenceContext(timestamp: time)
     }
     
+    // MARK: - Initialization
+    
     func testInitialize_SetsUpPlanner() async {
         let manager = BufferManager()
-        await manager.initialize(config: createConfig(), constraints: createConstraints())
+        // Updated: Pass the bufferConfig
+        await manager.initialize(bufferConfig: createBufferConfig())
+        
         let cmd = await manager.poll(mode: .stream)
-        XCTAssertNil(cmd)
+        XCTAssertNil(cmd, "Manager should be initialized but empty")
     }
+    
+    // MARK: - ROI Management
     
     func testRegisterTarget_NewTarget() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         let rect = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
         await manager.registerTarget(rect, timestamp: 1.0, config: config)
@@ -49,7 +64,8 @@ final class BufferManagerTests: XCTestCase {
     func testRegisterTarget_ExistingTarget() async throws {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         let rect1 = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
         await manager.registerTarget(rect1, timestamp: 1.0, config: config)
@@ -64,16 +80,18 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertEqual(active1[0].id, active2[0].id, "Should reuse the same buffer ID for overlapping ROIs")
     }
     
+    // MARK: - Data Appending
+    
     func testAppend_ToExistingBuffer() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         await manager.registerTarget(CGRect.zero, timestamp: 1.0, config: config)
         let active = await manager.getAllBuffers()
         let id = active[0].id
         
-        // Append 10 frames to satisfy `minNoState` requirements
         for i in 0..<10 {
             await manager.append(bufferId: id, unit: createDummyUnit(), context: createDummyContext(time: 1.0 + Double(i)))
         }
@@ -85,7 +103,8 @@ final class BufferManagerTests: XCTestCase {
     
     func testAppend_ToInvalidBuffer() async {
         let manager = BufferManager()
-        await manager.initialize(config: createConfig(), constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         await manager.append(bufferId: "ghost_id_123", unit: createDummyUnit(), context: createDummyContext(time: 1.0))
         
@@ -93,10 +112,13 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertNil(cmd)
     }
     
+    // MARK: - Polling
+    
     func testPoll_InsufficientFrames() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints()) // minNoState is 10
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig()) // minNoState is 10
         
         await manager.registerTarget(CGRect.zero, timestamp: 1.0, config: config)
         let active = await manager.getAllBuffers()
@@ -113,7 +135,8 @@ final class BufferManagerTests: XCTestCase {
     func testPoll_SufficientFrames() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints()) // minNoState is 10
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig()) // minNoState is 10
         
         await manager.registerTarget(CGRect.zero, timestamp: 1.0, config: config)
         let active = await manager.getAllBuffers()
@@ -132,7 +155,8 @@ final class BufferManagerTests: XCTestCase {
     func testPoll_DropsStaleBuffers() async throws {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         // Create first ROI at t=1.0
         await manager.registerTarget(CGRect(x: 0.1, y: 0.1, width: 0.1, height: 0.1), timestamp: 1.0, config: config)
@@ -156,10 +180,13 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertNil(executed, "Buffer id1 should have been dropped")
     }
     
+    // MARK: - Command Execution
+    
     func testExecute_ValidCommand() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         await manager.registerTarget(CGRect.zero, timestamp: 1.0, config: config)
         let id = await manager.getAllBuffers()[0].id
@@ -179,10 +206,13 @@ final class BufferManagerTests: XCTestCase {
         XCTAssertEqual(payload2?.count, 5, "Buffer should have exactly 5 elements left")
     }
     
+    // MARK: - State Management & Reset
+    
     func testReset_ClearsEverything() async {
         let manager = BufferManager()
         let config = createConfig()
-        await manager.initialize(config: config, constraints: createConstraints())
+        // Updated
+        await manager.initialize(bufferConfig: createBufferConfig())
         
         await manager.registerTarget(CGRect.zero, timestamp: 1.0, config: config)
         let id = await manager.getAllBuffers()[0].id

@@ -92,3 +92,4 @@ extension VitalLensCore.InferenceMode: @unchecked Sendable {}
 extension VitalLensCore.Rect: @unchecked Sendable {}
 extension VitalLensCore.SessionConfig: @unchecked Sendable {}
 extension VitalLensCore.InputChunk: @unchecked Sendable {}
+extension VitalLensCore.BufferConfig: @unchecked Sendable {}

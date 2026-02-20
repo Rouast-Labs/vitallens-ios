@@ -77,9 +77,9 @@ actor StreamProcessor {
         
         // 1. Prepare Config
         self.config = try await strategy.resolveConfig()
-        let constraints = try await strategy.batchConstraints
+        let bufConfig = try await strategy.bufferConfig
 
-        await bufferManager.initialize(config: self.config!, constraints: constraints)
+        await bufferManager.initialize(bufferConfig: bufConfig)
         self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
         
         self.isPaused = false

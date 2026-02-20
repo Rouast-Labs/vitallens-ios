@@ -218,12 +218,13 @@ public actor APIInference: InferenceStrategy {
         return response.config
     }
 
-    public var batchConstraints: BatchConstraints {
+    public var bufferConfig: VitalLensCore.BufferConfig {
         get throws {
             guard let config = config else {
-                throw VitalLensError.processingError("Attempted to access constraints before resolving model config.")
+                throw VitalLensError.processingError("Attempted to access config before resolving.")
             }
-            return BatchConstraints(for: config)
+            // Ask Rust to compute the optimal limits based on the API configuration!
+            return VitalLensCore.computeBufferConfig(config: config.toSessionConfig())
         }
     }
 

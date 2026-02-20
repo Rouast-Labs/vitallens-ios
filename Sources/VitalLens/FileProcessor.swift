@@ -21,9 +21,9 @@ actor FileProcessor {
     
     /// Execute the full processing pipeline.
     func process(strategy: any InferenceStrategy, globalROI: CGRect? = nil) async throws -> VitalLensResult {
-        // 1. Resolve Config & Constraints
+        // 1. Resolve Configs
         let config = try await strategy.resolveConfig()
-        let constraints = try await strategy.batchConstraints
+        let bufConfig = try await strategy.bufferConfig
         
         // 2. Establish ROI (Pass 1)
         let finalROI: CGRect
@@ -40,7 +40,7 @@ actor FileProcessor {
         return try await performInferencePass(
             roi: finalROI,
             config: config,
-            constraints: constraints,
+            bufConfig: bufConfig,
             strategy: strategy
         )
     }
@@ -93,7 +93,7 @@ actor FileProcessor {
     private func performInferencePass(
         roi: CGRect,
         config: ModelConfig,
-        constraints: BatchConstraints,
+        bufConfig: VitalLensCore.BufferConfig,
         strategy: any InferenceStrategy
     ) async throws -> VitalLensResult {
         
@@ -128,9 +128,9 @@ actor FileProcessor {
             print("framesProcessed: \(totalFramesProcessed)")
 
             // 1. SAFETY CLAMP: Only batch if fileMax > 0, and ensure keep <= take
-            if constraints.fileMax > 0 && buffer.count >= constraints.fileMax {
-                let take = UInt32(constraints.fileMax)
-                let keep = min(take, UInt32(max(0, config.nInputs - 1)))
+            if bufConfig.fileMax > 0 && buffer.count >= bufConfig.fileMax {
+                let take = UInt32(bufConfig.fileMax)
+                let keep = bufConfig.overlap
                 
                 let command = InferenceCommand(bufferId: "file", takeCount: take, keepCount: keep)
                 

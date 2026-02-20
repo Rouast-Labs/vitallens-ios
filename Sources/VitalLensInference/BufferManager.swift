@@ -17,16 +17,9 @@ public actor BufferManager {
     private var currentTimestamp: TimeInterval = 0.0
     
     public init() {}
-    
-    public func initialize(config: ModelConfig, constraints: BatchConstraints) {
-        let rustConfig = BufferConfig(
-            minNoState: UInt32(constraints.minToSend(hasState: false)),
-            minWithState: UInt32(constraints.minToSend(hasState: true)),
-            streamMax: UInt32(constraints.maxToSend(mode: .stream)),
-            fileMax: UInt32(constraints.maxToSend(mode: .file)),
-            overlap: UInt32(max(0, config.nInputs - 1))
-        )
-        self.bufferPlanner = BufferPlanner(config: rustConfig)
+
+    public func initialize(bufferConfig: BufferConfig) {
+        self.bufferPlanner = BufferPlanner(config: bufferConfig)
     }
     
     private func getActiveMetadata() -> [BufferMetadata] {

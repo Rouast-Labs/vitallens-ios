@@ -13,8 +13,8 @@ open class LocalInferenceBase: InferenceStrategy, @unchecked Sendable {
         self.config = config
     }
 
-    public var batchConstraints: BatchConstraints {
-        return BatchConstraints(for: config)
+    public var bufferConfig: VitalLensCore.BufferConfig {
+        return VitalLensCore.computeBufferConfig(config: config.toSessionConfig())
     }
 
     public func resolveConfig() async throws -> ModelConfig {

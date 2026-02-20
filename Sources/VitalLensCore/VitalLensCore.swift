@@ -2430,6 +2430,13 @@ public func calculateRoi(face: Rect, method: RoiMethod, containerWidth: Float?, 
     )
 })
 }
+public func computeBufferConfig(config: SessionConfig) -> BufferConfig {
+    return try!  FfiConverterTypeBufferConfig.lift(try! rustCall() {
+    uniffi_vitallens_core_fn_func_compute_buffer_config(
+        FfiConverterTypeSessionConfig.lower(config),$0
+    )
+})
+}
 public func computeIou(a: Rect, b: Rect) -> Float {
     return try!  FfiConverterFloat.lift(try! rustCall() {
     uniffi_vitallens_core_fn_func_compute_iou(
@@ -2464,6 +2471,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_vitallens_core_checksum_func_calculate_roi() != 41747) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vitallens_core_checksum_func_compute_buffer_config() != 60181) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_func_compute_iou() != 40748) {

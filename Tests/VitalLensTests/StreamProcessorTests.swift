@@ -40,8 +40,8 @@ actor MockInferenceStrategy: InferenceStrategy {
         )
     }
     
-    nonisolated var batchConstraints: BatchConstraints {
-        return BatchConstraints(minNoState: 4, minWithState: 2, streamMax: 10)
+    nonisolated var bufferConfig: BufferConfig {
+        return BufferConfig(minNoState: 4, minWithState: 2, streamMax: 10, fileMax: 10, overlap: 1)
     }
     
     func setShouldFail(_ fail: Bool) {

@@ -37,72 +37,13 @@ public struct InferenceContext: Sendable {
     }
 }
 
-/// Defines the buffering constraints for a specific strategy.
-public struct BatchConstraints: Sendable {
-    // Hardcoded infrastructure constants
-    private static let maxBase64BytesForFrames = 5_760_000
-    private static let maxStreamPolicyFrames = 150
-    private static let base64Overhead = 1.3333
-
-    private let minNoState: Int
-    private let minWithState: Int
-    public let streamMax: Int
-    public let fileMax: Int
-    
-    public init(for config: ModelConfig) {
-        // Determine minimums
-        self.minWithState = config.nInputs
-        self.minNoState = max(16, config.nInputs)
-        
-        // Calculate physical max based on payload constraints
-        let bytesPerFrame = config.inputSize * config.inputSize * 3
-        let rawCapacityBytes = Double(Self.maxBase64BytesForFrames) / Self.base64Overhead
-        let calculatedMax = Int(floor(rawCapacityBytes / Double(bytesPerFrame)))
-        
-        // Assign Mode-specific maximums
-        self.fileMax = calculatedMax
-        self.streamMax = min(Self.maxStreamPolicyFrames, calculatedMax)
-    }
-
-    public init(minNoState: Int, minWithState: Int, streamMax: Int, fileMax: Int = 0) {
-        self.minNoState = minNoState
-        self.minWithState = minWithState
-        self.streamMax = streamMax
-        self.fileMax = fileMax
-    }
-    
-    public func minToSend(hasState: Bool) -> Int {
-        return hasState ? minWithState : minNoState
-    }
-
-    public func maxToSend(mode: InferenceMode) -> Int {
-        switch mode {
-        case .stream:
-            return streamMax
-        case .file:
-            return fileMax
-        }
-    }
-
-    public func optimalToSend(mode: InferenceMode, hasState: Bool) -> Int {
-        switch mode {
-        case .stream:
-            // Low latency: send as soon as valid
-            return hasState ? minWithState : minNoState
-        case .file:
-            // High throughput: wait until batch is full
-            return fileMax
-        }
-    }
-}
-
 public protocol InferenceState: Sendable {}
 
 /// Defines an abstract backend for estimating vital signs.
 public protocol InferenceStrategy: Sendable {
 
     /// Defines the buffering limits for this specific strategy.
-    var batchConstraints: BatchConstraints { get async throws }
+    var bufferConfig: VitalLensCore.BufferConfig { get async throws }
     
     /// Resolves the model configuration (input size, FPS, etc.) required by this strategy.
     func resolveConfig() async throws -> ModelConfig
