@@ -69,7 +69,7 @@ actor MockInferenceStrategy: InferenceStrategy {
         
         let result = VitalLensResult(
             face: FaceData(coordinates: nil, confidence: nil, note: nil),
-            vitals: ["heart_rate": ScalarResult(value: 72.0, confidence: 1.0, unit: "bpm")],
+            vitals: ["heart_rate": Vital(value: 72.0, confidence: 1.0, unit: "bpm")],
             waveforms: [:],
             time: [Date().timeIntervalSince1970],
             fps: 30.0,

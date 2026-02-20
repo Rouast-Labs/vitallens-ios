@@ -143,7 +143,7 @@ actor FileProcessor {
         }
         
         var finalMessage: String?
-        var finalModelUsed: String? // 2. METADATA FIX: Track model used
+        var finalModelUsed: String?
         
         if buffer.count >= config.nInputs {
             let command = InferenceCommand(bufferId: "file", takeCount: UInt32(buffer.count), keepCount: 0)

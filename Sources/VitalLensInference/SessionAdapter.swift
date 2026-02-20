@@ -48,9 +48,9 @@ public extension VitalLensResult {
 public extension SessionResult {
     func toVitalLensResult(originalState: StateData?, message: String?, modelUsed: String?) -> VitalLensResult {
         
-        var finalWaveforms: [String: TimeSeries] = [:]
+        var finalWaveforms: [String: Waveform] = [:]
         for (key, wave) in self.waveforms {
-            finalWaveforms[key] = TimeSeries(
+            finalWaveforms[key] = Waveform(
                 data: wave.data,
                 confidence: wave.confidence,
                 unit: wave.unit,
@@ -58,9 +58,9 @@ public extension SessionResult {
             )
         }
         
-        var finalVitals: [String: ScalarResult] = [:]
+        var finalVitals: [String: Vital] = [:]
         for (key, vital) in self.vitals {
-            finalVitals[key] = ScalarResult(
+            finalVitals[key] = Vital(
                 value: Double(vital.value),
                 confidence: Double(vital.confidence),
                 unit: vital.unit,

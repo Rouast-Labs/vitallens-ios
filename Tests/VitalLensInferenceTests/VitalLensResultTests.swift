@@ -134,7 +134,7 @@ final class VitalLensResultTests: XCTestCase {
     
     // func testScalarResultHelper() {
     //     // Case 1: Data exists
-    //     let series = TimeSeries(
+    //     let series = Waveform(
     //         data: [60, 61, 62],
     //         confidence: [0.9, 0.9, 0.95],
     //         unit: "bpm",
@@ -149,7 +149,7 @@ final class VitalLensResultTests: XCTestCase {
     //     XCTAssertEqual(scalar?.unit, "bpm")
         
     //     // Case 2: Empty Data
-    //     let emptySeries = TimeSeries(
+    //     let emptySeries = Waveform(
     //         data: [],
     //         confidence: [],
     //         unit: "bpm",
@@ -162,9 +162,9 @@ final class VitalLensResultTests: XCTestCase {
         let result = VitalLensResult(
             face: FaceData(coordinates: nil, confidence: nil, note: nil),
             vitals: [
-                "heart_rate": ScalarResult(value: 72.0, confidence: 1.0, unit: "bpm"),
-                "hrv_sdnn": ScalarResult(value: 50.0, confidence: 0.8, unit: "ms"),
-                "sbp": ScalarResult(value: 120.0, confidence: 0.9, unit: "mmHg")
+                "heart_rate": Vital(value: 72.0, confidence: 1.0, unit: "bpm"),
+                "hrv_sdnn": Vital(value: 50.0, confidence: 0.8, unit: "ms"),
+                "sbp": Vital(value: 120.0, confidence: 0.9, unit: "mmHg")
             ],
             waveforms: [:],
             time: [1.0]

@@ -86,7 +86,7 @@ This repository is split into three distinct modules to ensure separation of con
 ### Key Design Patterns
 
 - **InferenceStrategy:** The `StreamProcessor` in `VitalLens` does not know about the API. It talks to an `InferenceStrategy`. This allows us to swap the API for a local CoreML model later.
-- **Everything is an Array:** The `VitalLensResult` stores all data (heart rate, etc.) as `TimeSeries` arrays. We use `VitalRegistry` to decide how to derive scalar values (averaging vs FFT) from these arrays.
+- **Everything is an Array:** The `VitalLensResult` stores all data (heart rate, etc.) as `Waveform` arrays. We use `VitalRegistry` to decide how to derive scalar values (averaging vs FFT) from these arrays.
 
 ---
 

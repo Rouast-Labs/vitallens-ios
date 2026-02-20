@@ -36,18 +36,18 @@ The data structure returned by the API.
 | Property | Type | Description |
 | --- | --- | --- |
 | `face` | `FaceData` | Bounding boxes and confidence of detected faces. |
-| `heartRate` | `TimeSeries?` | Helper to access heart rate data. |
-| `ppgWaveform` | `TimeSeries?` | Helper to access the raw PPG signal. |
+| `heartRate` | `Vital?` | Helper to access heart rate data. |
+| `ppgWaveform` | `Waveform?` | Helper to access the raw PPG signal. |
 | `time` | `[Double]` | Timestamps for the data arrays. |
-| `signals` | `[String: TimeSeries]` | Raw dictionary of all returned signals. |
+| `vitals` | `[String: Vital]` | Raw dictionary of all returned signals. |
 
-### `TimeSeries`
+### `Waveform`
 
 Represents a signal over time.
 
 - `data: [Float]`: The raw values.
 - `confidence: [Float]`: Confidence (0-1) for each value.
-- `latest: ScalarResult?`: A helper returning the *last* value in the array (useful for UI).
+- `latest: Vital?`: A helper returning the *last* value in the array (useful for UI).
 
 ```swift
 // Example: Accessing the latest Heart Rate value

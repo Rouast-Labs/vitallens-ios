@@ -29,7 +29,7 @@ final class SessionAdapterTests: XCTestCase {
     }
     
     func testVitalLensResultToSessionInput_WithFace() {
-        let wave = TimeSeries(data: [1.0, 2.0], confidence: [0.5, 0.5], unit: "bpm", note: nil)
+        let wave = Waveform(data: [1.0, 2.0], confidence: [0.5, 0.5], unit: "bpm", note: nil)
         let face = FaceData(coordinates: [[0.5, 0.25, 0.75, 1.0], [0.5, 0.25, 0.75, 1.0]], confidence: [0.5, 0.5], note: "ok")
         let result = VitalLensResult(
             face: face,
@@ -50,7 +50,7 @@ final class SessionAdapterTests: XCTestCase {
     }
     
     func testVitalLensResultToSessionInput_WithoutFace() {
-        let wave = TimeSeries(data: [1.0], confidence: [0.8], unit: "bpm", note: nil)
+        let wave = Waveform(data: [1.0], confidence: [0.8], unit: "bpm", note: nil)
         let face = FaceData(coordinates: nil, confidence: nil, note: nil)
         let result = VitalLensResult(face: face, vitals: [:], waveforms: ["ppg": wave], time: [100.0])
         

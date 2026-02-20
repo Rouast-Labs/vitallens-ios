@@ -10,8 +10,8 @@ public protocol ResultAuxiliaryData: Sendable {}
 public struct VitalLensResult: Codable, Sendable {
     
     public let face: FaceData
-    public let vitals: [String: ScalarResult]
-    public let waveforms: [String: TimeSeries]
+    public let vitals: [String: Vital]
+    public let waveforms: [String: Waveform]
     public let time: [Double]
     public let fps: Double?
     public let modelUsed: String?
@@ -23,22 +23,22 @@ public struct VitalLensResult: Codable, Sendable {
 
     // MARK: - Convenience Accessors
     
-    public var ppg: TimeSeries? { waveforms["ppg_waveform"] } // TODO: Change key
-    public var resp: TimeSeries? { waveforms["respiratory_waveform"] } // TODO: Change key
+    public var ppg: Waveform? { waveforms["ppg_waveform"] } // TODO: Change key
+    public var resp: Waveform? { waveforms["respiratory_waveform"] } // TODO: Change key
     
-    public var heartRate: ScalarResult? { vitals["heart_rate"] }
-    public var respiratoryRate: ScalarResult? { vitals["respiratory_rate"] }
-    public var hrvSdnn: ScalarResult? { vitals["hrv_sdnn"] }
-    public var hrvRmssd: ScalarResult? { vitals["hrv_rmssd"] }
+    public var heartRate: Vital? { vitals["heart_rate"] }
+    public var respiratoryRate: Vital? { vitals["respiratory_rate"] }
+    public var hrvSdnn: Vital? { vitals["hrv_sdnn"] }
+    public var hrvRmssd: Vital? { vitals["hrv_rmssd"] }
     
-    public var sbp: ScalarResult? { vitals["sbp"] }
-    public var dbp: ScalarResult? { vitals["dbp"] }
-    public var spo2: ScalarResult? { vitals["spo2"] }
+    public var sbp: Vital? { vitals["sbp"] }
+    public var dbp: Vital? { vitals["dbp"] }
+    public var spo2: Vital? { vitals["spo2"] }
 
     public init(
         face: FaceData,
-        vitals: [String: ScalarResult],
-        waveforms: [String: TimeSeries],
+        vitals: [String: Vital],
+        waveforms: [String: Waveform],
         time: [Double],
         fps: Double? = nil,
         modelUsed: String? = nil,
@@ -90,22 +90,18 @@ public struct VitalLensResult: Codable, Sendable {
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
         
         if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
-            var tempWaveforms = [String: TimeSeries]()
-            var tempVitals = [String: ScalarResult]()
+            var tempWaveforms = [String: Waveform]()
+            var tempVitals = [String: Vital]()
             
             for key in vitalsContainer.allKeys {
-                if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
+                if let signal = try? vitalsContainer.decode(Waveform.self, forKey: key) {
                     tempWaveforms[key.stringValue] = signal
                 } 
-                else if let scalar = try? vitalsContainer.decode(ScalarResponse.self, forKey: key) {
-                    tempVitals[key.stringValue] = ScalarResult(
-                        value: Double(scalar.value ?? 0),
-                        confidence: Double(scalar.confidence ?? 0),
-                        unit: scalar.unit ?? "",
-                        note: scalar.note
-                    )
+                else if let vital = try? vitalsContainer.decode(Vital.self, forKey: key) {
+                    tempVitals[key.stringValue] = vital
                 }
             }
+            
             self.waveforms = tempWaveforms
             self.vitals = tempVitals
         } else {
@@ -136,9 +132,30 @@ public struct VitalLensResult: Codable, Sendable {
     }
 }
 
-/// Represents a raw time-series signal from the model.
-/// Contains one value and one confidence score per frame.
-public struct TimeSeries: Codable, Sendable {
+public struct Vital: Codable, Sendable {
+    public let value: Double
+    public let confidence: Double
+    public let unit: String
+    public let note: String?
+    
+    public init(value: Double, confidence: Double, unit: String, note: String? = nil) {
+        self.value = value
+        self.confidence = confidence
+        self.unit = unit
+        self.note = note
+    }
+    
+    // Add this custom decoder to handle potentially missing API fields safely
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.value = try container.decodeIfPresent(Double.self, forKey: .value) ?? 0.0
+        self.confidence = try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 0.0
+        self.unit = try container.decodeIfPresent(String.self, forKey: .unit) ?? ""
+        self.note = try container.decodeIfPresent(String.self, forKey: .note)
+    }
+}
+
+public struct Waveform: Codable, Sendable {
     public let data: [Float]
     public let confidence: [Float]
     public let unit: String?
@@ -150,21 +167,6 @@ public struct TimeSeries: Codable, Sendable {
         self.unit = unit
         self.note = note
     }
-    
-    // Init from Scalar Response (backend "value" format)
-    init(scalar: ScalarResponse) {
-        self.data = scalar.value != nil ? [scalar.value!] : []
-        self.confidence = scalar.confidence != nil ? [scalar.confidence!] : []
-        self.unit = scalar.unit
-        self.note = scalar.note
-    }
-}
-
-struct ScalarResponse: Decodable {
-    let value: Float?
-    let confidence: Float?
-    let unit: String?
-    let note: String?
 }
 
 // MARK: - Face Data
@@ -222,33 +224,13 @@ public struct StateData: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.note = try container.decodeIfPresent(String.self, forKey: .note)
         
-        // FIX: Handle Polymorphic 'data' field (String OR Array<Float>)
         if let stringData = try? container.decode(String.self, forKey: .data) {
             self.data = stringData
         } else if let floatArray = try? container.decode([Float].self, forKey: .data) {
-            // Convert [Float] -> Data -> Base64 String
             let rawData = floatArray.withUnsafeBufferPointer { Data(buffer: $0) }
             self.data = rawData.base64EncodedString()
         } else {
-            // If it's null or missing, we can't do much, but let's avoid crashing if possible
-            // or throw a specific error.
             throw DecodingError.typeMismatch(String.self, DecodingError.Context(codingPath: container.codingPath, debugDescription: "State data expected to be String or [Float]"))
         }
-    }
-}
-
-// TODO: Name ScalarResult and TimeSeries in a more helpful and consistent way
-
-public struct ScalarResult: Codable, Sendable {
-    public let value: Double
-    public let confidence: Double
-    public let unit: String
-    public let note: String?
-    
-    public init(value: Double, confidence: Double, unit: String, note: String? = nil) {
-        self.value = value
-        self.confidence = confidence
-        self.unit = unit
-        self.note = note
     }
 }
