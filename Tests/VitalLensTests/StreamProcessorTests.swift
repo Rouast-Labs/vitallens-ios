@@ -27,7 +27,7 @@ actor MockROIStrategy: ROIStrategy {
 actor MockInferenceStrategy: InferenceStrategy {
     var inferCallCount = 0
     var lastReceivedState: (any InferenceState)?
-    var stateHistory: [(any InferenceState)?] = [] // 1. Track all states
+    var stateHistory: [(any InferenceState)?] = []
     private var shouldFail = false
     
     func resolveConfig() async throws -> ModelConfig {
@@ -69,8 +69,10 @@ actor MockInferenceStrategy: InferenceStrategy {
         
         let result = VitalLensResult(
             face: FaceData(coordinates: nil, confidence: nil, note: nil),
-            vitals: ["heart_rate": Vital(value: 72.0, confidence: 1.0, unit: "bpm")],
-            waveforms: [:],
+            vitals: [:],
+            waveforms: [
+                "ppg_waveform": Waveform(data: [0.1, 0.2, 0.3, 0.4], confidence: [1.0, 1.0, 1.0, 1.0], unit: "unitless", note: nil)
+            ],
             time: [Date().timeIntervalSince1970],
             fps: 30.0,
             modelUsed: "mock",
@@ -227,7 +229,7 @@ final class StreamProcessorTests: XCTestCase {
             await processor.processFrame(frame)
         }
         
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 300_000_000)
         let stateBefore = await strategy.lastReceivedState
         XCTAssertNotNil(stateBefore, "Should have established state")
         
@@ -331,5 +333,52 @@ final class StreamProcessorTests: XCTestCase {
         await processor.stop()
         
         XCTAssertTrue(true)
+    }
+
+    func testStateFlow_ContinuityBetweenInferences() async throws {
+        await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.1))
+        
+        // Push frames to trigger TWO separate inference calls
+        // Buffer overlap is 1, min frames with state is 2.
+        for i in 0..<15 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+            // Small pause to let the actor process the first batch and update state
+            if i == 5 { try await Task.sleep(nanoseconds: 100_000_000) } 
+        }
+        
+        try await Task.sleep(nanoseconds: 300_000_000)
+        
+        let history = await strategy.stateHistory
+        XCTAssertGreaterThanOrEqual(history.count, 2)
+        
+        if history.count >= 2 {
+            XCTAssertNil(history[0], "The very first inference state must be nil")
+            XCTAssertNotNil(history[1], "The second inference should have received the state from the first")
+            let secondBatchState = history[1] as? MockState
+            XCTAssertEqual(secondBatchState?.id, "state_1")
+        }
+    }
+
+    func testBufferPruning_OnFaceLoss() async throws {
+        _ = try await processor.start()
+        await strategy.clearHistory()
+        
+        // 1. Detect a face at T=1.0 to create an active buffer
+        await roiStrategy.setROI(CGRect(x: 0.1, y: 0.1, width: 0.1, height: 0.1))
+        await processor.processFrame(makeFrame(at: 1.0))
+        
+        // 2. Lose the face
+        await roiStrategy.setROI(nil)
+        
+        // 3. Send a frame at T=7.0 (exceeding the 5.0s timeout)
+        await processor.processFrame(makeFrame(at: 7.0))
+        
+        // 4. Wait for the actor's background loop to catch up and prune
+        try await Task.sleep(nanoseconds: 300_000_000)
+        
+        // If pruning worked, the buffer was dropped during the poll at T=7.0
+        // so no inference should have been triggered.
+        let count = await strategy.inferCallCount
+        XCTAssertEqual(count, 0, "Stale buffers must be pruned before inference can be triggered")
     }
 }

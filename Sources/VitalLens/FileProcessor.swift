@@ -30,13 +30,13 @@ actor FileProcessor {
         if let provided = globalROI {
             finalROI = provided
         } else {
-            print("[FileProcessor] Starting Pass 1: ROI Scanning...")
+            // print("[FileProcessor] Starting Pass 1: ROI Scanning...")
             finalROI = try await performScanningPass(config: config)
-            print("[FileProcessor] Pass 1 Complete. ROI: \(finalROI)")
+            // print("[FileProcessor] Pass 1 Complete. ROI: \(finalROI)")
         }
         
         // 3. Inference (Pass 2)
-        print("[FileProcessor] Starting Pass 2: Inference...")
+        // print("[FileProcessor] Starting Pass 2: Inference...")
         return try await performInferencePass(
             roi: finalROI,
             config: config,
@@ -125,7 +125,6 @@ actor FileProcessor {
             }
             
             totalFramesProcessed += 1
-            print("framesProcessed: \(totalFramesProcessed)")
 
             // 1. SAFETY CLAMP: Only batch if fileMax > 0, and ensure keep <= take
             if bufConfig.fileMax > 0 && buffer.count >= bufConfig.fileMax {

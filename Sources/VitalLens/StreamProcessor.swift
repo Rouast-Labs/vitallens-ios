@@ -178,7 +178,7 @@ actor StreamProcessor {
                 
                 await bufferManager.append(bufferId: item.id, unit: unit, context: context)
             } catch {
-                print("[StreamProcessor] Transform failed for buffer \(item.id): \(error)")
+                // print("[StreamProcessor] Transform failed for buffer \(item.id): \(error)")
             }
         }
         
@@ -190,7 +190,7 @@ actor StreamProcessor {
     
     /// Background task that monitors buffers and triggers inference when ready.
     private func runInferenceLoop(source: AsyncStream<Void>) async {
-        print("[StreamProcessor] Inference Loop Started")        
+        // print("[StreamProcessor] Inference Loop Started")        
         var consecutiveErrors = 0
         
         for await _ in source {
@@ -232,7 +232,7 @@ actor StreamProcessor {
                     
                 } catch {
                     consecutiveErrors += 1
-                    print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
+                    // print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
                     if consecutiveErrors >= 3 {
                         await bufferManager.reset()
                         self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
