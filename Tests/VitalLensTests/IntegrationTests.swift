@@ -40,7 +40,7 @@ final class IntegrationTests: XCTestCase {
             
             // 5. Verify Results
             XCTAssertEqual(result.fps ?? 0.0, 30.0, accuracy: 1.0)
-            XCTAssertFalse(result.signals.isEmpty, "Result should contain signal data")
+            XCTAssertFalse(result.vitals.isEmpty && result.waveforms.isEmpty, "Result should contain vital or waveform data")
             
             // Verify Face Detection (coordinates are normalized [x, y, w, h])
             if let coordinates = result.face.coordinates {
@@ -50,11 +50,11 @@ final class IntegrationTests: XCTestCase {
             // Verify Heart Rate
             // Note: In VitalLensInference, 'heartRate' is a convenience property that 
             // looks for the "heart_rate" key in the signals dictionary.
-            if let hrSignal = result.signals["heart_rate"], let hrValue = hrSignal.data.last {
-                print("[Integration] ❤️ Heart Rate (Latest): \(hrValue) \(hrSignal.unit ?? "")")
-                XCTAssertGreaterThan(hrValue, 40, "Heart rate should be in a realistic range")
+            if let hrVital = result.vitals["heart_rate"] {
+                print("[Integration] ❤️ Heart Rate (Latest): \(hrVital.value) \(hrVital.unit)")
+                XCTAssertGreaterThan(hrVital.value, 40, "Heart rate should be in a realistic range")
             } else {
-                XCTFail("No heart rate returned from API. Signals found: \(result.signals.keys)")
+                XCTFail("No heart rate returned from API. Vitals found: \(result.vitals.keys)")
             }
             
             // Verify Timing

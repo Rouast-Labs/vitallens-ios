@@ -1153,12 +1153,12 @@ public func FfiConverterTypeExecutionPlan_lower(_ value: ExecutionPlan) -> RustB
 
 
 public struct FaceInput {
-    public var coordinates: [Float]
-    public var confidence: Float
+    public var coordinates: [[Float]]
+    public var confidence: [Float]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(coordinates: [Float], confidence: Float) {
+    public init(coordinates: [[Float]], confidence: [Float]) {
         self.coordinates = coordinates
         self.confidence = confidence
     }
@@ -1191,14 +1191,14 @@ public struct FfiConverterTypeFaceInput: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FaceInput {
         return
             try FaceInput(
-                coordinates: FfiConverterSequenceFloat.read(from: &buf), 
-                confidence: FfiConverterFloat.read(from: &buf)
+                coordinates: FfiConverterSequenceSequenceFloat.read(from: &buf), 
+                confidence: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
 
     public static func write(_ value: FaceInput, into buf: inout [UInt8]) {
-        FfiConverterSequenceFloat.write(value.coordinates, into: &buf)
-        FfiConverterFloat.write(value.confidence, into: &buf)
+        FfiConverterSequenceSequenceFloat.write(value.coordinates, into: &buf)
+        FfiConverterSequenceFloat.write(value.confidence, into: &buf)
     }
 }
 
@@ -1367,18 +1367,16 @@ public func FfiConverterTypeInferenceCommand_lower(_ value: InferenceCommand) ->
 
 
 public struct InputChunk {
-    public var timestamp: [Double]
-    public var signals: [String: [Float]]
-    public var confidences: [String: [Float]]
     public var face: FaceInput?
+    public var signals: [String: SignalInput]
+    public var timestamp: [Double]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(timestamp: [Double], signals: [String: [Float]], confidences: [String: [Float]], face: FaceInput?) {
-        self.timestamp = timestamp
-        self.signals = signals
-        self.confidences = confidences
+    public init(face: FaceInput?, signals: [String: SignalInput], timestamp: [Double]) {
         self.face = face
+        self.signals = signals
+        self.timestamp = timestamp
     }
 }
 
@@ -1386,26 +1384,22 @@ public struct InputChunk {
 
 extension InputChunk: Equatable, Hashable {
     public static func ==(lhs: InputChunk, rhs: InputChunk) -> Bool {
-        if lhs.timestamp != rhs.timestamp {
+        if lhs.face != rhs.face {
             return false
         }
         if lhs.signals != rhs.signals {
             return false
         }
-        if lhs.confidences != rhs.confidences {
-            return false
-        }
-        if lhs.face != rhs.face {
+        if lhs.timestamp != rhs.timestamp {
             return false
         }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(timestamp)
-        hasher.combine(signals)
-        hasher.combine(confidences)
         hasher.combine(face)
+        hasher.combine(signals)
+        hasher.combine(timestamp)
     }
 }
 
@@ -1417,18 +1411,16 @@ public struct FfiConverterTypeInputChunk: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> InputChunk {
         return
             try InputChunk(
-                timestamp: FfiConverterSequenceDouble.read(from: &buf), 
-                signals: FfiConverterDictionaryStringSequenceFloat.read(from: &buf), 
-                confidences: FfiConverterDictionaryStringSequenceFloat.read(from: &buf), 
-                face: FfiConverterOptionTypeFaceInput.read(from: &buf)
+                face: FfiConverterOptionTypeFaceInput.read(from: &buf), 
+                signals: FfiConverterDictionaryStringTypeSignalInput.read(from: &buf), 
+                timestamp: FfiConverterSequenceDouble.read(from: &buf)
         )
     }
 
     public static func write(_ value: InputChunk, into buf: inout [UInt8]) {
-        FfiConverterSequenceDouble.write(value.timestamp, into: &buf)
-        FfiConverterDictionaryStringSequenceFloat.write(value.signals, into: &buf)
-        FfiConverterDictionaryStringSequenceFloat.write(value.confidences, into: &buf)
         FfiConverterOptionTypeFaceInput.write(value.face, into: &buf)
+        FfiConverterDictionaryStringTypeSignalInput.write(value.signals, into: &buf)
+        FfiConverterSequenceDouble.write(value.timestamp, into: &buf)
     }
 }
 
@@ -1532,6 +1524,7 @@ public func FfiConverterTypeRect_lower(_ value: Rect) -> RustBuffer {
 
 public struct SessionConfig {
     public var supportedVitals: [String]
+    public var returnWaveforms: [String]?
     public var fpsTarget: Float
     public var inputSize: UInt64
     public var nInputs: UInt64
@@ -1539,8 +1532,9 @@ public struct SessionConfig {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supportedVitals: [String], fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
+    public init(supportedVitals: [String], returnWaveforms: [String]?, fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
         self.supportedVitals = supportedVitals
+        self.returnWaveforms = returnWaveforms
         self.fpsTarget = fpsTarget
         self.inputSize = inputSize
         self.nInputs = nInputs
@@ -1553,6 +1547,9 @@ public struct SessionConfig {
 extension SessionConfig: Equatable, Hashable {
     public static func ==(lhs: SessionConfig, rhs: SessionConfig) -> Bool {
         if lhs.supportedVitals != rhs.supportedVitals {
+            return false
+        }
+        if lhs.returnWaveforms != rhs.returnWaveforms {
             return false
         }
         if lhs.fpsTarget != rhs.fpsTarget {
@@ -1572,6 +1569,7 @@ extension SessionConfig: Equatable, Hashable {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(supportedVitals)
+        hasher.combine(returnWaveforms)
         hasher.combine(fpsTarget)
         hasher.combine(inputSize)
         hasher.combine(nInputs)
@@ -1588,6 +1586,7 @@ public struct FfiConverterTypeSessionConfig: FfiConverterRustBuffer {
         return
             try SessionConfig(
                 supportedVitals: FfiConverterSequenceString.read(from: &buf), 
+                returnWaveforms: FfiConverterOptionSequenceString.read(from: &buf), 
                 fpsTarget: FfiConverterFloat.read(from: &buf), 
                 inputSize: FfiConverterUInt64.read(from: &buf), 
                 nInputs: FfiConverterUInt64.read(from: &buf), 
@@ -1597,6 +1596,7 @@ public struct FfiConverterTypeSessionConfig: FfiConverterRustBuffer {
 
     public static func write(_ value: SessionConfig, into buf: inout [UInt8]) {
         FfiConverterSequenceString.write(value.supportedVitals, into: &buf)
+        FfiConverterOptionSequenceString.write(value.returnWaveforms, into: &buf)
         FfiConverterFloat.write(value.fpsTarget, into: &buf)
         FfiConverterUInt64.write(value.inputSize, into: &buf)
         FfiConverterUInt64.write(value.nInputs, into: &buf)
@@ -1623,16 +1623,18 @@ public func FfiConverterTypeSessionConfig_lower(_ value: SessionConfig) -> RustB
 public struct SessionResult {
     public var timestamp: [Double]
     public var face: FaceResult?
-    public var signals: [String: SignalResult]
+    public var waveforms: [String: WaveformResult]
+    public var vitals: [String: VitalResult]
     public var fps: Float
     public var message: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(timestamp: [Double], face: FaceResult?, signals: [String: SignalResult], fps: Float, message: String) {
+    public init(timestamp: [Double], face: FaceResult?, waveforms: [String: WaveformResult], vitals: [String: VitalResult], fps: Float, message: String) {
         self.timestamp = timestamp
         self.face = face
-        self.signals = signals
+        self.waveforms = waveforms
+        self.vitals = vitals
         self.fps = fps
         self.message = message
     }
@@ -1648,7 +1650,10 @@ extension SessionResult: Equatable, Hashable {
         if lhs.face != rhs.face {
             return false
         }
-        if lhs.signals != rhs.signals {
+        if lhs.waveforms != rhs.waveforms {
+            return false
+        }
+        if lhs.vitals != rhs.vitals {
             return false
         }
         if lhs.fps != rhs.fps {
@@ -1663,7 +1668,8 @@ extension SessionResult: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(timestamp)
         hasher.combine(face)
-        hasher.combine(signals)
+        hasher.combine(waveforms)
+        hasher.combine(vitals)
         hasher.combine(fps)
         hasher.combine(message)
     }
@@ -1679,7 +1685,8 @@ public struct FfiConverterTypeSessionResult: FfiConverterRustBuffer {
             try SessionResult(
                 timestamp: FfiConverterSequenceDouble.read(from: &buf), 
                 face: FfiConverterOptionTypeFaceResult.read(from: &buf), 
-                signals: FfiConverterDictionaryStringTypeSignalResult.read(from: &buf), 
+                waveforms: FfiConverterDictionaryStringTypeWaveformResult.read(from: &buf), 
+                vitals: FfiConverterDictionaryStringTypeVitalResult.read(from: &buf), 
                 fps: FfiConverterFloat.read(from: &buf), 
                 message: FfiConverterString.read(from: &buf)
         )
@@ -1688,7 +1695,8 @@ public struct FfiConverterTypeSessionResult: FfiConverterRustBuffer {
     public static func write(_ value: SessionResult, into buf: inout [UInt8]) {
         FfiConverterSequenceDouble.write(value.timestamp, into: &buf)
         FfiConverterOptionTypeFaceResult.write(value.face, into: &buf)
-        FfiConverterDictionaryStringTypeSignalResult.write(value.signals, into: &buf)
+        FfiConverterDictionaryStringTypeWaveformResult.write(value.waveforms, into: &buf)
+        FfiConverterDictionaryStringTypeVitalResult.write(value.vitals, into: &buf)
         FfiConverterFloat.write(value.fps, into: &buf)
         FfiConverterString.write(value.message, into: &buf)
     }
@@ -1710,31 +1718,164 @@ public func FfiConverterTypeSessionResult_lower(_ value: SessionResult) -> RustB
 }
 
 
-public struct SignalResult {
-    public var value: Float?
+public struct SignalInput {
     public var data: [Float]
     public var confidence: [Float]
-    public var unit: String
-    public var note: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(value: Float?, data: [Float], confidence: [Float], unit: String, note: String?) {
-        self.value = value
+    public init(data: [Float], confidence: [Float]) {
         self.data = data
         self.confidence = confidence
-        self.unit = unit
-        self.note = note
     }
 }
 
 
 
-extension SignalResult: Equatable, Hashable {
-    public static func ==(lhs: SignalResult, rhs: SignalResult) -> Bool {
+extension SignalInput: Equatable, Hashable {
+    public static func ==(lhs: SignalInput, rhs: SignalInput) -> Bool {
+        if lhs.data != rhs.data {
+            return false
+        }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(data)
+        hasher.combine(confidence)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSignalInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SignalInput {
+        return
+            try SignalInput(
+                data: FfiConverterSequenceFloat.read(from: &buf), 
+                confidence: FfiConverterSequenceFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SignalInput, into buf: inout [UInt8]) {
+        FfiConverterSequenceFloat.write(value.data, into: &buf)
+        FfiConverterSequenceFloat.write(value.confidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSignalInput_lift(_ buf: RustBuffer) throws -> SignalInput {
+    return try FfiConverterTypeSignalInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSignalInput_lower(_ value: SignalInput) -> RustBuffer {
+    return FfiConverterTypeSignalInput.lower(value)
+}
+
+
+public struct VitalResult {
+    public var value: Float
+    public var confidence: Float
+    public var unit: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: Float, confidence: Float, unit: String) {
+        self.value = value
+        self.confidence = confidence
+        self.unit = unit
+    }
+}
+
+
+
+extension VitalResult: Equatable, Hashable {
+    public static func ==(lhs: VitalResult, rhs: VitalResult) -> Bool {
         if lhs.value != rhs.value {
             return false
         }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(value)
+        hasher.combine(confidence)
+        hasher.combine(unit)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVitalResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VitalResult {
+        return
+            try VitalResult(
+                value: FfiConverterFloat.read(from: &buf), 
+                confidence: FfiConverterFloat.read(from: &buf), 
+                unit: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VitalResult, into buf: inout [UInt8]) {
+        FfiConverterFloat.write(value.value, into: &buf)
+        FfiConverterFloat.write(value.confidence, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalResult_lift(_ buf: RustBuffer) throws -> VitalResult {
+    return try FfiConverterTypeVitalResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalResult_lower(_ value: VitalResult) -> RustBuffer {
+    return FfiConverterTypeVitalResult.lower(value)
+}
+
+
+public struct WaveformResult {
+    public var data: [Float]
+    public var confidence: [Float]
+    public var unit: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(data: [Float], confidence: [Float], unit: String) {
+        self.data = data
+        self.confidence = confidence
+        self.unit = unit
+    }
+}
+
+
+
+extension WaveformResult: Equatable, Hashable {
+    public static func ==(lhs: WaveformResult, rhs: WaveformResult) -> Bool {
         if lhs.data != rhs.data {
             return false
         }
@@ -1744,18 +1885,13 @@ extension SignalResult: Equatable, Hashable {
         if lhs.unit != rhs.unit {
             return false
         }
-        if lhs.note != rhs.note {
-            return false
-        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(value)
         hasher.combine(data)
         hasher.combine(confidence)
         hasher.combine(unit)
-        hasher.combine(note)
     }
 }
 
@@ -1763,24 +1899,20 @@ extension SignalResult: Equatable, Hashable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeSignalResult: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SignalResult {
+public struct FfiConverterTypeWaveformResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WaveformResult {
         return
-            try SignalResult(
-                value: FfiConverterOptionFloat.read(from: &buf), 
+            try WaveformResult(
                 data: FfiConverterSequenceFloat.read(from: &buf), 
                 confidence: FfiConverterSequenceFloat.read(from: &buf), 
-                unit: FfiConverterString.read(from: &buf), 
-                note: FfiConverterOptionString.read(from: &buf)
+                unit: FfiConverterString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: SignalResult, into buf: inout [UInt8]) {
-        FfiConverterOptionFloat.write(value.value, into: &buf)
+    public static func write(_ value: WaveformResult, into buf: inout [UInt8]) {
         FfiConverterSequenceFloat.write(value.data, into: &buf)
         FfiConverterSequenceFloat.write(value.confidence, into: &buf)
         FfiConverterString.write(value.unit, into: &buf)
-        FfiConverterOptionString.write(value.note, into: &buf)
     }
 }
 
@@ -1788,15 +1920,15 @@ public struct FfiConverterTypeSignalResult: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSignalResult_lift(_ buf: RustBuffer) throws -> SignalResult {
-    return try FfiConverterTypeSignalResult.lift(buf)
+public func FfiConverterTypeWaveformResult_lift(_ buf: RustBuffer) throws -> WaveformResult {
+    return try FfiConverterTypeWaveformResult.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSignalResult_lower(_ value: SignalResult) -> RustBuffer {
-    return FfiConverterTypeSignalResult.lower(value)
+public func FfiConverterTypeWaveformResult_lower(_ value: WaveformResult) -> RustBuffer {
+    return FfiConverterTypeWaveformResult.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -2246,6 +2378,30 @@ fileprivate struct FfiConverterOptionTypeRect: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceFloat: FfiConverterRustBuffer {
     typealias SwiftType = [Float]
 
@@ -2371,23 +2527,23 @@ fileprivate struct FfiConverterSequenceSequenceFloat: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterDictionaryStringTypeSignalResult: FfiConverterRustBuffer {
-    public static func write(_ value: [String: SignalResult], into buf: inout [UInt8]) {
+fileprivate struct FfiConverterDictionaryStringTypeSignalInput: FfiConverterRustBuffer {
+    public static func write(_ value: [String: SignalInput], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for (key, value) in value {
             FfiConverterString.write(key, into: &buf)
-            FfiConverterTypeSignalResult.write(value, into: &buf)
+            FfiConverterTypeSignalInput.write(value, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: SignalResult] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: SignalInput] {
         let len: Int32 = try readInt(&buf)
-        var dict = [String: SignalResult]()
+        var dict = [String: SignalInput]()
         dict.reserveCapacity(Int(len))
         for _ in 0..<len {
             let key = try FfiConverterString.read(from: &buf)
-            let value = try FfiConverterTypeSignalResult.read(from: &buf)
+            let value = try FfiConverterTypeSignalInput.read(from: &buf)
             dict[key] = value
         }
         return dict
@@ -2397,23 +2553,49 @@ fileprivate struct FfiConverterDictionaryStringTypeSignalResult: FfiConverterRus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterDictionaryStringSequenceFloat: FfiConverterRustBuffer {
-    public static func write(_ value: [String: [Float]], into buf: inout [UInt8]) {
+fileprivate struct FfiConverterDictionaryStringTypeVitalResult: FfiConverterRustBuffer {
+    public static func write(_ value: [String: VitalResult], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for (key, value) in value {
             FfiConverterString.write(key, into: &buf)
-            FfiConverterSequenceFloat.write(value, into: &buf)
+            FfiConverterTypeVitalResult.write(value, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: [Float]] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: VitalResult] {
         let len: Int32 = try readInt(&buf)
-        var dict = [String: [Float]]()
+        var dict = [String: VitalResult]()
         dict.reserveCapacity(Int(len))
         for _ in 0..<len {
             let key = try FfiConverterString.read(from: &buf)
-            let value = try FfiConverterSequenceFloat.read(from: &buf)
+            let value = try FfiConverterTypeVitalResult.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeWaveformResult: FfiConverterRustBuffer {
+    public static func write(_ value: [String: WaveformResult], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeWaveformResult.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: WaveformResult] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: WaveformResult]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeWaveformResult.read(from: &buf)
             dict[key] = value
         }
         return dict

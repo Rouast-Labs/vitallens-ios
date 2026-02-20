@@ -6,6 +6,7 @@ public extension ModelConfig {
     func toSessionConfig() -> VitalLensCore.SessionConfig {
         return VitalLensCore.SessionConfig(
             supportedVitals: self.supportedVitals,
+            returnWaveforms: nil,
             fpsTarget: Float(self.fpsTarget),
             inputSize: UInt64(self.inputSize),
             nInputs: UInt64(self.nInputs),
@@ -22,44 +23,50 @@ public extension CGRect {
 
 public extension VitalLensResult {
     func toInputChunk() -> VitalLensCore.InputChunk {
-        var signalsMap: [String: [Float]] = [:]
-        var confMap: [String: [Float]] = [:]
+        var signalsMap: [String: SignalInput] = [:]
         
-        for (key, ts) in self.signals {
-            signalsMap[key] = ts.data
-            confMap[key] = ts.confidence
+        for (key, wave) in self.waveforms {
+            signalsMap[key] = SignalInput(data: wave.data, confidence: wave.confidence)
         }
         
         var faceInput: FaceInput? = nil
-        if let coords = self.face.coordinates?.first, coords.count == 4, let conf = self.face.confidence?.first {
+        if let coords = self.face.coordinates, let confs = self.face.confidence {
             faceInput = FaceInput(
-                coordinates: coords.map { Float($0) },
-                confidence: Float(conf)
+                coordinates: coords.map { $0.map { Float($0) } },
+                confidence: confs.map { Float($0) }
             )
         }
         
         return InputChunk(
-            timestamp: self.time,
+            face: faceInput,
             signals: signalsMap,
-            confidences: confMap,
-            face: faceInput
+            timestamp: self.time
         )
     }
 }
 
 public extension SessionResult {
     func toVitalLensResult(originalState: StateData?, message: String?, modelUsed: String?) -> VitalLensResult {
-        var finalSignals: [String: TimeSeries] = [:]
-        for (key, sig) in self.signals {
-            finalSignals[key] = TimeSeries(
-                data: sig.data,
-                confidence: sig.confidence,
-                unit: sig.unit,
-                note: sig.note
+        
+        var finalWaveforms: [String: TimeSeries] = [:]
+        for (key, wave) in self.waveforms {
+            finalWaveforms[key] = TimeSeries(
+                data: wave.data,
+                confidence: wave.confidence,
+                unit: wave.unit,
+                note: nil // TODO: Support note
             )
         }
-
-        // TODO: What about signals with value instead data?
+        
+        var finalVitals: [String: ScalarResult] = [:]
+        for (key, vital) in self.vitals {
+            finalVitals[key] = ScalarResult(
+                value: Double(vital.value),
+                confidence: Double(vital.confidence),
+                unit: vital.unit,
+                note: nil // TODO: Support note
+            )
+        }
         
         var faceData = FaceData(coordinates: nil, confidence: nil, note: nil)
         if let f = self.face {
@@ -72,7 +79,8 @@ public extension SessionResult {
         
         return VitalLensResult(
             face: faceData,
-            signals: finalSignals,
+            vitals: finalVitals,
+            waveforms: finalWaveforms,
             time: self.timestamp,
             fps: Double(self.fps),
             modelUsed: modelUsed,

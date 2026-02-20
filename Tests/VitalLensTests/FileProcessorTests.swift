@@ -149,7 +149,8 @@ final class FileProcessorTests: XCTestCase {
             
             let result = VitalLensResult(
                 face: FaceData(coordinates: nil, confidence: nil, note: nil),
-                signals: ["heart_rate": TimeSeries(data: datas, confidence: confs, unit: "bpm", note: nil)],
+                vitals: ["heart_rate": ScalarResult(value: 72.0, confidence: 1.0, unit: "bpm")],
+                waveforms: [:],
                 time: times,
                 fps: 30.0,
                 modelUsed: "mock",

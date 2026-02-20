@@ -22,8 +22,8 @@ final class VitalLensResultTests: XCTestCase {
                     "note": ""
                 },
                 "sbp": {
-                    "data": [120.0, 120.5, 121.0],
-                    "confidence": [0.8, 0.8, 0.8],
+                    "value": 121.0,
+                    "confidence": 0.8,
                     "unit": "mmHg",
                     "note": "Experimental"
                 }
@@ -53,11 +53,9 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertEqual(ppgFirst, 0.5, accuracy: 0.001)
         
         // 3. Verify Dynamic Dictionary Access (SBP)
-        XCTAssertNotNil(result.signals["sbp"])
-        XCTAssertEqual(result.signals["sbp"]?.unit, "mmHg")
-        
-        let sbpLast = Double(result.signals["sbp"]?.data.last ?? 0)
-        XCTAssertEqual(sbpLast, 121.0, accuracy: 0.1)
+        XCTAssertNotNil(result.vitals["sbp"])
+        XCTAssertEqual(result.vitals["sbp"]?.unit, "mmHg")
+        XCTAssertEqual(result.vitals["sbp"]?.value ?? 0, 121.0, accuracy: 0.1)
     }
     
     // MARK: - State Decoding (New & Critical)
@@ -72,7 +70,7 @@ final class VitalLensResultTests: XCTestCase {
         """.data(using: .utf8)!
         
         let result1 = try JSONDecoder().decode(VitalLensResult.self, from: jsonStringState)
-        XCTAssertEqual(result1.state?.data, "SGVsbG8=") // "Hello"
+        XCTAssertEqual(result1.state?.data, "SGVsbG8=")
         
         // Case 2: API returns State as Float Array (File/Debug Mode)
         // [0.0, 0.0] -> 8 bytes of zeros -> Base64: "AAAAAAAAAAA="
@@ -89,31 +87,31 @@ final class VitalLensResultTests: XCTestCase {
     
     // MARK: - Legacy Compatibility
     
-    func testLegacyScalarDecoding() throws {
-        // Simulates a V1/V2 API response where vitals are objects, not arrays
-        let json = """
-        {
-            "face": {}, "time": [],
-            "vital_signs": {
-                "stress_index": {
-                    "value": 45.0,
-                    "confidence": 0.8,
-                    "unit": "pts"
-                }
-            }
-        }
-        """.data(using: .utf8)!
+    // func testLegacyScalarDecoding() throws {
+    //     // Simulates a V1/V2 API response where vitals are objects, not arrays
+    //     let json = """
+    //     {
+    //         "face": {}, "time": [],
+    //         "vital_signs": {
+    //             "stress_index": {
+    //                 "value": 45.0,
+    //                 "confidence": 0.8,
+    //                 "unit": "pts"
+    //             }
+    //         }
+    //     }
+    //     """.data(using: .utf8)!
         
-        let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
+    //     let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
         
-        XCTAssertNotNil(result.signals["stress_index"])
-        let stress = result.signals["stress_index"]!
+    //     XCTAssertNotNil(result.signals["stress_index"])
+    //     let stress = result.signals["stress_index"]!
         
-        // Should be converted to single-element array
-        XCTAssertEqual(stress.data.count, 1)
-        XCTAssertEqual(stress.data.first, 45.0)
-        XCTAssertEqual(stress.confidence.first, 0.8)
-    }
+    //     // Should be converted to single-element array
+    //     XCTAssertEqual(stress.data.count, 1)
+    //     XCTAssertEqual(stress.data.first, 45.0)
+    //     XCTAssertEqual(stress.confidence.first, 0.8)
+    // }
     
     func testMissingSignalsDoNotCrash() throws {
         let json = """
@@ -126,59 +124,60 @@ final class VitalLensResultTests: XCTestCase {
         
         let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
         
-        XCTAssertTrue(result.signals.isEmpty)
+        XCTAssertTrue(result.vitals.isEmpty)
+        XCTAssertTrue(result.waveforms.isEmpty)
         XCTAssertNil(result.ppg)
         XCTAssertNil(result.heartRate)
     }
     
     // MARK: - Helper Logic
     
-    func testScalarResultHelper() {
-        // Case 1: Data exists
-        let series = TimeSeries(
-            data: [60, 61, 62],
-            confidence: [0.9, 0.9, 0.95],
-            unit: "bpm",
-            note: "Test"
-        )
+    // func testScalarResultHelper() {
+    //     // Case 1: Data exists
+    //     let series = TimeSeries(
+    //         data: [60, 61, 62],
+    //         confidence: [0.9, 0.9, 0.95],
+    //         unit: "bpm",
+    //         note: "Test"
+    //     )
         
-        let scalar = series.latest
-        XCTAssertNotNil(scalar)
+    //     let scalar = series.latest
+    //     XCTAssertNotNil(scalar)
         
-        XCTAssertEqual(scalar?.value ?? 0, 62.0, accuracy: 0.01)
-        XCTAssertEqual(scalar?.confidence ?? 0, 0.95, accuracy: 0.01)
-        XCTAssertEqual(scalar?.unit, "bpm")
+    //     XCTAssertEqual(scalar?.value ?? 0, 62.0, accuracy: 0.01)
+    //     XCTAssertEqual(scalar?.confidence ?? 0, 0.95, accuracy: 0.01)
+    //     XCTAssertEqual(scalar?.unit, "bpm")
         
-        // Case 2: Empty Data
-        let emptySeries = TimeSeries(
-            data: [],
-            confidence: [],
-            unit: "bpm",
-            note: nil
-        )
-        XCTAssertNil(emptySeries.latest)
-    }
+    //     // Case 2: Empty Data
+    //     let emptySeries = TimeSeries(
+    //         data: [],
+    //         confidence: [],
+    //         unit: "bpm",
+    //         note: nil
+    //     )
+    //     XCTAssertNil(emptySeries.latest)
+    // }
     
     func testResultConvenienceAccessors() {
-        var signals = [String: TimeSeries]()
-        signals["heart_rate"] = TimeSeries(data: [72], confidence: [1.0], unit: "bpm", note: nil)
-        signals["hrv_sdnn"] = TimeSeries(data: [50], confidence: [0.8], unit: "ms", note: nil)
-        signals["sbp"] = TimeSeries(data: [120], confidence: [0.9], unit: "mmHg", note: nil)
-        
         let result = VitalLensResult(
             face: FaceData(coordinates: nil, confidence: nil, note: nil),
-            signals: signals,
+            vitals: [
+                "heart_rate": ScalarResult(value: 72.0, confidence: 1.0, unit: "bpm"),
+                "hrv_sdnn": ScalarResult(value: 50.0, confidence: 0.8, unit: "ms"),
+                "sbp": ScalarResult(value: 120.0, confidence: 0.9, unit: "mmHg")
+            ],
+            waveforms: [:],
             time: [1.0]
         )
         
         XCTAssertNotNil(result.heartRate)
-        XCTAssertEqual(result.heartRate?.latest?.value, 72.0)
+        XCTAssertEqual(result.heartRate?.value, 72.0)
         
         XCTAssertNotNil(result.hrvSdnn)
-        XCTAssertEqual(result.hrvSdnn?.latest?.value, 50.0)
+        XCTAssertEqual(result.hrvSdnn?.value, 50.0)
         
         XCTAssertNotNil(result.sbp)
-        XCTAssertEqual(result.sbp?.latest?.value, 120.0)
+        XCTAssertEqual(result.sbp?.value, 120.0)
         
         XCTAssertNil(result.respiratoryRate)
     }

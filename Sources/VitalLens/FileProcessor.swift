@@ -155,10 +155,8 @@ actor FileProcessor {
             }
         }
         
-        let emptyChunk = InputChunk(timestamp: [], signals: [:], confidences: [:], face: nil)
+        let emptyChunk = InputChunk(face: nil, signals: [:], timestamp: [])
         let globalResult = session.processChunk(chunk: emptyChunk, mode: .global)
-        
-        // 3. METADATA FIX: Pass modelUsed to the final result mapping
-        return globalResult.toVitalLensResult(originalState: nil, message: finalMessage, modelUsed: finalModelUsed)
+        return globalResult.toVitalLensResult(originalState: nil as StateData?, message: finalMessage, modelUsed: finalModelUsed)
     }
 }

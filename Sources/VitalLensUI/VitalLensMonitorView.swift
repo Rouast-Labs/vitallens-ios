@@ -136,13 +136,13 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        if let hr = result.heartRate?.latest?.value {
+        if let hr = result.heartRate?.value {
             self.heartRate = String(format: "%.0f", hr)
         }
-        if let sdnn = result.hrvSdnn?.latest?.value {
+        if let sdnn = result.hrvSdnn?.value {
             self.hrvSDNN = String(format: "%.0f", sdnn)
         }
-        if let rr = result.respiratoryRate?.latest?.value {
+        if let rr = result.respiratoryRate?.value {
             self.respRate = String(format: "%.0f", rr)
         }
         

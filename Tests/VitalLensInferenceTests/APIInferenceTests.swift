@@ -303,7 +303,7 @@ final class APIInferenceTests: XCTestCase {
         {
             "face": { "coordinates": [], "confidence": [], "note": "" },
             "vital_signs": {
-                "heart_rate": { "data": [72.0], "confidence": [0.9], "unit": "bpm", "note": "" }
+                "heart_rate": { "value": 72.0, "confidence": 0.9, "unit": "bpm", "note": "" }
             },
             "time": [1.0],
             "fps": 30.0,

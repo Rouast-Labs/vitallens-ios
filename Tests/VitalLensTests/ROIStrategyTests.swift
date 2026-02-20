@@ -74,18 +74,24 @@ final class ROIStrategyTests: XCTestCase {
     
     func testDetermineROI_Stability_KeepsOldROIOnFailure() async throws {
         let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
-        let mockDetector = MockFaceDetector(rects: [validRect, nil]) // Second scan fails
+        let mockDetector = MockFaceDetector(rects: [validRect, nil])  
         
-        let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.05)
+        // 1. Increase interval to 100ms
+        let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1)
         let buffer = createDummyBuffer()
         
         _ = await strategy.determineROI(in: buffer, orientation: .up)
-        try await Task.sleep(nanoseconds: 60_000_000)
+        
+        // 2. Wait 120ms to allow first detection to complete and exceed interval
+        try await Task.sleep(nanoseconds: 120_000_000)
         
         let roi1 = await strategy.determineROI(in: buffer, orientation: .up)
         XCTAssertEqual(roi1, validRect)
         
-        _ = await strategy.determineROI(in: buffer, orientation: .up) // Triggers failure
+        _ = await strategy.determineROI(in: buffer, orientation: .up)  
+        
+        // 3. Wait 50ms. The second detection (nil) finishes. 
+        // 50ms is less than the 100ms interval, so the NEXT call won't trigger a 3rd detection.
         try await Task.sleep(nanoseconds: 50_000_000)
         
         let roi2 = await strategy.determineROI(in: buffer, orientation: .up)

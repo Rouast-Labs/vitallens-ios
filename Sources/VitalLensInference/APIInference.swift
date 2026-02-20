@@ -193,12 +193,12 @@ public actor APIInference: InferenceStrategy {
         
         // Perform Request
         let result: VitalLensResult = try await perform(request: request)
-        
-        // Timestamp synthesis fix (from previous step)
+
         if result.time.isEmpty, let n = result.sampleCount {            
             return VitalLensResult(
                 face: result.face,
-                signals: result.signals,
+                vitals: result.vitals,
+                waveforms: result.waveforms,
                 time: [],
                 modelUsed: result.modelUsed,
                 state: result.state,
@@ -269,7 +269,8 @@ public actor APIInference: InferenceStrategy {
 
         let cleanResult = VitalLensResult(
             face: result.face,
-            signals: result.signals,
+            vitals: result.vitals,
+            waveforms: result.waveforms,
             time: result.time,
             fps: result.fps,
             modelUsed: result.modelUsed,

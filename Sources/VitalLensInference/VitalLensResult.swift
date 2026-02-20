@@ -10,7 +10,8 @@ public protocol ResultAuxiliaryData: Sendable {}
 public struct VitalLensResult: Codable, Sendable {
     
     public let face: FaceData
-    public let signals: [String: TimeSeries]
+    public let vitals: [String: ScalarResult]
+    public let waveforms: [String: TimeSeries]
     public let time: [Double]
     public let fps: Double?
     public let modelUsed: String?
@@ -18,27 +19,26 @@ public struct VitalLensResult: Codable, Sendable {
     public let message: String?
     public let sampleCount: Int?
 
-    /// Optional container for non-codable, local-only data (e.g. Debug images).
     public var auxiliary: (any ResultAuxiliaryData)? 
 
     // MARK: - Convenience Accessors
     
-    // Consolidated: specific vitals map directly to the signals dictionary
-    public var ppg: TimeSeries? { signals["ppg_waveform"] }
-    public var resp: TimeSeries? { signals["respiratory_waveform"] }    
+    public var ppg: TimeSeries? { waveforms["ppg_waveform"] } // TODO: Change key
+    public var resp: TimeSeries? { waveforms["respiratory_waveform"] } // TODO: Change key
     
-    public var heartRate: TimeSeries? { signals["heart_rate"] }
-    public var respiratoryRate: TimeSeries? { signals["respiratory_rate"] }
-    public var hrvSdnn: TimeSeries? { signals["hrv_sdnn"] }
-    public var hrvRmssd: TimeSeries? { signals["hrv_rmssd"] }
+    public var heartRate: ScalarResult? { vitals["heart_rate"] }
+    public var respiratoryRate: ScalarResult? { vitals["respiratory_rate"] }
+    public var hrvSdnn: ScalarResult? { vitals["hrv_sdnn"] }
+    public var hrvRmssd: ScalarResult? { vitals["hrv_rmssd"] }
     
-    public var sbp: TimeSeries? { signals["sbp"] }
-    public var dbp: TimeSeries? { signals["dbp"] }
-    public var spo2: TimeSeries? { signals["spo2"] }
+    public var sbp: ScalarResult? { vitals["sbp"] }
+    public var dbp: ScalarResult? { vitals["dbp"] }
+    public var spo2: ScalarResult? { vitals["spo2"] }
 
     public init(
         face: FaceData,
-        signals: [String: TimeSeries],
+        vitals: [String: ScalarResult],
+        waveforms: [String: TimeSeries],
         time: [Double],
         fps: Double? = nil,
         modelUsed: String? = nil,
@@ -48,7 +48,8 @@ public struct VitalLensResult: Codable, Sendable {
         auxiliary: (any ResultAuxiliaryData)? = nil
     ) {
         self.face = face
-        self.signals = signals
+        self.vitals = vitals
+        self.waveforms = waveforms
         self.time = time
         self.fps = fps
         self.modelUsed = modelUsed
@@ -73,6 +74,7 @@ public struct VitalLensResult: Codable, Sendable {
     }
     
     public init(from decoder: Decoder) throws {
+        // Use DynamicKey directly for the root container
         let container = try decoder.container(keyedBy: DynamicKey.self)
         
         self.face = try container.decodeIfPresent(FaceData.self, forKey: DynamicKey(stringValue: "face")!) 
@@ -80,43 +82,55 @@ public struct VitalLensResult: Codable, Sendable {
         
         self.time = try container.decodeIfPresent([Double].self, forKey: DynamicKey(stringValue: "time")!) ?? []
         self.fps = try container.decodeIfPresent(Double.self, forKey: DynamicKey(stringValue: "fps")!)
+        
+        // Explicitly map the distinct JSON keys
         self.modelUsed = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "model_used")!)
         self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
         
-        // Handle dynamic vital_signs dictionary
         if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
-            var tempSignals = [String: TimeSeries]()
+            var tempWaveforms = [String: TimeSeries]()
+            var tempVitals = [String: ScalarResult]()
+            
             for key in vitalsContainer.allKeys {
-                
-                // Primary: Try decoding as TimeSeries array
                 if let signal = try? vitalsContainer.decode(TimeSeries.self, forKey: key) {
-                    tempSignals[key.stringValue] = signal
+                    tempWaveforms[key.stringValue] = signal
                 } 
-                // Fallback: Try decoding as legacy ScalarResponse
                 else if let scalar = try? vitalsContainer.decode(ScalarResponse.self, forKey: key) {
-                    tempSignals[key.stringValue] = TimeSeries(scalar: scalar)
+                    tempVitals[key.stringValue] = ScalarResult(
+                        value: Double(scalar.value ?? 0),
+                        confidence: Double(scalar.confidence ?? 0),
+                        unit: scalar.unit ?? "",
+                        note: scalar.note
+                    )
                 }
             }
-            self.signals = tempSignals
+            self.waveforms = tempWaveforms
+            self.vitals = tempVitals
         } else {
-            self.signals = [:]
+            self.waveforms = [:]
+            self.vitals = [:]
         }
     }
     
     public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: DynamicKey.self)
-        try container.encode(face, forKey: DynamicKey(stringValue: "face")!)
-        try container.encode(time, forKey: DynamicKey(stringValue: "time")!)
-        try container.encodeIfPresent(fps, forKey: DynamicKey(stringValue: "fps")!)
-        try container.encodeIfPresent(modelUsed, forKey: DynamicKey(stringValue: "model_used")!)
-        try container.encodeIfPresent(state, forKey: DynamicKey(stringValue: "state")!)
-        try container.encodeIfPresent(message, forKey: DynamicKey(stringValue: "message")!)
-        try container.encodeIfPresent(sampleCount, forKey: DynamicKey(stringValue: "n")!)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(face, forKey: .face)
+        try container.encode(time, forKey: .time)
+        try container.encodeIfPresent(fps, forKey: .fps)
+        try container.encodeIfPresent(modelUsed, forKey: .modelUsed)
+        try container.encodeIfPresent(state, forKey: .state)
+        try container.encodeIfPresent(message, forKey: .message)
+        try container.encodeIfPresent(sampleCount, forKey: .sampleCount)
         
-        var vitalsContainer = container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
-        for (key, value) in signals {
+        var dynamicContainer = encoder.container(keyedBy: DynamicKey.self)
+        var vitalsContainer = dynamicContainer.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
+        
+        for (key, value) in waveforms {
+            try vitalsContainer.encode(value, forKey: DynamicKey(stringValue: key)!)
+        }
+        for (key, value) in vitals {
             try vitalsContainer.encode(value, forKey: DynamicKey(stringValue: key)!)
         }
     }
@@ -223,23 +237,18 @@ public struct StateData: Codable, Sendable {
     }
 }
 
-// MARK: - UI Compatibility Helpers
+// TODO: Name ScalarResult and TimeSeries in a more helpful and consistent way
 
-/// A lightweight scalar representation for UI consumption.
-public struct ScalarResult: Sendable {
+public struct ScalarResult: Codable, Sendable {
     public let value: Double
     public let confidence: Double
     public let unit: String
-}
-
-public extension TimeSeries {
-    /// Returns the most recent value from the time series as a scalar.
-    var latest: ScalarResult? {
-        guard let val = data.last, let conf = confidence.last else { return nil }
-        return ScalarResult(
-            value: Double(val),
-            confidence: Double(conf),
-            unit: unit ?? ""
-        )
+    public let note: String?
+    
+    public init(value: Double, confidence: Double, unit: String, note: String? = nil) {
+        self.value = value
+        self.confidence = confidence
+        self.unit = unit
+        self.note = note
     }
 }

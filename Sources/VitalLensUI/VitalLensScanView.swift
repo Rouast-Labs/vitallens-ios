@@ -133,7 +133,7 @@ public struct VitalLensScanView: View {
                         let elapsed = Date().timeIntervalSince(start)
                         self.progress = min(elapsed / scanDuration, 1.0)
                         
-                        if let hr = result.heartRate?.latest?.value {
+                        if let hr = result.heartRate?.value {
                             self.currentHeartRate = Int(hr)
                         }
                         
