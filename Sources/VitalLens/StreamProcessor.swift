@@ -158,7 +158,7 @@ actor StreamProcessor {
         guard let config = self.config, !isPaused else { return }
 
         let target = await roiStrategy.determineROI(in: frame.buffer, orientation: frame.orientation)
-        await bufferManager.registerTarget(target, config: config)
+        await bufferManager.registerTarget(target, timestamp: frame.timestamp, config: config)
         
         let allBuffers = await bufferManager.getAllBuffers()
         if allBuffers.isEmpty { return }

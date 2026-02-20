@@ -36,7 +36,7 @@ final class VitalLensTests: XCTestCase {
         let baseTime = Date().timeIntervalSince1970
         
         // Set ROI
-        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
         // Pump frames
         Task {

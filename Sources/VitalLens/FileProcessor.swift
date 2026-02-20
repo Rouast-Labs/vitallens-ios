@@ -100,7 +100,7 @@ actor FileProcessor {
         let source = try await FileSource.from(url: url)
         let nominalFPS = Double(source.nominalFrameRate)
         
-        let buffer = FrameBuffer(roi: roi, mode: .file, config: config)
+        let buffer = FrameBuffer(id: "file", roi: roi, mode: .file, config: config, timestamp: 0.0)
         let session = VitalLensCore.Session(config: config.toSessionConfig())
         
         var currentState: (any InferenceState)? = nil

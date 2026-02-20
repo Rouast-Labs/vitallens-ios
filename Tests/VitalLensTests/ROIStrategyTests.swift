@@ -6,49 +6,43 @@ import VitalLensInference
 
 final class ROIStrategyTests: XCTestCase {
     
-    // MARK: - FaceROIStrategy Tests
-    
-    func testDetermineROIs_FirstCall_TriggersDetection() async throws {
-        // Arrange
+    func testDetermineROI_FirstCall_TriggersDetection() async throws {
         let expectedRect = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
         let mockDetector = MockFaceDetector(rects: [expectedRect]) 
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.5)
         let buffer = createDummyBuffer()
         
-        // Act 1
-        let initialROIs = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertTrue(initialROIs.isEmpty)
+        // Act 1: Detection starts but returns immediately
+        let initialROI = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertNil(initialROI)
         
-        // Wait for background Task
+        // Let async detection finish
         try await Task.sleep(nanoseconds: 100_000_000) 
         
-        // Assert
-        // FIX: Await actor property into local variable
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 1)
         
-        // Act 2
-        let subsequentROIs = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertEqual(subsequentROIs.first, expectedRect)
+        // Act 2: Next frame gets the populated result
+        let subsequentROI = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertEqual(subsequentROI, expectedRect)
     }
     
-    func testDetermineROIs_Throttling_PreventsRapidCalls() async throws {
+    func testDetermineROI_Throttling_PreventsRapidCalls() async throws {
         let mockDetector = MockFaceDetector(rects: [CGRect(x: 0, y: 0, width: 1, height: 1)])
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 1.0)
         let buffer = createDummyBuffer()
         
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
         try await Task.sleep(nanoseconds: 50_000_000) 
         
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
         
-        // FIX: Await actor property into local variable
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 1, "Should not re-trigger detection before interval elapses")
     }
     
-    func testDetermineROIs_UpdatesAfterInterval() async throws {
+    func testDetermineROI_UpdatesAfterInterval() async throws {
         let rect1 = CGRect(x: 0, y: 0, width: 0.1, height: 0.1)
         let rect2 = CGRect(x: 0.5, y: 0.5, width: 0.1, height: 0.1)
         
@@ -57,53 +51,51 @@ final class ROIStrategyTests: XCTestCase {
         let buffer = createDummyBuffer()
         
         // 1. First Call
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
         try await Task.sleep(nanoseconds: 50_000_000)
         
-        let rois1 = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertEqual(rois1.first, rect1)
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertEqual(roi1, rect1)
         
-        // 2. Wait
+        // 2. Wait past interval
         try await Task.sleep(nanoseconds: 150_000_000) 
         
-        // 3. Second Call
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        // 3. Second Call triggers next detection
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
         try await Task.sleep(nanoseconds: 50_000_000)
         
         // 4. Verify
-        let rois2 = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertEqual(rois2.first, rect2)
+        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertEqual(roi2, rect2)
         
-        // FIX: Await actor property into local variable
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 2)
     }
     
-    func testDetermineROIs_Stability_KeepsOldROIOnFailure() async throws {
+    func testDetermineROI_Stability_KeepsOldROIOnFailure() async throws {
         let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
-        let mockDetector = MockFaceDetector(rects: [validRect, nil])
+        let mockDetector = MockFaceDetector(rects: [validRect, nil]) // Second scan fails
         
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.05)
         let buffer = createDummyBuffer()
         
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up)
         try await Task.sleep(nanoseconds: 60_000_000)
         
-        let rois1 = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertEqual(rois1.first, validRect)
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertEqual(roi1, validRect)
         
-        _ = await strategy.determineROIs(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up) // Triggers failure
         try await Task.sleep(nanoseconds: 50_000_000)
         
-        let rois2 = await strategy.determineROIs(in: buffer, orientation: .up)
-        XCTAssertEqual(rois2.first, validRect)
+        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertEqual(roi2, validRect, "Should retain previous valid ROI if new scan fails")
         
-        // FIX: Await actor property into local variable
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 2)
     }
     
-    // MARK: - Helpers & Mocks
+    // MARK: - Helpers
     
     private func createDummyBuffer() -> SendablePixelBuffer {
         var buffer: CVPixelBuffer?

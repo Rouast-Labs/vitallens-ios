@@ -530,11 +530,20 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol BufferPlannerProtocol : AnyObject {
     
-    func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: Bool, flush: Bool)  -> ExecutionPlan
+    /**
+     * Evaluates a target ROI against the list of known buffers.
+     */
+    func evaluateTarget(targetRoi: Rect, timestamp: Double, activeBuffers: [BufferMetadata])  -> BufferAction
     
-    func registerRoi(targetRoi: Rect, timestamp: Double)  -> BufferAction
+    /**
+     * Determines if a buffer is actionable based on configuration constraints.
+     */
+    func isReady(count: UInt32, mode: InferenceMode, hasState: Bool, flush: Bool)  -> Bool
     
-    func reset() 
+    /**
+     * Determines which buffer gets consumed, and which buffers should be dropped.
+     */
+    func poll(activeBuffers: [BufferMetadata], currentTime: Double, mode: InferenceMode, hasState: Bool, flush: Bool)  -> ExecutionPlan
     
 }
 
@@ -596,10 +605,26 @@ public convenience init(config: BufferConfig) {
     
 
     
-open func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: Bool, flush: Bool) -> ExecutionPlan {
-    return try!  FfiConverterTypeExecutionPlan.lift(try! rustCall() {
-    uniffi_vitallens_core_fn_method_bufferplanner_poll(self.uniffiClonePointer(),
-        FfiConverterDictionaryStringUInt32.lower(currentCounts),
+    /**
+     * Evaluates a target ROI against the list of known buffers.
+     */
+open func evaluateTarget(targetRoi: Rect, timestamp: Double, activeBuffers: [BufferMetadata]) -> BufferAction {
+    return try!  FfiConverterTypeBufferAction.lift(try! rustCall() {
+    uniffi_vitallens_core_fn_method_bufferplanner_evaluate_target(self.uniffiClonePointer(),
+        FfiConverterTypeRect.lower(targetRoi),
+        FfiConverterDouble.lower(timestamp),
+        FfiConverterSequenceTypeBufferMetadata.lower(activeBuffers),$0
+    )
+})
+}
+    
+    /**
+     * Determines if a buffer is actionable based on configuration constraints.
+     */
+open func isReady(count: UInt32, mode: InferenceMode, hasState: Bool, flush: Bool) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_vitallens_core_fn_method_bufferplanner_is_ready(self.uniffiClonePointer(),
+        FfiConverterUInt32.lower(count),
         FfiConverterTypeInferenceMode.lower(mode),
         FfiConverterBool.lower(hasState),
         FfiConverterBool.lower(flush),$0
@@ -607,19 +632,19 @@ open func poll(currentCounts: [String: UInt32], mode: InferenceMode, hasState: B
 })
 }
     
-open func registerRoi(targetRoi: Rect, timestamp: Double) -> BufferAction {
-    return try!  FfiConverterTypeBufferAction.lift(try! rustCall() {
-    uniffi_vitallens_core_fn_method_bufferplanner_register_roi(self.uniffiClonePointer(),
-        FfiConverterTypeRect.lower(targetRoi),
-        FfiConverterDouble.lower(timestamp),$0
+    /**
+     * Determines which buffer gets consumed, and which buffers should be dropped.
+     */
+open func poll(activeBuffers: [BufferMetadata], currentTime: Double, mode: InferenceMode, hasState: Bool, flush: Bool) -> ExecutionPlan {
+    return try!  FfiConverterTypeExecutionPlan.lift(try! rustCall() {
+    uniffi_vitallens_core_fn_method_bufferplanner_poll(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeBufferMetadata.lower(activeBuffers),
+        FfiConverterDouble.lower(currentTime),
+        FfiConverterTypeInferenceMode.lower(mode),
+        FfiConverterBool.lower(hasState),
+        FfiConverterBool.lower(flush),$0
     )
 })
-}
-    
-open func reset() {try! rustCall() {
-    uniffi_vitallens_core_fn_method_bufferplanner_reset(self.uniffiClonePointer(),$0
-    )
-}
 }
     
 
@@ -809,14 +834,14 @@ public func FfiConverterTypeSession_lower(_ value: Session) -> UnsafeMutableRawP
 
 public struct BufferAction {
     public var action: BufferActionType
-    public var id: String
+    public var matchedId: String?
     public var roi: Rect?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(action: BufferActionType, id: String, roi: Rect?) {
+    public init(action: BufferActionType, matchedId: String?, roi: Rect?) {
         self.action = action
-        self.id = id
+        self.matchedId = matchedId
         self.roi = roi
     }
 }
@@ -828,7 +853,7 @@ extension BufferAction: Equatable, Hashable {
         if lhs.action != rhs.action {
             return false
         }
-        if lhs.id != rhs.id {
+        if lhs.matchedId != rhs.matchedId {
             return false
         }
         if lhs.roi != rhs.roi {
@@ -839,7 +864,7 @@ extension BufferAction: Equatable, Hashable {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(action)
-        hasher.combine(id)
+        hasher.combine(matchedId)
         hasher.combine(roi)
     }
 }
@@ -853,14 +878,14 @@ public struct FfiConverterTypeBufferAction: FfiConverterRustBuffer {
         return
             try BufferAction(
                 action: FfiConverterTypeBufferActionType.read(from: &buf), 
-                id: FfiConverterString.read(from: &buf), 
+                matchedId: FfiConverterOptionString.read(from: &buf), 
                 roi: FfiConverterOptionTypeRect.read(from: &buf)
         )
     }
 
     public static func write(_ value: BufferAction, into buf: inout [UInt8]) {
         FfiConverterTypeBufferActionType.write(value.action, into: &buf)
-        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.matchedId, into: &buf)
         FfiConverterOptionTypeRect.write(value.roi, into: &buf)
     }
 }
@@ -968,6 +993,96 @@ public func FfiConverterTypeBufferConfig_lift(_ buf: RustBuffer) throws -> Buffe
 #endif
 public func FfiConverterTypeBufferConfig_lower(_ value: BufferConfig) -> RustBuffer {
     return FfiConverterTypeBufferConfig.lower(value)
+}
+
+
+public struct BufferMetadata {
+    public var id: String
+    public var roi: Rect
+    public var count: UInt32
+    public var createdAt: Double
+    public var lastSeen: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, roi: Rect, count: UInt32, createdAt: Double, lastSeen: Double) {
+        self.id = id
+        self.roi = roi
+        self.count = count
+        self.createdAt = createdAt
+        self.lastSeen = lastSeen
+    }
+}
+
+
+
+extension BufferMetadata: Equatable, Hashable {
+    public static func ==(lhs: BufferMetadata, rhs: BufferMetadata) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.roi != rhs.roi {
+            return false
+        }
+        if lhs.count != rhs.count {
+            return false
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return false
+        }
+        if lhs.lastSeen != rhs.lastSeen {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(roi)
+        hasher.combine(count)
+        hasher.combine(createdAt)
+        hasher.combine(lastSeen)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBufferMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BufferMetadata {
+        return
+            try BufferMetadata(
+                id: FfiConverterString.read(from: &buf), 
+                roi: FfiConverterTypeRect.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf), 
+                createdAt: FfiConverterDouble.read(from: &buf), 
+                lastSeen: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BufferMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeRect.write(value.roi, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterDouble.write(value.createdAt, into: &buf)
+        FfiConverterDouble.write(value.lastSeen, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBufferMetadata_lift(_ buf: RustBuffer) throws -> BufferMetadata {
+    return try FfiConverterTypeBufferMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBufferMetadata_lower(_ value: BufferMetadata) -> RustBuffer {
+    return FfiConverterTypeBufferMetadata.lower(value)
 }
 
 
@@ -2206,6 +2321,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeBufferMetadata: FfiConverterRustBuffer {
+    typealias SwiftType = [BufferMetadata]
+
+    public static func write(_ value: [BufferMetadata], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBufferMetadata.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BufferMetadata] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BufferMetadata]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBufferMetadata.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceSequenceFloat: FfiConverterRustBuffer {
     typealias SwiftType = [[Float]]
 
@@ -2225,32 +2365,6 @@ fileprivate struct FfiConverterSequenceSequenceFloat: FfiConverterRustBuffer {
             seq.append(try FfiConverterSequenceFloat.read(from: &buf))
         }
         return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterDictionaryStringUInt32: FfiConverterRustBuffer {
-    public static func write(_ value: [String: UInt32], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for (key, value) in value {
-            FfiConverterString.write(key, into: &buf)
-            FfiConverterUInt32.write(value, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: UInt32] {
-        let len: Int32 = try readInt(&buf)
-        var dict = [String: UInt32]()
-        dict.reserveCapacity(Int(len))
-        for _ in 0..<len {
-            let key = try FfiConverterString.read(from: &buf)
-            let value = try FfiConverterUInt32.read(from: &buf)
-            dict[key] = value
-        }
-        return dict
     }
 }
 
@@ -2358,13 +2472,13 @@ private var initializationResult: InitializationResult = {
     if (uniffi_vitallens_core_checksum_func_is_contained() != 19341) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_bufferplanner_poll() != 49505) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_evaluate_target() != 28280) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_bufferplanner_register_roi() != 44264) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_is_ready() != 20999) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_bufferplanner_reset() != 56277) {
+    if (uniffi_vitallens_core_checksum_method_bufferplanner_poll() != 3818) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_method_session_process_chunk() != 32523) {

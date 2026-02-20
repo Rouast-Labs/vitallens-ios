@@ -13,14 +13,14 @@ import UIKit
 // MARK: - Mocks
 
 actor MockROIStrategy: ROIStrategy {
-    var currentROIs: [CGRect] = []
+    var currentROI: CGRect? = nil
     
-    func setROIs(_ rois: [CGRect]) {
-        self.currentROIs = rois
+    func setROI(_ roi: CGRect?) {
+        self.currentROI = roi
     }
     
-    func determineROIs(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> [CGRect] {
-        return currentROIs
+    func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
+        return currentROI
     }
 }
 
@@ -153,7 +153,7 @@ final class StreamProcessorTests: XCTestCase {
     // MARK: - Test Cases
     
     func testProcessFrame_HappyPath_CallsStrategy() async throws {
-        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
         for i in 0..<10 {
             let frame = makeFrame(at: Double(i) * 0.033)
@@ -167,7 +167,7 @@ final class StreamProcessorTests: XCTestCase {
     }
     
     func testProcessFrame_NoROI_DoesNotCallStrategy() async throws {
-        await roiStrategy.setROIs([])
+        await roiStrategy.setROI(nil)
         
         for i in 0..<10 {
             let frame = makeFrame(at: Double(i) * 0.033)
@@ -181,7 +181,7 @@ final class StreamProcessorTests: XCTestCase {
     }
     
     func testResilience_BackoffAndRecovery() async throws {
-        await roiStrategy.setROIs([CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
         
         // 1. Initial Success
         for i in 0..<5 {
@@ -218,7 +218,7 @@ final class StreamProcessorTests: XCTestCase {
     }
     
     func testResilience_MaxRetries_ResetsState() async throws {
-        await roiStrategy.setROIs([CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
         
         // 1. Establish initial state
         for i in 0..<6 {
@@ -265,7 +265,7 @@ final class StreamProcessorTests: XCTestCase {
     // MARK: - New Coverage
     
     func testPauseResume_ControlsFrameFlow() async throws {
-        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
         // 1. Pause
         await processor.pause()
@@ -307,7 +307,7 @@ final class StreamProcessorTests: XCTestCase {
         )
         _ = try await failProcessor.start()
         
-        await roiStrategy.setROIs([CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)])
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
         for i in 0..<10 {
             let frame = makeFrame(at: Double(i) * 0.033)
