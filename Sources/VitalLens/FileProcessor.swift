@@ -137,7 +137,7 @@ actor FileProcessor {
                 if let window = buffer.execute(command: command) {
                     let (result, newState) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
                     currentState = newState
-                    _ = session.processChunk(chunk: result.toInputChunk(), mode: .incremental)
+                    _ = session.process(input: result.toSessionInput(), mode: .incremental)
                 }
             }
         }
@@ -149,14 +149,14 @@ actor FileProcessor {
             let command = InferenceCommand(bufferId: "file", takeCount: UInt32(buffer.count), keepCount: 0)
             if let window = buffer.execute(command: command) {
                 let (result, _) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
-                _ = session.processChunk(chunk: result.toInputChunk(), mode: .incremental)
+                _ = session.process(input: result.toSessionInput(), mode: .incremental)
                 finalMessage = result.message
                 finalModelUsed = result.modelUsed
             }
         }
         
-        let emptyChunk = InputChunk(face: nil, signals: [:], timestamp: [])
-        let globalResult = session.processChunk(chunk: emptyChunk, mode: .global)
+        let emptyInput = SessionInput(face: nil, signals: [:], timestamp: [])
+        let globalResult = session.process(input: emptyInput, mode: .global)
         return globalResult.toVitalLensResult(originalState: nil as StateData?, message: finalMessage, modelUsed: finalModelUsed)
     }
 }

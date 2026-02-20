@@ -220,8 +220,8 @@ actor StreamProcessor {
                     await bufferManager.updateState(newState)
                     
                     if let sess = self.session {
-                        let chunk = rawResult.toInputChunk()
-                        let sessionResult = sess.processChunk(chunk: chunk, mode: .incremental)
+                        let input = rawResult.toSessionInput()
+                        let sessionResult = sess.process(input: input, mode: .incremental)
                         let refined = sessionResult.toVitalLensResult(
                             originalState: rawResult.state,
                             message: rawResult.message,

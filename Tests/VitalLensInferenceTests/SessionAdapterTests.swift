@@ -28,7 +28,7 @@ final class SessionAdapterTests: XCTestCase {
         XCTAssertEqual(rustRect.height, 40.0)
     }
     
-    func testVitalLensResultToInputChunk_WithFace() {
+    func testVitalLensResultToSessionInput_WithFace() {
         let wave = TimeSeries(data: [1.0, 2.0], confidence: [0.5, 0.5], unit: "bpm", note: nil)
         let face = FaceData(coordinates: [[0.5, 0.25, 0.75, 1.0], [0.5, 0.25, 0.75, 1.0]], confidence: [0.5, 0.5], note: "ok")
         let result = VitalLensResult(
@@ -38,7 +38,7 @@ final class SessionAdapterTests: XCTestCase {
             time: [100.0, 101.0]
         )
         
-        let chunk = result.toInputChunk()
+        let chunk = result.toSessionInput()
         
         XCTAssertEqual(chunk.timestamp, [100.0, 101.0])
         XCTAssertEqual(chunk.signals["ppg"]?.data, [1.0, 2.0])
@@ -49,12 +49,12 @@ final class SessionAdapterTests: XCTestCase {
         XCTAssertEqual(chunk.face?.confidence, [0.5, 0.5])
     }
     
-    func testVitalLensResultToInputChunk_WithoutFace() {
+    func testVitalLensResultToSessionInput_WithoutFace() {
         let wave = TimeSeries(data: [1.0], confidence: [0.8], unit: "bpm", note: nil)
         let face = FaceData(coordinates: nil, confidence: nil, note: nil)
         let result = VitalLensResult(face: face, vitals: [:], waveforms: ["ppg": wave], time: [100.0])
         
-        let chunk = result.toInputChunk()
+        let chunk = result.toSessionInput()
         XCTAssertNil(chunk.face, "Missing face coordinates should yield a nil FaceInput")
     }
     

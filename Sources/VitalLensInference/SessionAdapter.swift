@@ -22,7 +22,7 @@ public extension CGRect {
 }
 
 public extension VitalLensResult {
-    func toInputChunk() -> VitalLensCore.InputChunk {
+    func toSessionInput() -> VitalLensCore.SessionInput {
         var signalsMap: [String: SignalInput] = [:]
         
         for (key, wave) in self.waveforms {
@@ -37,7 +37,7 @@ public extension VitalLensResult {
             )
         }
         
-        return InputChunk(
+        return SessionInput(
             face: faceInput,
             signals: signalsMap,
             timestamp: self.time
@@ -99,5 +99,5 @@ extension VitalLensCore.InferenceCommand: @unchecked Sendable {}
 extension VitalLensCore.InferenceMode: @unchecked Sendable {}
 extension VitalLensCore.Rect: @unchecked Sendable {}
 extension VitalLensCore.SessionConfig: @unchecked Sendable {}
-extension VitalLensCore.InputChunk: @unchecked Sendable {}
+extension VitalLensCore.SessionInput: @unchecked Sendable {}
 extension VitalLensCore.BufferConfig: @unchecked Sendable {}

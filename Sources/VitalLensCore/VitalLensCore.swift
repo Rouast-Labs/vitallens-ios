@@ -706,7 +706,7 @@ public func FfiConverterTypeBufferPlanner_lower(_ value: BufferPlanner) -> Unsaf
 
 public protocol SessionProtocol : AnyObject {
     
-    func processChunk(chunk: InputChunk, mode: WaveformMode)  -> SessionResult
+    func process(input: SessionInput, mode: WaveformMode)  -> SessionResult
     
 }
 
@@ -768,10 +768,10 @@ public convenience init(config: SessionConfig) {
     
 
     
-open func processChunk(chunk: InputChunk, mode: WaveformMode) -> SessionResult {
+open func process(input: SessionInput, mode: WaveformMode) -> SessionResult {
     return try!  FfiConverterTypeSessionResult.lift(try! rustCall() {
-    uniffi_vitallens_core_fn_method_session_process_chunk(self.uniffiClonePointer(),
-        FfiConverterTypeInputChunk.lower(chunk),
+    uniffi_vitallens_core_fn_method_session_process(self.uniffiClonePointer(),
+        FfiConverterTypeSessionInput.lower(input),
         FfiConverterTypeWaveformMode.lower(mode),$0
     )
 })
@@ -1366,80 +1366,6 @@ public func FfiConverterTypeInferenceCommand_lower(_ value: InferenceCommand) ->
 }
 
 
-public struct InputChunk {
-    public var face: FaceInput?
-    public var signals: [String: SignalInput]
-    public var timestamp: [Double]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(face: FaceInput?, signals: [String: SignalInput], timestamp: [Double]) {
-        self.face = face
-        self.signals = signals
-        self.timestamp = timestamp
-    }
-}
-
-
-
-extension InputChunk: Equatable, Hashable {
-    public static func ==(lhs: InputChunk, rhs: InputChunk) -> Bool {
-        if lhs.face != rhs.face {
-            return false
-        }
-        if lhs.signals != rhs.signals {
-            return false
-        }
-        if lhs.timestamp != rhs.timestamp {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(face)
-        hasher.combine(signals)
-        hasher.combine(timestamp)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeInputChunk: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> InputChunk {
-        return
-            try InputChunk(
-                face: FfiConverterOptionTypeFaceInput.read(from: &buf), 
-                signals: FfiConverterDictionaryStringTypeSignalInput.read(from: &buf), 
-                timestamp: FfiConverterSequenceDouble.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: InputChunk, into buf: inout [UInt8]) {
-        FfiConverterOptionTypeFaceInput.write(value.face, into: &buf)
-        FfiConverterDictionaryStringTypeSignalInput.write(value.signals, into: &buf)
-        FfiConverterSequenceDouble.write(value.timestamp, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeInputChunk_lift(_ buf: RustBuffer) throws -> InputChunk {
-    return try FfiConverterTypeInputChunk.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeInputChunk_lower(_ value: InputChunk) -> RustBuffer {
-    return FfiConverterTypeInputChunk.lower(value)
-}
-
-
 public struct Rect {
     public var x: Float
     public var y: Float
@@ -1617,6 +1543,80 @@ public func FfiConverterTypeSessionConfig_lift(_ buf: RustBuffer) throws -> Sess
 #endif
 public func FfiConverterTypeSessionConfig_lower(_ value: SessionConfig) -> RustBuffer {
     return FfiConverterTypeSessionConfig.lower(value)
+}
+
+
+public struct SessionInput {
+    public var face: FaceInput?
+    public var signals: [String: SignalInput]
+    public var timestamp: [Double]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(face: FaceInput?, signals: [String: SignalInput], timestamp: [Double]) {
+        self.face = face
+        self.signals = signals
+        self.timestamp = timestamp
+    }
+}
+
+
+
+extension SessionInput: Equatable, Hashable {
+    public static func ==(lhs: SessionInput, rhs: SessionInput) -> Bool {
+        if lhs.face != rhs.face {
+            return false
+        }
+        if lhs.signals != rhs.signals {
+            return false
+        }
+        if lhs.timestamp != rhs.timestamp {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(face)
+        hasher.combine(signals)
+        hasher.combine(timestamp)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSessionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionInput {
+        return
+            try SessionInput(
+                face: FfiConverterOptionTypeFaceInput.read(from: &buf), 
+                signals: FfiConverterDictionaryStringTypeSignalInput.read(from: &buf), 
+                timestamp: FfiConverterSequenceDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SessionInput, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeFaceInput.write(value.face, into: &buf)
+        FfiConverterDictionaryStringTypeSignalInput.write(value.signals, into: &buf)
+        FfiConverterSequenceDouble.write(value.timestamp, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionInput_lift(_ buf: RustBuffer) throws -> SessionInput {
+    return try FfiConverterTypeSessionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionInput_lower(_ value: SessionInput) -> RustBuffer {
+    return FfiConverterTypeSessionInput.lower(value)
 }
 
 
@@ -2673,7 +2673,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_vitallens_core_checksum_method_bufferplanner_poll() != 3818) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_vitallens_core_checksum_method_session_process_chunk() != 32523) {
+    if (uniffi_vitallens_core_checksum_method_session_process() != 27116) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_constructor_bufferplanner_new() != 8442) {
