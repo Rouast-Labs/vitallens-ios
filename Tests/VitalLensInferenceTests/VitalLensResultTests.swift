@@ -85,34 +85,6 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertEqual(result2.state?.data, "AAAAAAAAAAA=")
     }
     
-    // MARK: - Legacy Compatibility
-    
-    // func testLegacyScalarDecoding() throws {
-    //     // Simulates a V1/V2 API response where vitals are objects, not arrays
-    //     let json = """
-    //     {
-    //         "face": {}, "time": [],
-    //         "vital_signs": {
-    //             "stress_index": {
-    //                 "value": 45.0,
-    //                 "confidence": 0.8,
-    //                 "unit": "pts"
-    //             }
-    //         }
-    //     }
-    //     """.data(using: .utf8)!
-        
-    //     let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
-        
-    //     XCTAssertNotNil(result.signals["stress_index"])
-    //     let stress = result.signals["stress_index"]!
-        
-    //     // Should be converted to single-element array
-    //     XCTAssertEqual(stress.data.count, 1)
-    //     XCTAssertEqual(stress.data.first, 45.0)
-    //     XCTAssertEqual(stress.confidence.first, 0.8)
-    // }
-    
     func testMissingSignalsDoNotCrash() throws {
         let json = """
         {
@@ -129,34 +101,6 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertNil(result.ppg)
         XCTAssertNil(result.heartRate)
     }
-    
-    // MARK: - Helper Logic
-    
-    // func testScalarResultHelper() {
-    //     // Case 1: Data exists
-    //     let series = Waveform(
-    //         data: [60, 61, 62],
-    //         confidence: [0.9, 0.9, 0.95],
-    //         unit: "bpm",
-    //         note: "Test"
-    //     )
-        
-    //     let scalar = series.latest
-    //     XCTAssertNotNil(scalar)
-        
-    //     XCTAssertEqual(scalar?.value ?? 0, 62.0, accuracy: 0.01)
-    //     XCTAssertEqual(scalar?.confidence ?? 0, 0.95, accuracy: 0.01)
-    //     XCTAssertEqual(scalar?.unit, "bpm")
-        
-    //     // Case 2: Empty Data
-    //     let emptySeries = Waveform(
-    //         data: [],
-    //         confidence: [],
-    //         unit: "bpm",
-    //         note: nil
-    //     )
-    //     XCTAssertNil(emptySeries.latest)
-    // }
     
     func testResultConvenienceAccessors() {
         let result = VitalLensResult(
@@ -180,5 +124,60 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertEqual(result.sbp?.value, 120.0)
         
         XCTAssertNil(result.respiratoryRate)
+    }
+
+    func testVitalCustomDecoding_Defaults() throws {
+        // Verifies that the custom Vital decoder handles missing fields gracefully
+        let json = "{\"value\": 75.0}".data(using: .utf8)!
+        let vital = try JSONDecoder().decode(Vital.self, from: json)
+        
+        XCTAssertEqual(vital.value, 75.0)
+        XCTAssertEqual(vital.confidence, 0.0, "Missing confidence should default to 0")
+        XCTAssertEqual(vital.unit, "", "Missing unit should default to empty string")
+    }
+
+    func testWaveformDecoding() throws {
+        // Verifies standard array-based decoding for the Waveform struct
+        let json = """
+        {
+            "data": [1.0, 2.0],
+            "confidence": [0.9, 0.8],
+            "unit": "unitless"
+        }
+        """.data(using: .utf8)!
+        let wave = try JSONDecoder().decode(Waveform.self, from: json)
+        XCTAssertEqual(wave.data.count, 2)
+        XCTAssertEqual(wave.unit, "unitless")
+    }
+
+    // MARK: - Payload Routing
+
+    func testPayloadRouting() throws {
+        let json = """
+        {
+            "face": {}, "time": [],
+            "vital_signs": {
+                "stress_index": {
+                    "value": 45.0,
+                    "confidence": 0.8,
+                    "unit": "pts"
+                },
+                "resp_signal": {
+                    "data": [0.1, 0.2],
+                    "confidence": [1.0, 1.0]
+                }
+            }
+        }
+        """.data(using: .utf8)!
+        
+        let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
+        
+        // stress_index (object) -> result.vitals
+        XCTAssertNotNil(result.vitals["stress_index"])
+        XCTAssertEqual(result.vitals["stress_index"]?.value, 45.0)
+        
+        // resp_signal (array) -> result.waveforms
+        XCTAssertNotNil(result.waveforms["resp_signal"])
+        XCTAssertEqual(result.waveforms["resp_signal"]?.data.count, 2)
     }
 }
