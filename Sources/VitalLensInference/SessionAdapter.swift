@@ -7,7 +7,7 @@ public extension ModelConfig {
         return VitalLensCore.SessionConfig(
             modelName: self.modelName,
             supportedVitals: self.supportedVitals,
-            returnWaveforms: nil,
+            returnWaveforms: ["ppg_waveform", "respiratory_waveform"],
             fpsTarget: Float(self.fpsTarget),
             inputSize: UInt64(self.inputSize),
             nInputs: UInt64(self.nInputs),

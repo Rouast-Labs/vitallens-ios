@@ -221,7 +221,7 @@ actor StreamProcessor {
                     
                     if let sess = self.session {
                         let input = rawResult.toSessionInput()
-                        let sessionResult = sess.process(input: input, mode: .incremental)
+                        let sessionResult = sess.process(input: input, mode: .windowed(seconds: 10))
                         let refined = sessionResult.toVitalLensResult(
                             originalState: rawResult.state,
                             message: rawResult.message,
