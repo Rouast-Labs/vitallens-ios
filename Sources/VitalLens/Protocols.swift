@@ -1,5 +1,6 @@
 import Foundation
 import CoreVideo
+import CoreGraphics
 import ImageIO
 import VitalLensInference
 
@@ -47,4 +48,29 @@ public protocol CameraStreaming: Sendable {
     #if canImport(UIKit)
     @MainActor func showPreview(on view: UIView)
     #endif
+}
+
+public extension CGRect {
+    func mappedToRaw(orientation: CGImagePropertyOrientation, isMirrored: Bool) -> CGRect {
+        var rect = self
+        
+        // Undo horizontal reflection
+        if isMirrored {
+            rect = CGRect(x: 1.0 - rect.origin.x - rect.width, y: rect.origin.y, width: rect.width, height: rect.height)
+        }
+        
+        // Undo rotation (inverse of the forward rotation)
+        switch orientation {
+        case .left, .leftMirrored: 
+            rect = CGRect(x: 1.0 - rect.origin.y - rect.height, y: rect.origin.x, width: rect.height, height: rect.width)
+        case .down, .downMirrored: 
+            rect = CGRect(x: 1.0 - rect.origin.x - rect.width, y: 1.0 - rect.origin.y - rect.height, width: rect.width, height: rect.height)
+        case .right, .rightMirrored: 
+            rect = CGRect(x: rect.origin.y, y: 1.0 - rect.origin.x - rect.width, width: rect.height, height: rect.width)
+        default:
+            break
+        }
+        
+        return rect
+    }
 }

@@ -19,7 +19,7 @@ final class ImageProcessorTests: XCTestCase {
         super.tearDown()
     }
     
-    // MARK: - BGRA Tests (Simulator Path)
+    // MARK: - BGRA Tests (API / Simulator Path)
     
     func testProcessBGRA_SolidRed_ReturnsCorrectRGB() throws {
         // Red in BGRA is: B=0, G=0, R=255
@@ -29,7 +29,9 @@ final class ImageProcessorTests: XCTestCase {
         let data = try processor.process(
             pixelBuffer: buffer,
             roi: CGRect(x: 0, y: 0, width: 1, height: 1),
-            targetSize: targetSize
+            targetSize: targetSize,
+            orientation: .up,
+            isMirrored: false
         )
         
         XCTAssertEqual(data.count, targetSize * targetSize * 3)
@@ -48,7 +50,9 @@ final class ImageProcessorTests: XCTestCase {
         let greenData = try processor.process(
             pixelBuffer: buffer,
             roi: CGRect(x: 0.5, y: 0.0, width: 0.5, height: 0.5),
-            targetSize: targetSize
+            targetSize: targetSize,
+            orientation: .up,
+            isMirrored: false
         )
         
         // Check the middle pixel of the result
@@ -58,7 +62,88 @@ final class ImageProcessorTests: XCTestCase {
         XCTAssertEqual(greenData[midIndex+2], 0)
     }
     
-    // MARK: - YUV Tests (Device Path)
+    func testProcessBGRA_OrientationRight_CorrectsToUpright() throws {
+        // Create a buffer that is physically "rotated" 90 degrees CW (.right)
+        // Raw quadrants: TL:Red, TR:Green, BL:Blue, BR:White
+        let rawSidewaysBuffer = try createQuadrantBGRAPixelBuffer(width: 100, height: 100)
+        let targetSize = 10
+        
+        // When we pass .right, the processor applies a 90 CW rotation to correct it.
+        // Resulting upright image should be:
+        // TL: Blue (was BL)
+        // TR: Red (was TL)
+        // BL: White (was BR)
+        // BR: Green (was TR)
+        
+        let data = try processor.process(
+            pixelBuffer: rawSidewaysBuffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1), // Full image
+            targetSize: targetSize,
+            orientation: .right,
+            isMirrored: false
+        )
+        
+        // Check Top-Left pixel (Should be Blue)
+        let tlIndex = 0
+        XCTAssertEqual(data[tlIndex], 0)
+        XCTAssertEqual(data[tlIndex+1], 0)
+        XCTAssertEqual(data[tlIndex+2], 255)
+        
+        // Check Bottom-Left pixel (Should be White)
+        let blIndex = ((targetSize - 1) * targetSize) * 3
+        XCTAssertEqual(data[blIndex], 255)
+        XCTAssertEqual(data[blIndex+1], 255)
+        XCTAssertEqual(data[blIndex+2], 255)
+    }
+
+    func testProcessBGRA_Mirrored_CorrectsToUnmirrored() throws {
+        // Raw quadrants: TL:Red, TR:Green, BL:Blue, BR:White
+        let rawMirroredBuffer = try createQuadrantBGRAPixelBuffer(width: 100, height: 100)
+        let targetSize = 10
+        
+        // If we tell the processor it is mirrored, it should flip it horizontally.
+        // Resulting unmirrored image should be:
+        // TL: Green (was TR)
+        // TR: Red (was TL)
+        
+        let data = try processor.process(
+            pixelBuffer: rawMirroredBuffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1), // Full image
+            targetSize: targetSize,
+            orientation: .up,
+            isMirrored: true
+        )
+        
+        // Check Top-Left pixel (Should be Green)
+        let tlIndex = 0
+        XCTAssertEqual(data[tlIndex], 0)
+        XCTAssertEqual(data[tlIndex+1], 255)
+        XCTAssertEqual(data[tlIndex+2], 0)
+        
+        // Check Top-Right pixel (Should be Red)
+        let trIndex = (targetSize - 1) * 3
+        XCTAssertEqual(data[trIndex], 255)
+        XCTAssertEqual(data[trIndex+1], 0)
+        XCTAssertEqual(data[trIndex+2], 0)
+    }
+
+    func testProcessBGRA_WithOrientationAndMirroring_DoesNotCrash() throws {
+        let buffer = try createQuadrantBGRAPixelBuffer(width: 100, height: 100)
+        let targetSize = 20
+        
+        // Exercise the vImage rotation and reflection pathways together
+        let data = try processor.process(
+            pixelBuffer: buffer,
+            roi: CGRect(x: 0, y: 0, width: 1, height: 1),
+            targetSize: targetSize,
+            orientation: .left,
+            isMirrored: true
+        )
+        
+        XCTAssertEqual(data.count, targetSize * targetSize * 3)
+    }
+    
+    // MARK: - YUV Tests (API / Device Path)
     
     func testProcessYUV_SolidColor_ReturnsCorrectSize() throws {
         // Solid Gray
@@ -68,7 +153,9 @@ final class ImageProcessorTests: XCTestCase {
         let data = try processor.process(
             pixelBuffer: buffer,
             roi: CGRect(x: 0, y: 0, width: 1, height: 1),
-            targetSize: targetSize
+            targetSize: targetSize,
+            orientation: .up,
+            isMirrored: false
         )
         
         XCTAssertEqual(data.count, targetSize * targetSize * 3)
@@ -82,15 +169,15 @@ final class ImageProcessorTests: XCTestCase {
         let buffer = try createBGRAPixelBuffer(width: 100, height: 100, r: 255, g: 0, b: 0)
         
         // 1. Process at size 40
-        _ = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 40)
+        _ = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 40, orientation: .up, isMirrored: false)
         
         // 2. Resize to 20 (Triggers freeBuffers -> allocateBuffers logic)
-        let dataSmall = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 20)
+        let dataSmall = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 20, orientation: .up, isMirrored: false)
         
         XCTAssertEqual(dataSmall.count, 20 * 20 * 3)
         
         // 3. Resize UP to 60
-        let dataLarge = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 60)
+        let dataLarge = try processor.process(pixelBuffer: buffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 60, orientation: .up, isMirrored: false)
         
         XCTAssertEqual(dataLarge.count, 60 * 60 * 3)
     }
@@ -109,7 +196,7 @@ final class ImageProcessorTests: XCTestCase {
             return
         }
         
-        XCTAssertThrowsError(try processor.process(pixelBuffer: validBuffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 40)) { error in
+        XCTAssertThrowsError(try processor.process(pixelBuffer: validBuffer, roi: .init(x: 0, y: 0, width: 1, height: 1), targetSize: 40, orientation: .up, isMirrored: false)) { error in
             guard let e = error as? VitalLensError, case .processingError(let msg) = e else {
                 XCTFail("Wrong error type received: \(error)")
                 return
@@ -122,7 +209,7 @@ final class ImageProcessorTests: XCTestCase {
         let buffer = try createBGRAPixelBuffer(width: 100, height: 100, r: 0, g: 0, b: 0)
         let badROI = CGRect(x: 1.1, y: 0, width: 0.5, height: 0.5)
         
-        XCTAssertThrowsError(try processor.process(pixelBuffer: buffer, roi: badROI, targetSize: 40))
+        XCTAssertThrowsError(try processor.process(pixelBuffer: buffer, roi: badROI, targetSize: 40, orientation: .up, isMirrored: false))
     }
 
     func testProcess_ReturnsTightlyPackedRGB() throws {
@@ -135,16 +222,11 @@ final class ImageProcessorTests: XCTestCase {
         let roi = CGRect(x: 0, y: 0, width: 1, height: 1) // Full frame
         
         // Act
-        let data = try processor.process(pixelBuffer: pixelBuffer, roi: roi, targetSize: targetSize)
+        let data = try processor.process(pixelBuffer: pixelBuffer, roi: roi, targetSize: targetSize, orientation: .up, isMirrored: false)
         
         // Assert
         let expectedBytes = targetSize * targetSize * 3
         XCTAssertEqual(data.count, expectedBytes, "Output data size must match width * height * 3 exactly")
-        
-        // Verify no padding:
-        // If vImage added padding, the size would likely be larger (e.g. aligned to 16/32 bytes per row)
-        // For 40px width: 40 * 3 = 120 bytes per row. 120 is not a power of 2, 
-        // ensuring we catch alignment issues if they exist.
     }
 
     // MARK: - Legacy App Support Tests (CoreML Path)
@@ -167,8 +249,7 @@ final class ImageProcessorTests: XCTestCase {
         XCTAssertEqual(CVPixelBufferGetHeight(outputUp), 40)
         XCTAssertEqual(CVPixelBufferGetPixelFormatType(outputUp), kCVPixelFormatType_32ARGB, "Legacy path must return ARGB")
         
-        // 2. Process with Rotation (Left) -> Should effectively swap dimensions if non-square, but here we output square 40x40.
-        // We verify it doesn't crash and returns valid buffer.
+        // 2. Process with Rotation (Left)
         let outputLeft = try processor.processToPixelBuffer(
             pixelBuffer: buffer,
             roi: CGRect(x: 0, y: 0, width: 1, height: 1),

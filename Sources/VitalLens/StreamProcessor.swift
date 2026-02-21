@@ -13,8 +13,10 @@ import UIKit
 ///   - buffer: The raw camera frame.
 ///   - roi: The normalized Region of Interest.
 ///   - config: The model configuration (e.g. input size).
+///   - orientation: The orientation of the image.
+///   - isMirrored: Whether the image is mirrored.
 /// - Returns: An InferenceUnit (either RGB data or a PixelBuffer).
-public typealias FrameTransformer = @Sendable (CVPixelBuffer, CGRect, ModelConfig) throws -> InferenceUnit
+public typealias FrameTransformer = @Sendable (CVPixelBuffer, CGRect, ModelConfig, CGImagePropertyOrientation, Bool) throws -> InferenceUnit
 
 /// The engine that coordinates the camera, and inference loop.
 actor StreamProcessor {
@@ -37,7 +39,7 @@ actor StreamProcessor {
     private var frameSignal: AsyncStream<Void>.Continuation?
     private var inferenceTask: Task<Void, Never>?
 
-    // Default Processor (Retained if no custom transformer is provided)
+    // Shared ImageProcessor instance for the default transformer
     private let defaultImageProcessor = ImageProcessor()
 
     init(
@@ -54,17 +56,19 @@ actor StreamProcessor {
         self.roiStrategy = roiStrategy ?? FaceROIStrategy()        
         self.bufferManager = BufferManager()
         
-        // Default Transformer: Convert to RGB Data using ImageProcessor
+        // Set up the transformer
         if let transformer = transformer {
             self.transformer = transformer
         } else {
-            // Capture the processor instance for the closure
+            // Default transformer for API Inference (RGB Data)
             let processor = self.defaultImageProcessor
-            self.transformer = { buffer, roi, config in
+            self.transformer = { buffer, roi, config, orientation, isMirrored in
                 let data = try processor.process(
                     pixelBuffer: buffer, 
                     roi: roi, 
-                    targetSize: config.inputSize
+                    targetSize: config.inputSize,
+                    orientation: orientation,
+                    isMirrored: isMirrored
                 )
                 return .rgbData(data)
             }
@@ -75,7 +79,7 @@ actor StreamProcessor {
     /// - Parameter preview: A sendable wrapper containing the UIView (iOS Only).
     func start(preview: SendableUIPreview? = nil) async throws -> AsyncStream<VitalLensResult> {
         
-        // 1. Prepare Config
+        // Resolve config and setup session
         self.config = try await strategy.resolveConfig()
         let bufConfig = try await strategy.bufferConfig
 
@@ -84,7 +88,7 @@ actor StreamProcessor {
         
         self.isPaused = false
         
-        // 2. Setup Signaling for Inference Loop
+        // Setup signal stream for incoming frames
         let signalStream = AsyncStream<Void> { continuation in
             self.frameSignal = continuation
         }
@@ -93,7 +97,7 @@ actor StreamProcessor {
             await self.runInferenceLoop(source: signalStream)
         }
         
-        // 3. Start Camera (Main Actor)
+        // Start camera
         #if canImport(UIKit)
         if let wrapper = preview, let view = wrapper.view as? UIView {
             await MainActor.run { camera.showPreview(on: view) }
@@ -101,7 +105,7 @@ actor StreamProcessor {
         try await camera.start()
         #endif
         
-        // 4. Return Output Stream
+        // Return output stream
         return AsyncStream { continuation in
             self.outputContinuation = continuation
             
@@ -151,8 +155,6 @@ actor StreamProcessor {
         }
     }
     
-    // MARK: - Frame Processing
-    
     /// Called on every frame arrival.
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
@@ -167,7 +169,8 @@ actor StreamProcessor {
         
         for item in allBuffers {
             do {
-                let unit = try transformer(cvBuffer, item.roi, config)
+                // Transform frame using the updated closure signature
+                let unit = try transformer(cvBuffer, item.roi, config, frame.orientation, frame.isMirrored)
 
                 let context = InferenceContext(
                     timestamp: frame.timestamp,
@@ -182,15 +185,13 @@ actor StreamProcessor {
             }
         }
         
-        // Wake up inference loop
+        // Signal inference loop
         frameSignal?.yield()
     }
     
-    // MARK: - Inference Loop
-    
     /// Background task that monitors buffers and triggers inference when ready.
     private func runInferenceLoop(source: AsyncStream<Void>) async {
-        // print("[StreamProcessor] Inference Loop Started")        
+        
         var consecutiveErrors = 0
         
         for await _ in source {
@@ -232,7 +233,7 @@ actor StreamProcessor {
                     
                 } catch {
                     consecutiveErrors += 1
-                    // print("[StreamProcessor] Inference Error (\(consecutiveErrors)): \(error)")
+                    
                     if consecutiveErrors >= 3 {
                         await bufferManager.reset()
                         self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())

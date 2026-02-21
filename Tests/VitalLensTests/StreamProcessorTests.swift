@@ -298,7 +298,7 @@ final class StreamProcessorTests: XCTestCase {
     }
     
     func testTransformerError_DoesNotCrashLoop() async throws {
-        let failingTransformer: FrameTransformer = { _, _, _ in
+        let failingTransformer: FrameTransformer = { _, _, _, _, _ in
             throw VitalLensError.processingError("Simulated Transform Fail")
         }
         

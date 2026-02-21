@@ -119,7 +119,9 @@ actor FileProcessor {
             if let bytes = try? processor.process(
                 pixelBuffer: frame.buffer,
                 roi: roi,
-                targetSize: config.inputSize
+                targetSize: config.inputSize,
+                orientation: source.orientation,
+                isMirrored: false
             ) {
                 buffer.append(unit: .rgbData(bytes), context: context)
             }

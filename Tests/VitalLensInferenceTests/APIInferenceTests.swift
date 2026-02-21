@@ -76,7 +76,6 @@ final class APIInferenceTests: XCTestCase {
         _ = try await apiInference.resolveModel(requestedModel: nil)
     }
 
-    // TODO: Unsure if this is the behavior we want
     func testProxyIgnoresAPIKey() async throws {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
         let proxy = URL(string: "https://my-proxy.com")!

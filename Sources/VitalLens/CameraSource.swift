@@ -10,12 +10,12 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     private let queue = DispatchQueue(label: "com.vitallens.camera", qos: .userInitiated)
     
-    // Real Camera Properties
+    // Camera components
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
     private var previewLayer: AVCaptureVideoPreviewLayer?
     
-    // Simulator Properties
+    // Simulator task
     private var simulatorTask: Task<Void, Never>?
     
     /// The stream of video frames.
@@ -34,14 +34,14 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     /// Configures and starts the camera session.
     func start() async throws {
         
-        // 1. SIMULATOR PATH
+        // Simulator setup
         #if targetEnvironment(simulator)
         print("[CameraSource] Running on Simulator. Starting synthetic stream.")
         startSimulatorStream()
         return
         #else
         
-        // 2. DEVICE PATH
+        // Request permissions
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             break
@@ -73,13 +73,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     /// Stops the camera session.
     func stop() {
-        // Stop Simulator Stream
+        // Stop simulator
         #if targetEnvironment(simulator)
         simulatorTask?.cancel()
         simulatorTask = nil
         #endif
         
-        // Stop Real Stream
+        // Stop session
         queue.async { [weak self] in
             if self?.session.isRunning == true {
                 self?.session.stopRunning()
@@ -93,7 +93,7 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     @MainActor
     func showPreview(on view: UIView) {
         #if targetEnvironment(simulator)
-        // On simulator, just show a placeholder color so we know layout is working
+        // Simulator placeholder
         view.backgroundColor = .darkGray
         #else
         if previewLayer == nil {
@@ -112,7 +112,7 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         #endif
     }
     
-    // MARK: - Device Configuration
+    // MARK: - Session Configuration
     
     private func configureSession() throws {
         session.beginConfiguration()
@@ -144,20 +144,33 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
             if connection.isVideoOrientationSupported {
                 connection.videoOrientation = .portrait
             }
-            if connection.isVideoMirroringSupported {
-                connection.isVideoMirrored = true
-            }
+        }
+    }
+    
+    // MARK: - Frame Capture
+    
+    /// Dynamically determines the current device orientation to map sideways faces back to upright
+    private var currentDeviceOrientation: CGImagePropertyOrientation {
+        switch UIDevice.current.orientation {
+        case .landscapeLeft:
+            return .right
+        case .landscapeRight:
+            return .left
+        case .portraitUpsideDown:
+            return .down
+        case .portrait, .faceUp, .faceDown, .unknown:
+            fallthrough
+        @unknown default:
+            return .up
         }
     }
     
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         
-        // Derive metadata from the internal session state
-        // TODO: Read this from the connection or device properties
         let frame = InputFrame(
             buffer: SendablePixelBuffer(pixelBuffer),
-            orientation: .up,
+            orientation: currentDeviceOrientation,
             isMirrored: true,
             timestamp: CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         )
@@ -165,7 +178,7 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         continuation?.yield(frame)
     }
     
-    // MARK: - Simulator Fallback
+    // MARK: - Simulator Support
     
     #if targetEnvironment(simulator)
     private func startSimulatorStream() {
@@ -173,7 +186,6 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         
         simulatorTask = Task {
             while !Task.isCancelled {
-                // Generate 30 FPS
                 try? await Task.sleep(nanoseconds: 33_333_333)
                 
                 if let buffer = createSimulatorBuffer() {
@@ -209,13 +221,12 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         
         guard status == kCVReturnSuccess, let pixelBuffer = buffer else { return nil }
         
-        // Fill with a moving color to simulate "liveness"
+        // Fill with gray placeholder
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         
         if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
             let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-            // Just fill it with gray for performance
             for y in 0..<height {
                 memset(baseAddress.advanced(by: y * bytesPerRow), 128, width * 4)
             }
