@@ -115,7 +115,7 @@ public struct VitalLensMonitorView: View {
             return
         }
         
-        let newClient = VitalLens(apiKey: apiKey, method: .vitalLens2, proxyURL: proxyURL)
+        let newClient = VitalLens(apiKey: apiKey, method: "vitallens-2.0", proxyURL: proxyURL)
         self.client = newClient
         
         Task {

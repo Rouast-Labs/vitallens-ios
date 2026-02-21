@@ -9,7 +9,7 @@ The main entry point for the SDK.
 ```swift
 init(
     apiKey: String? = nil,
-    method: Method = .vitalLens,
+    method: Method = "vitallens",
     faceDetectionFrequency: Double = 1.0,
     globalROI: CGRect? = nil,
     proxyURL: URL? = nil
@@ -17,8 +17,8 @@ init(
 ```
 
 - `method`:
-    * `.vitalLens`: Auto-select best model.
-    * `.vitalLens2`: Force version 2.0 (HRV support).
+    * `"vitallens"`: Auto-select best model.
+    * `"vitallens-2.0"`: Force version 2.0 (HRV support).
 - `faceDetectionFrequency`: How often (Hz) to run Vision face detection. Lower values save battery but track movement slower.
 
 ### Methods

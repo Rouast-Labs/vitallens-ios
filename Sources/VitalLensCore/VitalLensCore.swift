@@ -1449,6 +1449,7 @@ public func FfiConverterTypeRect_lower(_ value: Rect) -> RustBuffer {
 
 
 public struct SessionConfig {
+    public var modelName: String
     public var supportedVitals: [String]
     public var returnWaveforms: [String]?
     public var fpsTarget: Float
@@ -1458,7 +1459,8 @@ public struct SessionConfig {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supportedVitals: [String], returnWaveforms: [String]?, fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
+    public init(modelName: String, supportedVitals: [String], returnWaveforms: [String]?, fpsTarget: Float, inputSize: UInt64, nInputs: UInt64, roiMethod: String) {
+        self.modelName = modelName
         self.supportedVitals = supportedVitals
         self.returnWaveforms = returnWaveforms
         self.fpsTarget = fpsTarget
@@ -1472,6 +1474,9 @@ public struct SessionConfig {
 
 extension SessionConfig: Equatable, Hashable {
     public static func ==(lhs: SessionConfig, rhs: SessionConfig) -> Bool {
+        if lhs.modelName != rhs.modelName {
+            return false
+        }
         if lhs.supportedVitals != rhs.supportedVitals {
             return false
         }
@@ -1494,6 +1499,7 @@ extension SessionConfig: Equatable, Hashable {
     }
 
     public func hash(into hasher: inout Hasher) {
+        hasher.combine(modelName)
         hasher.combine(supportedVitals)
         hasher.combine(returnWaveforms)
         hasher.combine(fpsTarget)
@@ -1511,6 +1517,7 @@ public struct FfiConverterTypeSessionConfig: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionConfig {
         return
             try SessionConfig(
+                modelName: FfiConverterString.read(from: &buf), 
                 supportedVitals: FfiConverterSequenceString.read(from: &buf), 
                 returnWaveforms: FfiConverterOptionSequenceString.read(from: &buf), 
                 fpsTarget: FfiConverterFloat.read(from: &buf), 
@@ -1521,6 +1528,7 @@ public struct FfiConverterTypeSessionConfig: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: SessionConfig, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.modelName, into: &buf)
         FfiConverterSequenceString.write(value.supportedVitals, into: &buf)
         FfiConverterOptionSequenceString.write(value.returnWaveforms, into: &buf)
         FfiConverterFloat.write(value.fpsTarget, into: &buf)
@@ -1788,13 +1796,15 @@ public struct VitalResult {
     public var value: Float
     public var confidence: Float
     public var unit: String
+    public var note: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(value: Float, confidence: Float, unit: String) {
+    public init(value: Float, confidence: Float, unit: String, note: String) {
         self.value = value
         self.confidence = confidence
         self.unit = unit
+        self.note = note
     }
 }
 
@@ -1811,6 +1821,9 @@ extension VitalResult: Equatable, Hashable {
         if lhs.unit != rhs.unit {
             return false
         }
+        if lhs.note != rhs.note {
+            return false
+        }
         return true
     }
 
@@ -1818,6 +1831,7 @@ extension VitalResult: Equatable, Hashable {
         hasher.combine(value)
         hasher.combine(confidence)
         hasher.combine(unit)
+        hasher.combine(note)
     }
 }
 
@@ -1831,7 +1845,8 @@ public struct FfiConverterTypeVitalResult: FfiConverterRustBuffer {
             try VitalResult(
                 value: FfiConverterFloat.read(from: &buf), 
                 confidence: FfiConverterFloat.read(from: &buf), 
-                unit: FfiConverterString.read(from: &buf)
+                unit: FfiConverterString.read(from: &buf), 
+                note: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -1839,6 +1854,7 @@ public struct FfiConverterTypeVitalResult: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.value, into: &buf)
         FfiConverterFloat.write(value.confidence, into: &buf)
         FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
     }
 }
 
@@ -1862,13 +1878,15 @@ public struct WaveformResult {
     public var data: [Float]
     public var confidence: [Float]
     public var unit: String
+    public var note: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(data: [Float], confidence: [Float], unit: String) {
+    public init(data: [Float], confidence: [Float], unit: String, note: String) {
         self.data = data
         self.confidence = confidence
         self.unit = unit
+        self.note = note
     }
 }
 
@@ -1885,6 +1903,9 @@ extension WaveformResult: Equatable, Hashable {
         if lhs.unit != rhs.unit {
             return false
         }
+        if lhs.note != rhs.note {
+            return false
+        }
         return true
     }
 
@@ -1892,6 +1913,7 @@ extension WaveformResult: Equatable, Hashable {
         hasher.combine(data)
         hasher.combine(confidence)
         hasher.combine(unit)
+        hasher.combine(note)
     }
 }
 
@@ -1905,7 +1927,8 @@ public struct FfiConverterTypeWaveformResult: FfiConverterRustBuffer {
             try WaveformResult(
                 data: FfiConverterSequenceFloat.read(from: &buf), 
                 confidence: FfiConverterSequenceFloat.read(from: &buf), 
-                unit: FfiConverterString.read(from: &buf)
+                unit: FfiConverterString.read(from: &buf), 
+                note: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -1913,6 +1936,7 @@ public struct FfiConverterTypeWaveformResult: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.data, into: &buf)
         FfiConverterSequenceFloat.write(value.confidence, into: &buf)
         FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
     }
 }
 

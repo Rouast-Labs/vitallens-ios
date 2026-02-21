@@ -64,6 +64,7 @@ public actor APIInference: InferenceStrategy {
     
     private let apiKey: String?
     private let proxyURL: URL?
+    private let requestedModel: String?
     private let session: URLSession
     private let environment: [String: String]
 
@@ -74,7 +75,8 @@ public actor APIInference: InferenceStrategy {
     
     public init(
         apiKey: String? = nil, 
-        proxyURL: URL? = nil, 
+        proxyURL: URL? = nil,
+        requestedModel: String? = nil,
         session: URLSession = .shared,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
@@ -84,6 +86,7 @@ public actor APIInference: InferenceStrategy {
         self.apiKey = apiKey ?? envKey
         
         self.proxyURL = proxyURL
+        self.requestedModel = requestedModel
         self.session = session
     }
 
@@ -213,9 +216,11 @@ public actor APIInference: InferenceStrategy {
     // MARK: InferenceStrategy Conformance
     
     public func resolveConfig() async throws -> ModelConfig {
-        let response = try await self.resolveModel(requestedModel: nil)
-        self.config = response.config
-        return response.config
+        let response = try await self.resolveModel(requestedModel: self.requestedModel) 
+        var resolvedConfig = response.config        
+        resolvedConfig.modelName = response.resolvedModel 
+        self.config = resolvedConfig
+        return resolvedConfig
     }
 
     public var bufferConfig: VitalLensCore.BufferConfig {

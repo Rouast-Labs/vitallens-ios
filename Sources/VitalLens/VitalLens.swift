@@ -8,14 +8,6 @@ import UIKit
 
 /// The primary client for the VitalLens API.
 public final class VitalLens: @unchecked Sendable {
-    
-    // MARK: - Types
-    public enum Method: String, Sendable, CaseIterable {
-        case vitalLens = "vitallens"
-        case vitalLens2 = "vitallens-2.0"
-        case vitalLens1_1 = "vitallens-1.1"
-        case vitalLens1 = "vitallens-1.0"
-    }
 
     var streamProcessor: StreamProcessor?
 
@@ -24,7 +16,7 @@ public final class VitalLens: @unchecked Sendable {
     
     // MARK: - Configuration
     public let apiKey: String?
-    public let method: Method
+    public let method: String
     public let proxyURL: URL?
     public let faceDetectionFrequency: Double
     public let globalROI: CGRect?
@@ -38,13 +30,13 @@ public final class VitalLens: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - apiKey: Your VitalLens API Key (required if proxyUrl is not set).
-    ///   - method: The estimation method to use. Defaults to `.vitalLens`.
+    ///   - method: The estimation method to use. Defaults to `"vitallens"`.
     ///   - faceDetectionFrequency: Frequency in Hz to run face detection (default 1.0).
     ///   - globalROI: A fixed region of interest (normalized 0.0-1.0) to use instead of face detection.
     ///   - proxyURL: Optional URL to your backend proxy. If set, `apiKey` is ignored by the client (your server must add it).
     public init(
         apiKey: String? = nil,
-        method: Method = .vitalLens,
+        method: String = "vitallens",
         faceDetectionFrequency: Double = 1.0,
         globalROI: CGRect? = nil,
         proxyURL: URL? = nil
@@ -55,7 +47,9 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = globalROI
         self.proxyURL = proxyURL
         self.customSource = nil
-        self.strategy = APIInference(apiKey: apiKey, proxyURL: proxyURL)
+        
+        let requestedModelName = method == "vitallens" ? nil : method
+        self.strategy = APIInference(apiKey: apiKey, proxyURL: proxyURL, requestedModel: requestedModelName)
 
         setupLifecycleObservers()
     }
@@ -65,7 +59,7 @@ public final class VitalLens: @unchecked Sendable {
         strategy: any InferenceStrategy
     ) {
         self.apiKey = nil
-        self.method = .vitalLens
+        self.method = "vitallens"
         self.faceDetectionFrequency = 1.0
         self.globalROI = nil
         self.proxyURL = nil
@@ -78,7 +72,7 @@ public final class VitalLens: @unchecked Sendable {
     /// Internal init for testing
     internal init(processor: StreamProcessor) {
         self.apiKey = "test"
-        self.method = .vitalLens2
+        self.method = "vitallens-2.0"
         self.faceDetectionFrequency = 0.5
         self.globalROI = nil
         self.proxyURL = nil

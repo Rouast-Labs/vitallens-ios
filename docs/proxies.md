@@ -13,7 +13,7 @@ Initialize `VitalLens` with `proxyURL` instead of `apiKey`.
 ```swift
 let client = VitalLens(
     proxyURL: URL(string: "https://your-backend.com/api/vitallens"),
-    method: .vitalLens2
+    method: "vitallens"
 )
 ```
 

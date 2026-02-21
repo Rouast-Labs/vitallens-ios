@@ -11,7 +11,7 @@ import UIKit
 import VitalLens
 
 class CameraViewController: UIViewController {
-    private let client = VitalLens(apiKey: "YOUR_KEY", method: .vitalLens2)
+    private let client = VitalLens(apiKey: "YOUR_KEY", method: "vitallens-2.0")
     private var previewView: UIView!
 
     override func viewDidLoad() {
@@ -54,7 +54,7 @@ You can process pre-recorded videos (e.g., from the Photo Library). This mimics 
 import VitalLens
 
 func analyzeLocalVideo(url: URL) async {
-    let client = VitalLens(apiKey: "YOUR_KEY", method: .vitalLens2)
+    let client = VitalLens(apiKey: "YOUR_KEY", method: "vitallens-2.0")
     
     do {
         print("Uploading and analyzing...")

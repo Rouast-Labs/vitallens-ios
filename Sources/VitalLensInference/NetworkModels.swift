@@ -22,13 +22,15 @@ public struct ResolveModelResponse: Codable, Sendable {
 /// Configuration parameters for a specific VitalLens model.
 /// These parameters dictate how the client should preprocess video data.
 public struct ModelConfig: Codable, Sendable {
+    public var modelName: String = "vitallens"
     public let nInputs: Int
     public let inputSize: Int
     public let fpsTarget: Double
     public let roiMethod: String
     public let supportedVitals: [String]
     
-    public init(nInputs: Int, inputSize: Int, fpsTarget: Double, roiMethod: String, supportedVitals: [String]) {
+    public init(nInputs: Int, inputSize: Int, fpsTarget: Double, roiMethod: String, supportedVitals: [String], modelName: String = "vitallens") {
+        self.modelName = modelName
         self.nInputs = nInputs
         self.inputSize = inputSize
         self.fpsTarget = fpsTarget

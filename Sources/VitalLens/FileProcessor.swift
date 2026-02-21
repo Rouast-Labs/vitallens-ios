@@ -134,7 +134,7 @@ actor FileProcessor {
                 let command = InferenceCommand(bufferId: "file", takeCount: take, keepCount: keep)
                 
                 if let window = buffer.execute(command: command) {
-                    let (result, newState) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
+                    let (result, newState) = try await strategy.infer(window: window, state: currentState, mode: .file, model: config.modelName)
                     currentState = newState
                     _ = session.process(input: result.toSessionInput(), mode: .incremental)
                 }
@@ -147,7 +147,7 @@ actor FileProcessor {
         if buffer.count >= config.nInputs {
             let command = InferenceCommand(bufferId: "file", takeCount: UInt32(buffer.count), keepCount: 0)
             if let window = buffer.execute(command: command) {
-                let (result, _) = try await strategy.infer(window: window, state: currentState, mode: .file, model: nil)
+                let (result, _) = try await strategy.infer(window: window, state: currentState, mode: .file, model: config.modelName)
                 _ = session.process(input: result.toSessionInput(), mode: .incremental)
                 finalMessage = result.message
                 finalModelUsed = result.modelUsed

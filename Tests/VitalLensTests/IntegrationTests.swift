@@ -27,7 +27,7 @@ final class IntegrationTests: XCTestCase {
         // to ensure it uses the test environment variables.
         let client = VitalLens(
             apiKey: apiKey,
-            method: .vitalLens2,
+            method: "vitallens-2.0",
             proxyURL: url
         )
         

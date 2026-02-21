@@ -12,7 +12,7 @@ final class VitalLensUITests: XCTestCase {
     func testScanView_InitWithAPIKey() {
         let view = VitalLensScanView(
             apiKey: "test_key",
-            method: .vitalLens2,
+            method: "vitallens-2.0",
             onComplete: { _ in }
         )
         
@@ -24,7 +24,7 @@ final class VitalLensUITests: XCTestCase {
         let url = URL(string: "https://my-proxy.com")!
         let view = VitalLensScanView(
             proxyURL: url,
-            method: .vitalLens2,
+            method: "vitallens-2.0",
             onComplete: { _ in }
         )
         

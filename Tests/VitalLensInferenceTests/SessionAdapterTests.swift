@@ -62,8 +62,8 @@ final class SessionAdapterTests: XCTestCase {
     
     func testSessionResultToVitalLensResult_FullData() {
         let rustFace = FaceResult(coordinates: [[0.5, 0.25, 0.75, 1.0]], confidence: [0.9], note: "rust_ok")
-        let rustVital = VitalResult(value: 60.0, confidence: 0.5, unit: "bpm")
-        let rustWave = WaveformResult(data: [0.5, 0.25], confidence: [1.0, 1.0], unit: "unitless")
+        let rustVital = VitalResult(value: 60.0, confidence: 0.5, unit: "bpm", note: "Latest estimate of Heart Rate")
+        let rustWave = WaveformResult(data: [0.5, 0.25], confidence: [1.0, 1.0], unit: "unitless", note: "Latest estimate of PPG")
         
         let sessionResult = SessionResult(
             timestamp: [10.0, 11.0],

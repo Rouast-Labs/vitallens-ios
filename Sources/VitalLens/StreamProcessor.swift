@@ -212,7 +212,7 @@ actor StreamProcessor {
                         window: window,
                         state: currentState,
                         mode: .stream,
-                        model: nil
+                        model: self.config?.modelName
                     )
                     
                     consecutiveErrors = 0

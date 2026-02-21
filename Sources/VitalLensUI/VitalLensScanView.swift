@@ -7,7 +7,7 @@ public struct VitalLensScanView: View {
     
     private let apiKey: String?
     private let proxyURL: URL?
-    private let method: VitalLens.Method
+    private let method: String
     private let onComplete: (VitalLensResult) -> Void
     
     @State private var client: VitalLens?
@@ -29,7 +29,7 @@ public struct VitalLensScanView: View {
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
-        method: VitalLens.Method = .vitalLens,
+        method: String = "vitallens",
         onComplete: @escaping (VitalLensResult) -> Void
     ) {
         self.apiKey = apiKey

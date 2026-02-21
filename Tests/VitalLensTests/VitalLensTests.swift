@@ -112,9 +112,9 @@ final class VitalLensTests: XCTestCase {
     #endif
     
     func testInitialization_SetsPublicProperties() {
-        let client = VitalLens(apiKey: "key", method: .vitalLens2)
+        let client = VitalLens(apiKey: "key", method: "vitallens-2.0")
         XCTAssertEqual(client.apiKey, "key")
-        XCTAssertEqual(client.method, .vitalLens2)
+        XCTAssertEqual(client.method, "vitallens-2.0")
     }
     
     // MARK: - Helpers

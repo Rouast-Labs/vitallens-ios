@@ -46,7 +46,7 @@ struct ScanView: View {
     var body: some View {
         VitalLensScanView(
             apiKey: "YOUR_API_KEY",
-            method: .vitalLens2
+            method: "vitallens-2.0"
         ) { result in
             // Handle results (e.g., save to HealthKit)
             if let hr = result.heartRate?.latest?.value {

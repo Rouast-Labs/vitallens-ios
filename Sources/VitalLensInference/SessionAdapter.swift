@@ -5,6 +5,7 @@ import VitalLensCore
 public extension ModelConfig {
     func toSessionConfig() -> VitalLensCore.SessionConfig {
         return VitalLensCore.SessionConfig(
+            modelName: self.modelName,
             supportedVitals: self.supportedVitals,
             returnWaveforms: nil,
             fpsTarget: Float(self.fpsTarget),
@@ -54,7 +55,7 @@ public extension SessionResult {
                 data: wave.data,
                 confidence: wave.confidence,
                 unit: wave.unit,
-                note: nil // TODO: Support note
+                note: wave.note
             )
         }
         
@@ -64,7 +65,7 @@ public extension SessionResult {
                 value: Double(vital.value),
                 confidence: Double(vital.confidence),
                 unit: vital.unit,
-                note: nil // TODO: Support note
+                note: vital.note
             )
         }
         

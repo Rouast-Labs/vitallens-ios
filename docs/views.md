@@ -19,7 +19,7 @@ A guided wizard that handles the entire measurement flow. It instructs the user 
 ```swift
 VitalLensScanView(
     apiKey: "YOUR_KEY",
-    method: .vitalLens2
+    method: "vitallens"
 ) { result in
     print("Scan complete!")
 }
@@ -31,7 +31,7 @@ VitalLensScanView(
 | --- | --- | --- |
 | `apiKey` | `String` | Your VitalLens API Key. |
 | `proxyURL` | `URL?` | URL to your backend proxy (Alternative to `apiKey`). |
-| `method` | `Method` | Model version. Use `.vitalLens2` for HRV support. |
+| `method` | `String` | Model version. Use `"vitallens-2.0"` for HRV support. |
 | `onComplete` | `(VitalLensResult) -> Void` | Callback triggered when the scan finishes successfully. |
 
 ---
