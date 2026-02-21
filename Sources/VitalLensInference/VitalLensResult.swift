@@ -23,8 +23,8 @@ public struct VitalLensResult: Codable, Sendable {
 
     // MARK: - Convenience Accessors
     
-    public var ppg: Waveform? { waveforms["ppg_waveform"] } // TODO: Change key
-    public var resp: Waveform? { waveforms["respiratory_waveform"] } // TODO: Change key
+    public var ppg: Waveform? { waveforms["ppg_waveform"] }
+    public var resp: Waveform? { waveforms["respiratory_waveform"] }
     
     public var heartRate: Vital? { vitals["heart_rate"] }
     public var respiratoryRate: Vital? { vitals["respiratory_rate"] }
@@ -74,40 +74,53 @@ public struct VitalLensResult: Codable, Sendable {
     }
     
     public init(from decoder: Decoder) throws {
-        // Use DynamicKey directly for the root container
         let container = try decoder.container(keyedBy: DynamicKey.self)
         
         self.face = try container.decodeIfPresent(FaceData.self, forKey: DynamicKey(stringValue: "face")!) 
                     ?? FaceData(coordinates: [], confidence: [], note: nil)
         
-        self.time = try container.decodeIfPresent([Double].self, forKey: DynamicKey(stringValue: "time")!) ?? []
+        self.time = []
         self.fps = try container.decodeIfPresent(Double.self, forKey: DynamicKey(stringValue: "fps")!)
         
-        // Explicitly map the distinct JSON keys
         self.modelUsed = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "model_used")!)
         self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
         
+        var tempWaveforms = [String: Waveform]()
+        var tempVitals = [String: Vital]()
+
+        // Parse legacy combined 'vital_signs' object
         if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
-            var tempWaveforms = [String: Waveform]()
-            var tempVitals = [String: Vital]()
-            
             for key in vitalsContainer.allKeys {
-                if let signal = try? vitalsContainer.decode(Waveform.self, forKey: key) {
-                    tempWaveforms[key.stringValue] = signal
-                } 
-                else if let vital = try? vitalsContainer.decode(Vital.self, forKey: key) {
+                if let wave = try? vitalsContainer.decode(Waveform.self, forKey: key) {
+                    tempWaveforms[key.stringValue] = wave
+                } else if let vital = try? vitalsContainer.decode(Vital.self, forKey: key) {
                     tempVitals[key.stringValue] = vital
                 }
             }
-            
-            self.waveforms = tempWaveforms
-            self.vitals = tempVitals
-        } else {
-            self.waveforms = [:]
-            self.vitals = [:]
         }
+        
+        // Parse split 'waveforms' object
+        if let waveContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "waveforms")!) {
+            for key in waveContainer.allKeys {
+                if let wave = try? waveContainer.decode(Waveform.self, forKey: key) {
+                    tempWaveforms[key.stringValue] = wave
+                }
+            }
+        }
+        
+        // Parse split 'vitals' object
+        if let newVitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vitals")!) {
+            for key in newVitalsContainer.allKeys {
+                if let vital = try? newVitalsContainer.decode(Vital.self, forKey: key) {
+                    tempVitals[key.stringValue] = vital
+                }
+            }
+        }
+        
+        self.waveforms = tempWaveforms
+        self.vitals = tempVitals
     }
     
     public func encode(to encoder: Encoder) throws {

@@ -240,7 +240,7 @@ public actor APIInference: InferenceStrategy {
         model: String?
     ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
         
-        // 1. Flatten the window into a single Data blob
+        // Flatten the window into a single Data blob
         var combinedData = Data()
         for item in window {
             switch item.0 {
@@ -253,7 +253,7 @@ public actor APIInference: InferenceStrategy {
 
         let currentState = (state as? APIState)?.data
         
-        // 2. Dispatch
+        // Dispatch
         let result: VitalLensResult
         switch mode {
         case .stream:
@@ -263,7 +263,7 @@ public actor APIInference: InferenceStrategy {
         }
 
         var nextState: APIState? = nil
-        if let stateData = result.state?.data, // The Base64 string from Python backend
+        if let stateData = result.state?.data,  
            let decoded = Data(base64Encoded: stateData) {
             
             let floatArray = decoded.withUnsafeBytes { 
@@ -272,11 +272,16 @@ public actor APIInference: InferenceStrategy {
             nextState = APIState(data: floatArray)
         }
 
+        // Map local timestamps and strictly align to the backend's returned sample length
+        let mappedTimes = window.map { $0.1.timestamp }
+        let returnedSampleCount = result.sampleCount ?? result.waveforms.values.first?.data.count ?? mappedTimes.count
+        let synthesizedTime = Array(mappedTimes.suffix(returnedSampleCount))
+
         let cleanResult = VitalLensResult(
             face: result.face,
             vitals: result.vitals,
             waveforms: result.waveforms,
-            time: result.time,
+            time: synthesizedTime,
             fps: result.fps,
             modelUsed: result.modelUsed,
             state: nil, // Hiding it here since we return it in the tuple

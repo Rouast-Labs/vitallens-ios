@@ -147,7 +147,7 @@ actor StreamProcessor {
         
         Task {
             await bufferManager.reset()
-            // TODO reset session?
+            // TODO do we need to reset session?
         }
     }
     

@@ -6,7 +6,7 @@ final class IntegrationTests: XCTestCase {
 
     func testProcessSampleVideo_EndToEnd() async throws {
         guard let baseURLString = ProcessInfo.processInfo.environment["VITALLENS_BASE_URL"],
-              let url = URL(string: baseURLString) else {
+              let _ = URL(string: baseURLString) else {
             throw XCTSkip("❌ Skipped: VITALLENS_BASE_URL not set or invalid.")
         }
         
@@ -14,7 +14,6 @@ final class IntegrationTests: XCTestCase {
             throw XCTSkip("❌ Skipped: VITALLENS_API_KEY not set.")
         }
 
-        // 2. Locate the real video file
         guard let videoURL = Bundle.module.url(forResource: "sample_video_2", withExtension: "mp4") else {
             XCTFail("❌ Could not find 'sample_video_2.mp4'.")
             return
@@ -23,12 +22,9 @@ final class IntegrationTests: XCTestCase {
         print("[Integration] Video found: \(videoURL.lastPathComponent)")
 
         // 3. Initialize Client
-        // We use the constructor that accepts the proxyURL and apiKey explicitly 
-        // to ensure it uses the test environment variables.
         let client = VitalLens(
             apiKey: apiKey,
-            method: "vitallens-2.0",
-            proxyURL: url
+            method: "vitallens-2.0"
         )
         
         // 4. Run Processing
@@ -51,7 +47,7 @@ final class IntegrationTests: XCTestCase {
             // Note: In VitalLensInference, 'heartRate' is a convenience property that 
             // looks for the "heart_rate" key in the signals dictionary.
             if let hrVital = result.vitals["heart_rate"] {
-                print("[Integration] ❤️ Heart Rate (Latest): \(hrVital.value) \(hrVital.unit)")
+                print("[Integration] ❤️ Heart Rate: \(hrVital.value) \(hrVital.unit)")
                 XCTAssertGreaterThan(hrVital.value, 40, "Heart rate should be in a realistic range")
             } else {
                 XCTFail("No heart rate returned from API. Vitals found: \(result.vitals.keys)")
