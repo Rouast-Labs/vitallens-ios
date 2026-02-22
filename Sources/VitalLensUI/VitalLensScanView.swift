@@ -98,43 +98,60 @@ public struct VitalLensScanView: View {
     private func startSession(in view: UIView) {
         guard client == nil else { return }
         
-        // Validation
         if apiKey == nil && proxyURL == nil {
             self.statusMessage = "Error: Missing API Key or Proxy URL"
             return
         }
         
         let newClient = VitalLens(apiKey: apiKey, method: method, proxyURL: proxyURL)
+        
+        // 1. Hook into the instantaneous SDK callback
+        newClient.onFaceStateChanged = { @Sendable isPresent in
+            Task { @MainActor in
+                self.faceDetected = isPresent
+                
+                if !isPresent && self.isScanning {
+                    // Punish movement: immediately kill the scan
+                    self.isScanning = false
+                    self.progress = 0.0
+                    self.currentHeartRate = 0
+                    self.statusMessage = "Face lost. Please reposition."
+                } else if isPresent && !self.isScanning {
+                    self.statusMessage = "Position your face in the oval"
+                }
+            }
+        }
+        
         self.client = newClient
         
         Task {
             do {
                 let stream = try await newClient.startStream(preview: view)
-                
                 var startTime: Date?
                 
                 for await result in stream {
-                    let hasFace = !(result.face.boundingBoxes.isEmpty)
-                    
                     await MainActor.run {
-                        self.faceDetected = hasFace
+                        // Ignore API stream results if our real-time callback knows the face is gone
+                        if !self.faceDetected {
+                            startTime = nil
+                            return
+                        }
                         
-                        if !isScanning && hasFace {
+                        // Start tracking time
+                        if !isScanning {
                             isScanning = true
                             startTime = Date()
                             statusMessage = "Measuring..."
                         }
                         
-                        guard isScanning, let start = startTime else {
-                            if !hasFace { statusMessage = "Face not detected" }
-                            return
-                        }
+                        guard isScanning, let start = startTime else { return }
                         
                         let elapsed = Date().timeIntervalSince(start)
                         self.progress = min(elapsed / scanDuration, 1.0)
                         
-                        if let hr = result.heartRate?.value {
-                            self.currentHeartRate = Int(hr)
+                        // Only update HR if confidence is good
+                        if let hr = result.heartRate, hr.confidence > 0.5 {
+                            self.currentHeartRate = Int(hr.value)
                         }
                         
                         if elapsed >= scanDuration {

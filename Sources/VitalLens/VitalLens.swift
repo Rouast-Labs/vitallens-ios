@@ -21,6 +21,14 @@ public final class VitalLens: @unchecked Sendable {
     public let faceDetectionFrequency: Double
     public let globalROI: CGRect?
 
+    /// Closure triggered instantly when a face enters or leaves the camera frame.
+    public var onFaceStateChanged: (@Sendable (Bool) -> Void)? {
+        didSet {
+            let cb = onFaceStateChanged
+            Task { await streamProcessor?.setFaceStateCallback(cb) }
+        }
+    }
+
     private let strategy: any InferenceStrategy
     private let customSource: (any CameraStreaming)?
     
@@ -143,6 +151,8 @@ public final class VitalLens: @unchecked Sendable {
             throw VitalLensError.processingError("Failed to initialize StreamProcessor")
         }
         
+        await processor.setFaceStateCallback(self.onFaceStateChanged)
+                
         var wrapper: SendableUIPreview? = nil
         if let view = preview {
             wrapper = SendableUIPreview(view)

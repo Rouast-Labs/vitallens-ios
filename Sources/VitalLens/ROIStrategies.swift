@@ -63,7 +63,9 @@ public actor FaceROIStrategy: ROIStrategy {
     private func updateROI(_ roi: CGRect?, time: Date) {
         if let roi = roi {
             self.currentROI = roi
-        }
+        } else {
+            self.currentROI = nil
+        } // TODO: Test
         self.lastDetectionTime = time
         self.isDetecting = false
     }

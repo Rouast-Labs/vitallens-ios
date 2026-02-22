@@ -19,15 +19,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     private var simulatorTask: Task<Void, Never>?
     
     /// The stream of video frames.
-    var stream: AsyncStream<InputFrame> {
-        AsyncStream { continuation in
-            self.continuation = continuation
-        }
-    }
-    
+    public let stream: AsyncStream<InputFrame>
     private var continuation: AsyncStream<InputFrame>.Continuation?
     
     override init() {
+        let (s, c) = AsyncStream.makeStream(of: InputFrame.self)
+        self.stream = s
+        self.continuation = c
         super.init()
     }
     

@@ -116,6 +116,43 @@ final class VitalLensTests: XCTestCase {
         XCTAssertEqual(client.apiKey, "key")
         XCTAssertEqual(client.method, "vitallens-2.0")
     }
+
+    func testOnFaceStateChanged_CallbackPropagatesToProcessor() async throws {
+        let strategy = MockInferenceStrategy()
+        let roiStrategy = MockROIStrategy()
+        let mockCamera = MockCameraSource()
+        
+        let processor = StreamProcessor(
+            strategy: strategy,
+            roiStrategy: roiStrategy,
+            camera: mockCamera
+        )
+        
+        let client = VitalLens(processor: processor)
+        
+        let expectation = XCTestExpectation(description: "Face state callback triggered")
+        
+        // Bind the public callback
+        client.onFaceStateChanged = { isPresent in
+            if isPresent {
+                expectation.fulfill()
+            }
+        }
+        
+        _ = try await client.startStream()
+        
+        // Simulate finding a face
+        await roiStrategy.setROI(CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5))
+        
+        let buffer = createDummyBuffer()
+        let frame = InputFrame(buffer: buffer, orientation: .up, isMirrored: false, timestamp: 0)
+        
+        // Process the frame to trigger the internal callback logic
+        await processor.processFrame(frame)
+        
+        // Wait for the expectation to be fulfilled by our closure
+        await fulfillment(of: [expectation], timeout: 2.0)
+    }
     
     // MARK: - Helpers
     

@@ -72,33 +72,37 @@ final class ROIStrategyTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
     
-    func testDetermineROI_Stability_KeepsOldROIOnFailure() async throws {
+    func testDetermineROI_DropsROIImmediatelyOnFailure() async throws {
         let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
-        let mockDetector = MockFaceDetector(rects: [validRect, nil])  
+        // We provide enough mock responses for 3 detection cycles
+        let mockDetector = MockFaceDetector(rects: [validRect, nil, nil])  
         
-        // 1. Increase interval to 100ms
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1)
         let buffer = createDummyBuffer()
         
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        // 1. First call triggers Detection #1. It returns nil immediately (default).
+        _ = await strategy.determineROI(in: buffer, orientation: .up) 
         
-        // 2. Wait 120ms to allow first detection to complete and exceed interval
+        // Wait for Detection #1 to finish setting `currentROI = validRect`
         try await Task.sleep(nanoseconds: 120_000_000)
         
-        let roi1 = await strategy.determineROI(in: buffer, orientation: .up)
+        // 2. Second call returns the result of Detection #1 (validRect) AND triggers Detection #2.
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up) 
         XCTAssertEqual(roi1, validRect)
         
-        _ = await strategy.determineROI(in: buffer, orientation: .up)  
+        // Wait for Detection #2 to finish setting `currentROI = nil`
+        try await Task.sleep(nanoseconds: 120_000_000)
         
-        // 3. Wait 50ms. The second detection (nil) finishes. 
-        // 50ms is less than the 100ms interval, so the NEXT call won't trigger a 3rd detection.
+        // 3. Third call returns the result of Detection #2 (nil) AND triggers Detection #3.
+        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
+        XCTAssertNil(roi2, "Should immediately drop the ROI if detection fails")
+        
+        // Yield the thread for a fraction of a second so the internal Task has time to hit the mock detector
         try await Task.sleep(nanoseconds: 50_000_000)
         
-        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
-        XCTAssertEqual(roi2, validRect, "Should retain previous valid ROI if new scan fails")
-        
+        // 4. Verify we hit the detector exactly 3 times across these intervals
         let count = await mockDetector.callCount
-        XCTAssertEqual(count, 2)
+        XCTAssertEqual(count, 3, "Should have triggered detection 3 times")
     }
     
     // MARK: - Helpers

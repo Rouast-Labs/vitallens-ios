@@ -15,9 +15,9 @@ public final class PassiveSource: CameraStreaming, @unchecked Sendable {
     public let stream: AsyncStream<InputFrame>
     
     public init() {
-        var continuation: AsyncStream<InputFrame>.Continuation!
-        self.stream = AsyncStream { continuation = $0 }
-        self.streamContinuation = continuation
+        let (s, c) = AsyncStream.makeStream(of: InputFrame.self)
+        self.stream = s
+        self.streamContinuation = c
     }
     
     public func start() async throws {

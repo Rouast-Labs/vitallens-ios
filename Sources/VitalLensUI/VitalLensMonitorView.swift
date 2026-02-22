@@ -15,6 +15,7 @@ public struct VitalLensMonitorView: View {
     @State private var respRate: String = "--"
     @State private var status: String = "Connecting..."
     @State private var isActive: Bool = false
+    @State private var isFaceDetected: Bool = false
     
     @State private var ppgHistory: [Double] = []
     private let maxHistoryPoints = 150
@@ -116,13 +117,29 @@ public struct VitalLensMonitorView: View {
         }
         
         let newClient = VitalLens(apiKey: apiKey, method: "vitallens-2.0", proxyURL: proxyURL)
+        
+        // 1. Hook into the instantaneous SDK callback
+        newClient.onFaceStateChanged = { @Sendable isPresent in
+            Task { @MainActor in
+                self.isFaceDetected = isPresent
+                self.status = isPresent ? "Live" : "No Face Detected"
+                
+                if !isPresent {
+                    self.heartRate = "--"
+                    self.hrvSDNN = "--"
+                    self.respRate = "--"
+                    self.ppgHistory.removeAll()
+                }
+            }
+        }
+        
         self.client = newClient
         
         Task {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 
-                await MainActor.run { status = "Live"; isActive = true }
+                await MainActor.run { status = "Connecting..."; isActive = true }
                 
                 for await result in stream {
                     await updateUI(with: result)
@@ -136,14 +153,17 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        if let hr = result.heartRate?.value {
-            self.heartRate = String(format: "%.0f", hr)
+        guard isFaceDetected else { return }
+        
+        // 2. Apply confidence thresholds before updating the text
+        if let hr = result.heartRate, hr.confidence > 0.5 {
+            self.heartRate = String(format: "%.0f", hr.value)
         }
-        if let sdnn = result.hrvSdnn?.value {
-            self.hrvSDNN = String(format: "%.0f", sdnn)
+        if let sdnn = result.hrvSdnn, sdnn.confidence > 0.5 {
+            self.hrvSDNN = String(format: "%.0f", sdnn.value)
         }
-        if let rr = result.respiratoryRate?.value {
-            self.respRate = String(format: "%.0f", rr)
+        if let rr = result.respiratoryRate, rr.confidence > 0.5 {
+            self.respRate = String(format: "%.0f", rr.value)
         }
         
         if showWaveforms, let ppgChunk = result.ppg?.data {

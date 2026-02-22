@@ -34,6 +34,9 @@ actor StreamProcessor {
     
     private var config: ModelConfig?
     private var isPaused: Bool = false
+
+    private var lastFacePresence: Bool = false
+    private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
         
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     private var frameSignal: AsyncStream<Void>.Continuation?
@@ -89,9 +92,8 @@ actor StreamProcessor {
         self.isPaused = false
         
         // Setup signal stream for incoming frames
-        let signalStream = AsyncStream<Void> { continuation in
-            self.frameSignal = continuation
-        }
+        let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
+        self.frameSignal = signalContinuation
         
         self.inferenceTask = Task {
             await self.runInferenceLoop(source: signalStream)
@@ -106,19 +108,20 @@ actor StreamProcessor {
         #endif
         
         // Return output stream
-        return AsyncStream { continuation in
-            self.outputContinuation = continuation
-            
-            #if canImport(UIKit)
-            Task {
-                for await frame in camera.stream {
-                    if !self.isPaused {
-                        await self.processFrame(frame)
-                    }
+        let (outputStream, outputContinuation) = AsyncStream.makeStream(of: VitalLensResult.self)
+        self.outputContinuation = outputContinuation
+        
+        #if canImport(UIKit)
+        Task {
+            for await frame in camera.stream {
+                if !self.isPaused {
+                    await self.processFrame(frame)
                 }
             }
-            #endif
         }
+        #endif
+        
+        return outputStream
     }
     
     func pause() async {
@@ -154,12 +157,30 @@ actor StreamProcessor {
             // TODO do we need to reset session?
         }
     }
+
+    func setFaceStateCallback(_ callback: (@Sendable (Bool) -> Void)?) {
+        self.onFaceStateChanged = callback
+    }
     
     /// Called on every frame arrival.
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
 
         let target = await roiStrategy.determineROI(in: frame.buffer, orientation: frame.orientation)
+        
+        // Notify the UI instantly if the face state changes
+        let isFacePresent = (target != nil)
+        if isFacePresent != lastFacePresence {
+            lastFacePresence = isFacePresent
+            onFaceStateChanged?(isFacePresent)
+        }
+
+        // If the face is lost, purge buffers to stop API calls and clear memory
+        guard target != nil else {
+            await bufferManager.reset()
+            return
+        }
+        
         await bufferManager.registerTarget(target, timestamp: frame.timestamp, config: config)
         
         let allBuffers = await bufferManager.getAllBuffers()

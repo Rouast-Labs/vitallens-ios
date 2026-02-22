@@ -381,4 +381,50 @@ final class StreamProcessorTests: XCTestCase {
         let count = await strategy.inferCallCount
         XCTAssertEqual(count, 0, "Stale buffers must be pruned before inference can be triggered")
     }
+
+    func testProcessFrame_FaceStateCallback_And_BufferReset() async throws {
+        // Setup an expectation for the callback
+        actor CallbackTracker {
+            var changes: [Bool] = []
+            func append(_ val: Bool) { changes.append(val) }
+            func get() -> [Bool] { changes }
+        }
+        let tracker = CallbackTracker()
+        
+        await processor.setFaceStateCallback { isPresent in
+            Task { await tracker.append(isPresent) }
+        }
+        
+        // 1. Face appears
+        await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.1))
+        await processor.processFrame(makeFrame(at: 1.0))
+        
+        // Let async callback process
+        try await Task.sleep(nanoseconds: 10_000_000) 
+        var states = await tracker.get()
+        XCTAssertEqual(states.count, 1)
+        XCTAssertTrue(states.last == true, "Callback should fire with true when face appears")
+        
+        // 2. Process a few more frames (face still there)
+        await processor.processFrame(makeFrame(at: 1.1))
+        await processor.processFrame(makeFrame(at: 1.2))
+        
+        try await Task.sleep(nanoseconds: 10_000_000)
+        states = await tracker.get()
+        XCTAssertEqual(states.count, 1, "Callback should NOT fire again if state hasn't changed")
+        
+        // 3. Face disappears
+        await roiStrategy.setROI(nil)
+        await processor.processFrame(makeFrame(at: 1.3))
+        
+        try await Task.sleep(nanoseconds: 10_000_000)
+        states = await tracker.get()
+        XCTAssertEqual(states.count, 2)
+        XCTAssertFalse(states.last == true, "Callback should fire with false when face is lost")
+        
+        // 4. Verify buffers were reset (ensure no inference is triggered)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let count = await strategy.inferCallCount
+        XCTAssertEqual(count, 0, "API calls should not have been made because the buffer was purged on face loss")
+    }
 }
