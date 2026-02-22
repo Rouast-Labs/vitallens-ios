@@ -25,7 +25,7 @@ public struct ModelConfig: Codable, Sendable {
     public var modelName: String = "vitallens"
     public let nInputs: Int
     public let inputSize: Int
-    public let fpsTarget: Double
+    public var fpsTarget: Double
     public let roiMethod: String
     public let supportedVitals: [String]
     

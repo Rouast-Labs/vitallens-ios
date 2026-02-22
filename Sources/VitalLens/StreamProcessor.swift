@@ -37,6 +37,8 @@ actor StreamProcessor {
 
     private var lastFacePresence: Bool = false
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
+    
+    private var lastProcessedTime: TimeInterval = 0.0
         
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     private var frameSignal: AsyncStream<Void>.Continuation?
@@ -165,6 +167,15 @@ actor StreamProcessor {
     /// Called on every frame arrival.
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
+
+        // Enforce the target FPS by dropping excess frames
+        if frame.timestamp < lastProcessedTime { lastProcessedTime = 0.0 }
+
+        let minInterval = 1.0 / config.fpsTarget
+        if frame.timestamp - lastProcessedTime < minInterval - 0.005 { 
+            return 
+        }
+        lastProcessedTime = frame.timestamp
 
         let target = await roiStrategy.determineROI(in: frame.buffer, orientation: frame.orientation)
         

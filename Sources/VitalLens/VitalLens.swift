@@ -20,6 +20,7 @@ public final class VitalLens: @unchecked Sendable {
     public let proxyURL: URL?
     public let faceDetectionFrequency: Double
     public let globalROI: CGRect?
+    public let overrideFps: Double?
 
     /// Closure triggered instantly when a face enters or leaves the camera frame.
     public var onFaceStateChanged: (@Sendable (Bool) -> Void)? {
@@ -47,17 +48,24 @@ public final class VitalLens: @unchecked Sendable {
         method: String = "vitallens",
         faceDetectionFrequency: Double = 1.0,
         globalROI: CGRect? = nil,
-        proxyURL: URL? = nil
+        proxyURL: URL? = nil,
+        overrideFps: Double? = nil
     ) {
         self.apiKey = apiKey
         self.method = method
         self.faceDetectionFrequency = faceDetectionFrequency
         self.globalROI = globalROI
         self.proxyURL = proxyURL
+        self.overrideFps = overrideFps
         self.customSource = nil
         
         let requestedModelName = method == "vitallens" ? nil : method
-        self.strategy = APIInference(apiKey: apiKey, proxyURL: proxyURL, requestedModel: requestedModelName)
+        self.strategy = APIInference(
+            apiKey: apiKey,
+            proxyURL: proxyURL,
+            requestedModel: requestedModelName,
+            overrideFps: overrideFps
+        )
 
         setupLifecycleObservers()
     }
@@ -71,6 +79,7 @@ public final class VitalLens: @unchecked Sendable {
         self.faceDetectionFrequency = 1.0
         self.globalROI = nil
         self.proxyURL = nil
+        self.overrideFps = nil
         self.customSource = source
         self.strategy = strategy
         
@@ -84,6 +93,7 @@ public final class VitalLens: @unchecked Sendable {
         self.faceDetectionFrequency = 0.5
         self.globalROI = nil
         self.proxyURL = nil
+        self.overrideFps = nil
         self.streamProcessor = processor 
         self.strategy = APIInference(apiKey: "test") 
         self.customSource = nil

@@ -8,6 +8,7 @@ public struct VitalLensScanView: View {
     private let apiKey: String?
     private let proxyURL: URL?
     private let method: String
+    private let mode: VitalLensMode
     private let onComplete: (VitalLensResult) -> Void
     
     @State private var client: VitalLens?
@@ -24,17 +25,20 @@ public struct VitalLensScanView: View {
     /// - Parameters:
     ///   - apiKey: Your VitalLens API Key (Optional if proxyURL is set).
     ///   - proxyURL: URL to your backend proxy (Optional if apiKey is set).
-    ///   - method: The model version to use (default: .vitalLens).
+    ///   - method: The model version to use (default: "vitallens").
+    ///   - mode: The performance mode (standard 30fps vs eco 15fps).
     ///   - onComplete: Closure called with the final result upon success.
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
-        method: String = "vitallens",
+        method: String = "vitallens", // Explicit default
+        mode: VitalLensMode = .standard,
         onComplete: @escaping (VitalLensResult) -> Void
     ) {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
         self.method = method
+        self.mode = mode
         self.onComplete = onComplete
     }
     
@@ -103,7 +107,12 @@ public struct VitalLensScanView: View {
             return
         }
         
-        let newClient = VitalLens(apiKey: apiKey, method: method, proxyURL: proxyURL)
+        let newClient = VitalLens(
+            apiKey: apiKey,
+            method: method,
+            proxyURL: proxyURL,
+            overrideFps: mode.fps
+        )
         
         // 1. Hook into the instantaneous SDK callback
         newClient.onFaceStateChanged = { @Sendable isPresent in

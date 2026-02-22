@@ -65,6 +65,7 @@ public actor APIInference: InferenceStrategy {
     private let apiKey: String?
     private let proxyURL: URL?
     private let requestedModel: String?
+    private let overrideFps: Double?
     private let session: URLSession
     private let environment: [String: String]
 
@@ -77,16 +78,16 @@ public actor APIInference: InferenceStrategy {
         apiKey: String? = nil, 
         proxyURL: URL? = nil,
         requestedModel: String? = nil,
+        overrideFps: Double? = nil,
         session: URLSession = .shared,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.environment = environment
-        
         let envKey = environment["VITALLENS_API_KEY"]
         self.apiKey = apiKey ?? envKey
-        
         self.proxyURL = proxyURL
         self.requestedModel = requestedModel
+        self.overrideFps = overrideFps
         self.session = session
     }
 
@@ -218,7 +219,10 @@ public actor APIInference: InferenceStrategy {
     public func resolveConfig() async throws -> ModelConfig {
         let response = try await self.resolveModel(requestedModel: self.requestedModel) 
         var resolvedConfig = response.config        
-        resolvedConfig.modelName = response.resolvedModel 
+        resolvedConfig.modelName = response.resolvedModel
+        if let override = self.overrideFps {
+            resolvedConfig.fpsTarget = override
+        }
         self.config = resolvedConfig
         return resolvedConfig
     }

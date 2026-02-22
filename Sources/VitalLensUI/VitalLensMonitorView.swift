@@ -3,11 +3,26 @@ import VitalLens
 import VitalLensInference
 #if canImport(UIKit)
 
+public enum VitalLensMode {
+    case standard
+    case eco
+    
+    var fps: Double {
+        switch self {
+        case .standard: return 30.0
+        case .eco: return 15.0
+        }
+    }
+}
+
 public struct VitalLensMonitorView: View {
     
     private let apiKey: String?
     private let proxyURL: URL?
+    private let method: String
     private let showWaveforms: Bool
+    private let mode: VitalLensMode
+    private let bufferOffset: TimeInterval
     
     @State private var client: VitalLens?
     @State private var heartRate: String = "--"
@@ -17,23 +32,42 @@ public struct VitalLensMonitorView: View {
     @State private var isActive: Bool = false
     @State private var isFaceDetected: Bool = false
     
+    // Waveform state
     @State private var ppgHistory: [Double] = []
     private let maxHistoryPoints = 150
+    
+    // Smooth Playback Buffer state
+    struct BufferedPoint {
+        let value: Double
+        let displayTime: TimeInterval
+    }
+    @State private var ppgQueue: [BufferedPoint] = []
+    @State private var timeAnchor: (videoTime: TimeInterval, realTime: TimeInterval)? = nil
+    @State private var playbackTask: Task<Void, Never>? = nil
     
     /// Initializes the Monitor View.
     ///
     /// - Parameters:
     ///   - apiKey: Your VitalLens API Key (Optional if proxyURL is set).
     ///   - proxyURL: URL to your backend proxy (Optional if apiKey is set).
-    ///   - showWaveforms: Whether to render the real-time PPG chart (default: true).
+    ///   - method: The model version to use (default: "vitallens").
+    ///   - showWaveforms: Whether to render the real-time PPG chart.
+    ///   - mode: The performance mode (standard 30fps vs eco 15fps).
+    ///   - bufferOffset: Delay in seconds to smooth out waveform playback.
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
-        showWaveforms: Bool = true
+        method: String = "vitallens",
+        showWaveforms: Bool = true,
+        mode: VitalLensMode = .standard,
+        bufferOffset: TimeInterval = 1.0
     ) {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
+        self.method = method
         self.showWaveforms = showWaveforms
+        self.mode = mode
+        self.bufferOffset = bufferOffset
     }
     
     public var body: some View {
@@ -90,7 +124,8 @@ public struct VitalLensMonitorView: View {
                             .background(Color(UIColor.secondarySystemBackground))
                             .cornerRadius(16)
                             .padding(.horizontal)
-                            .animation(.easeOut(duration: 0.1), value: ppgHistory)
+                            // Disable standard animation if we are buffering, to let the loop handle the smoothness
+                            .animation(bufferOffset > 0 ? nil : .easeOut(duration: 0.1), value: ppgHistory)
                     }
                 }
                 
@@ -105,6 +140,7 @@ public struct VitalLensMonitorView: View {
         }
         .onDisappear {
             client?.stopStream()
+            playbackTask?.cancel()
         }
     }
     
@@ -116,9 +152,14 @@ public struct VitalLensMonitorView: View {
             return
         }
         
-        let newClient = VitalLens(apiKey: apiKey, method: "vitallens-2.0", proxyURL: proxyURL)
+        let newClient = VitalLens(
+            apiKey: apiKey,
+            method: method, // Use provided method
+            proxyURL: proxyURL,
+            overrideFps: mode.fps // Apply eco-mode FPS
+        )
         
-        // 1. Hook into the instantaneous SDK callback
+        // Hook into the instantaneous SDK callback
         newClient.onFaceStateChanged = { @Sendable isPresent in
             Task { @MainActor in
                 self.isFaceDetected = isPresent
@@ -129,11 +170,18 @@ public struct VitalLensMonitorView: View {
                     self.hrvSDNN = "--"
                     self.respRate = "--"
                     self.ppgHistory.removeAll()
+                    self.ppgQueue.removeAll()
+                    self.timeAnchor = nil
                 }
             }
         }
         
         self.client = newClient
+        
+        // Start the smooth playback loop if buffering is enabled
+        if bufferOffset > 0 {
+            playbackTask = Task { await runPlaybackLoop() }
+        }
         
         Task {
             do {
@@ -155,7 +203,7 @@ public struct VitalLensMonitorView: View {
     private func updateUI(with result: VitalLensResult) {
         guard isFaceDetected else { return }
         
-        // 2. Apply confidence thresholds before updating the text
+        // 1. Update Scalar Vitals Immediately
         if let hr = result.heartRate, hr.confidence > 0.5 {
             self.heartRate = String(format: "%.0f", hr.value)
         }
@@ -166,11 +214,54 @@ public struct VitalLensMonitorView: View {
             self.respRate = String(format: "%.0f", rr.value)
         }
         
-        if showWaveforms, let ppgChunk = result.ppg?.data {
-            self.ppgHistory.append(contentsOf: ppgChunk.map { Double($0) })
-            if self.ppgHistory.count > maxHistoryPoints {
-                self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints)
+        // 2. Handle Waveform Buffering
+        if showWaveforms, let ppgChunk = result.ppg?.data, !ppgChunk.isEmpty {
+            if bufferOffset > 0 {
+                // Initialize relative time anchor on first chunk
+                if timeAnchor == nil, let firstVideoTime = result.time.first {
+                    timeAnchor = (videoTime: firstVideoTime, realTime: CACurrentMediaTime())
+                }
+                
+                if let anchor = timeAnchor {
+                    for (index, val) in ppgChunk.enumerated() {
+                        let frameTime = result.time[index]
+                        // Map the video timestamp to a future real-world display time
+                        let targetDisplayTime = anchor.realTime + (frameTime - anchor.videoTime) + bufferOffset
+                        ppgQueue.append(BufferedPoint(value: Double(val), displayTime: targetDisplayTime))
+                    }
+                }
+            } else {
+                // Immediate append (No buffering)
+                self.ppgHistory.append(contentsOf: ppgChunk.map { Double($0) })
+                if self.ppgHistory.count > maxHistoryPoints {
+                    self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints)
+                }
             }
+        }
+    }
+    
+    /// Drip-feeds queued data points into the chart at ~60fps
+    @MainActor
+    private func runPlaybackLoop() async {
+        while !Task.isCancelled {
+            let now = CACurrentMediaTime()
+            var pointsToAdd: [Double] = []
+            
+            // Pop all points that are "due" to be displayed
+            while let first = ppgQueue.first, now >= first.displayTime {
+                pointsToAdd.append(first.value)
+                ppgQueue.removeFirst()
+            }
+            
+            if !pointsToAdd.isEmpty {
+                self.ppgHistory.append(contentsOf: pointsToAdd)
+                if self.ppgHistory.count > maxHistoryPoints {
+                    self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints)
+                }
+            }
+            
+            // Sleep for ~16ms to match display refresh rate
+            try? await Task.sleep(nanoseconds: 16_666_666) 
         }
     }
 }
