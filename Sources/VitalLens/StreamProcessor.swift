@@ -38,7 +38,7 @@ actor StreamProcessor {
     private var lastFacePresence: Bool = false
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
     
-    private var lastProcessedTime: TimeInterval = 0.0
+    private var lastProcessedTime: TimeInterval = -1.0
         
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     private var frameSignal: AsyncStream<Void>.Continuation?
@@ -169,7 +169,7 @@ actor StreamProcessor {
         guard let config = self.config, !isPaused else { return }
 
         // Enforce the target FPS by dropping excess frames
-        if frame.timestamp < lastProcessedTime { lastProcessedTime = 0.0 }
+        if frame.timestamp < lastProcessedTime { lastProcessedTime = -1.0 }
 
         let minInterval = 1.0 / config.fpsTarget
         if frame.timestamp - lastProcessedTime < minInterval - 0.005 { 

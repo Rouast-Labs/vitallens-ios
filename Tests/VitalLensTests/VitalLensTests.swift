@@ -145,7 +145,7 @@ final class VitalLensTests: XCTestCase {
         await roiStrategy.setROI(CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5))
         
         let buffer = createDummyBuffer()
-        let frame = InputFrame(buffer: buffer, orientation: .up, isMirrored: false, timestamp: 0)
+        let frame = InputFrame(buffer: buffer, orientation: .up, isMirrored: false, timestamp: 1.0)
         
         // Process the frame to trigger the internal callback logic
         await processor.processFrame(frame)
