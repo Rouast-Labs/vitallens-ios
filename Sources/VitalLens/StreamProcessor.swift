@@ -28,6 +28,7 @@ actor StreamProcessor {
     private let roiStrategy: any ROIStrategy
     private let strategy: any InferenceStrategy
     private let transformer: FrameTransformer
+    private let waveformMode: WaveformMode
     
     private let bufferManager: BufferManager
     private var session: VitalLensCore.Session?
@@ -51,7 +52,8 @@ actor StreamProcessor {
         strategy: any InferenceStrategy,
         roiStrategy: (any ROIStrategy)? = nil,
         camera: (any CameraStreaming)? = nil,
-        transformer: FrameTransformer? = nil
+        transformer: FrameTransformer? = nil,
+        waveformMode: WaveformMode = .incremental
     ) {
         #if canImport(UIKit)
         self.camera = camera ?? CameraSource()
@@ -60,6 +62,7 @@ actor StreamProcessor {
         self.strategy = strategy
         self.roiStrategy = roiStrategy ?? FaceROIStrategy()        
         self.bufferManager = BufferManager()
+        self.waveformMode = waveformMode
         
         // Set up the transformer
         if let transformer = transformer {
@@ -254,7 +257,7 @@ actor StreamProcessor {
                     
                     if let sess = self.session {
                         let input = rawResult.toSessionInput()
-                        let sessionResult = sess.process(input: input, mode: .windowed(seconds: 10))
+                        let sessionResult = sess.process(input: input, mode: self.waveformMode)
                         let refined = sessionResult.toVitalLensResult(
                             originalState: rawResult.state,
                             message: rawResult.message,

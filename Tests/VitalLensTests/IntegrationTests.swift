@@ -33,8 +33,17 @@ final class IntegrationTests: XCTestCase {
             XCTAssertEqual(result.fps ?? 0.0, 30.0, accuracy: 1.0)
             XCTAssertFalse(result.vitals.isEmpty && result.waveforms.isEmpty, "Result should contain vital or waveform data")
             
-            if let coordinates = result.face.coordinates {
-                XCTAssertGreaterThan(coordinates.count, 0, "Should have face coordinates")
+            let expectedSampleCount = 630
+            XCTAssertEqual(result.sampleCount, expectedSampleCount, "Sample count should be exactly 630")
+            
+            let faceCoords = try XCTUnwrap(result.face.coordinates, "Missing face coordinates")
+            let faceConfs = try XCTUnwrap(result.face.confidence, "Missing face confidence scores")
+            
+            XCTAssertEqual(faceCoords.count, expectedSampleCount, "Face coordinates count must match sample count")
+            XCTAssertEqual(faceConfs.count, expectedSampleCount, "Face confidence count must match sample count")
+            
+            if let firstBox = faceCoords.first {
+                XCTAssertEqual(firstBox.count, 4, "Bounding box should contain exactly 4 coordinates [minX, minY, maxX, maxY]")
             }
             
             let hr = try XCTUnwrap(result.heartRate?.value, "Missing heart rate")
@@ -64,7 +73,6 @@ final class IntegrationTests: XCTestCase {
             let resp = try XCTUnwrap(result.resp, "Missing Respiratory waveform")
             XCTAssertGreaterThan(resp.data.count, 0, "Respiratory waveform is empty")
 
-            let expectedSampleCount = 630
             XCTAssertEqual(result.sampleCount, expectedSampleCount, "Sample count should be exactly 630")
             XCTAssertEqual(result.time.count, expectedSampleCount, "Time array length must match expected sample count")
             XCTAssertEqual(ppg.data.count, expectedSampleCount, "PPG data length must match expected sample count")
@@ -121,12 +129,18 @@ final class IntegrationTests: XCTestCase {
                 let currentHR = result.heartRate?.value ?? 0.0
                 print("[Integration Stream] 🟢 Received Result Chunk - HR: \(currentHR)")
                 
-                // Only count results that have surpassed the 5-second initialization window
+                XCTAssertNotNil(result.face.coordinates, "Streaming chunk should contain local face coordinates")
+                XCTAssertNotNil(result.face.confidence, "Streaming chunk should contain API face confidence")
+                
+                if let coords = result.face.coordinates, let confs = result.face.confidence {
+                    XCTAssertEqual(coords.count, confs.count, "Coordinate and confidence arrays must be synchronized in the stream")
+                    XCTAssertEqual(coords.count, result.time.count, "Face data length must match the chunk's time array")
+                }
+                
                 if currentHR > 0 {
                     validHeartRatesReceived += 1
                 }
                 
-                // Fulfill once we've successfully received a couple of valid rolling updates
                 if validHeartRatesReceived >= 2 {
                     expectation.fulfill()
                     break 

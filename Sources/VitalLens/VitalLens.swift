@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import VitalLensCore
 import VitalLensInference
 
 #if canImport(UIKit)
@@ -21,6 +22,7 @@ public final class VitalLens: @unchecked Sendable {
     public let faceDetectionFrequency: Double
     public let globalROI: CGRect?
     public let overrideFps: Double?
+    public let waveformMode: WaveformMode
 
     /// Closure triggered instantly when a face enters or leaves the camera frame.
     public var onFaceStateChanged: (@Sendable (Bool) -> Void)? {
@@ -49,7 +51,8 @@ public final class VitalLens: @unchecked Sendable {
         faceDetectionFrequency: Double = 1.0,
         globalROI: CGRect? = nil,
         proxyURL: URL? = nil,
-        overrideFps: Double? = nil
+        overrideFps: Double? = nil,
+        waveformMode: WaveformMode = .incremental
     ) {
         self.apiKey = apiKey
         self.method = method
@@ -57,6 +60,7 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = globalROI
         self.proxyURL = proxyURL
         self.overrideFps = overrideFps
+        self.waveformMode = waveformMode
         self.customSource = nil
         
         let requestedModelName = method == "vitallens" ? nil : method
@@ -72,7 +76,8 @@ public final class VitalLens: @unchecked Sendable {
 
     public init(
         source: any CameraStreaming,
-        strategy: any InferenceStrategy
+        strategy: any InferenceStrategy,
+        waveformMode: WaveformMode = .incremental
     ) {
         self.apiKey = nil
         self.method = "vitallens"
@@ -80,6 +85,7 @@ public final class VitalLens: @unchecked Sendable {
         self.globalROI = nil
         self.proxyURL = nil
         self.overrideFps = nil
+        self.waveformMode = waveformMode
         self.customSource = source
         self.strategy = strategy
         
@@ -97,6 +103,7 @@ public final class VitalLens: @unchecked Sendable {
         self.streamProcessor = processor 
         self.strategy = APIInference(apiKey: "test") 
         self.customSource = nil
+        self.waveformMode = .incremental
         
         setupLifecycleObservers()
     }
@@ -153,7 +160,8 @@ public final class VitalLens: @unchecked Sendable {
         if streamProcessor == nil {
             streamProcessor = StreamProcessor(
                 strategy: strategy,
-                camera: customSource
+                camera: customSource,
+                waveformMode: self.waveformMode
             )
         }
         

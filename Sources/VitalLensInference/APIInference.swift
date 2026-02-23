@@ -269,26 +269,37 @@ public actor APIInference: InferenceStrategy {
         var nextState: APIState? = nil
         if let stateData = result.state?.data,  
            let decoded = Data(base64Encoded: stateData) {
-            
             let floatArray = decoded.withUnsafeBytes { 
                 Array($0.bindMemory(to: Float.self)) 
             }
             nextState = APIState(data: floatArray)
         }
 
-        // Map local timestamps and strictly align to the backend's returned sample length
         let mappedTimes = window.map { $0.1.timestamp }
+        let mappedROIs = window.map { $0.1.roi }
+
         let returnedSampleCount = result.sampleCount ?? result.waveforms.values.first?.data.count ?? mappedTimes.count
         let synthesizedTime = Array(mappedTimes.suffix(returnedSampleCount))
+        let synthesizedROIs = Array(mappedROIs.suffix(returnedSampleCount))
+
+        let localFaceCoordinates = synthesizedROIs.map { rect -> [Double] in
+            return [Double(rect.minX), Double(rect.minY), Double(rect.maxX), Double(rect.maxY)]
+        }
+
+        let mergedFaceData = FaceData(
+            coordinates: localFaceCoordinates,
+            confidence: result.face.confidence,
+            note: result.face.note
+        )
 
         let cleanResult = VitalLensResult(
-            face: result.face,
+            face: mergedFaceData, 
             vitals: result.vitals,
             waveforms: result.waveforms,
             time: synthesizedTime,
             fps: result.fps,
             modelUsed: result.modelUsed,
-            state: nil, // Hiding it here since we return it in the tuple
+            state: nil,  
             message: result.message,
             sampleCount: result.sampleCount
         )
