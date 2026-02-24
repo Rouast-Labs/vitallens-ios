@@ -23,6 +23,7 @@ public final class VitalLens: @unchecked Sendable {
     public let globalROI: CGRect?
     public let overrideFps: Double?
     public let waveformMode: WaveformMode
+    public let debugMode: Bool
 
     /// Closure triggered instantly when a face enters or leaves the camera frame.
     public var onFaceStateChanged: (@Sendable (Bool) -> Void)? {
@@ -34,6 +35,7 @@ public final class VitalLens: @unchecked Sendable {
 
     private let strategy: any InferenceStrategy
     private let customSource: (any CameraStreaming)?
+    private let customTransformer: FrameTransformer?
     
     // MARK: - Initialization
     
@@ -52,7 +54,8 @@ public final class VitalLens: @unchecked Sendable {
         globalROI: CGRect? = nil,
         proxyURL: URL? = nil,
         overrideFps: Double? = nil,
-        waveformMode: WaveformMode = .incremental
+        waveformMode: WaveformMode = .incremental,
+        debugMode: Bool = false
     ) {
         self.apiKey = apiKey
         self.method = method
@@ -61,7 +64,9 @@ public final class VitalLens: @unchecked Sendable {
         self.proxyURL = proxyURL
         self.overrideFps = overrideFps
         self.waveformMode = waveformMode
+        self.debugMode = debugMode
         self.customSource = nil
+        self.customTransformer = nil
         
         let requestedModelName = method == "vitallens" ? nil : method
         self.strategy = APIInference(
@@ -77,7 +82,9 @@ public final class VitalLens: @unchecked Sendable {
     public init(
         source: any CameraStreaming,
         strategy: any InferenceStrategy,
-        waveformMode: WaveformMode = .incremental
+        transformer: FrameTransformer? = nil,
+        waveformMode: WaveformMode = .incremental,
+        debugMode: Bool = false
     ) {
         self.apiKey = nil
         self.method = "vitallens"
@@ -87,7 +94,9 @@ public final class VitalLens: @unchecked Sendable {
         self.overrideFps = nil
         self.waveformMode = waveformMode
         self.customSource = source
+        self.debugMode = debugMode
         self.strategy = strategy
+        self.customTransformer = transformer
         
         setupLifecycleObservers()
     }
@@ -103,7 +112,9 @@ public final class VitalLens: @unchecked Sendable {
         self.streamProcessor = processor 
         self.strategy = APIInference(apiKey: "test") 
         self.customSource = nil
+        self.debugMode = false
         self.waveformMode = .incremental
+        self.customTransformer = nil
         
         setupLifecycleObservers()
     }
@@ -161,7 +172,9 @@ public final class VitalLens: @unchecked Sendable {
             streamProcessor = StreamProcessor(
                 strategy: strategy,
                 camera: customSource,
-                waveformMode: self.waveformMode
+                transformer: customTransformer,
+                waveformMode: self.waveformMode,
+                debugMode: self.debugMode
             )
         }
         
@@ -194,5 +207,11 @@ public final class VitalLens: @unchecked Sendable {
     public func processVideoFile(at url: URL) async throws -> VitalLensResult {
         let processor = FileProcessor(url: url)
         return try await processor.process(strategy: strategy, globalROI: globalROI)
+    }
+}
+
+public extension VitalLens {
+    var debugLatestCrop: CGImage? {
+        return streamProcessor?.debugImage
     }
 }

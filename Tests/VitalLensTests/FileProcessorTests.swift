@@ -97,7 +97,12 @@ final class FileProcessorTests: XCTestCase {
     actor MockFaceDetector: FaceDetecting {
         let rect: CGRect?
         init(rect: CGRect?) { self.rect = rect }
-        func detectFace(in pixelBuffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async throws -> CGRect? {
+        
+        func detectFace(
+            in pixelBuffer: SendablePixelBuffer, 
+            orientation: CGImagePropertyOrientation, 
+            isMirrored: Bool
+        ) async throws -> CGRect? {
             return rect
         }
     }

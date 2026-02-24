@@ -46,15 +46,17 @@ actor StreamProcessor {
     private var frameSignal: AsyncStream<Void>.Continuation?
     private var inferenceTask: Task<Void, Never>?
 
-    // Shared ImageProcessor instance for the default transformer
-    private let defaultImageProcessor = ImageProcessor()
+    private let debugMode: Bool
+
+    private let defaultImageProcessor: ImageProcessor
 
     init(
         strategy: any InferenceStrategy,
         roiStrategy: (any ROIStrategy)? = nil,
         camera: (any CameraStreaming)? = nil,
         transformer: FrameTransformer? = nil,
-        waveformMode: WaveformMode = .incremental
+        waveformMode: WaveformMode = .incremental,
+        debugMode: Bool = false
     ) {
         #if canImport(UIKit)
         self.camera = camera ?? CameraSource()
@@ -64,6 +66,8 @@ actor StreamProcessor {
         self.roiStrategy = roiStrategy ?? FaceROIStrategy()        
         self.bufferManager = BufferManager()
         self.waveformMode = waveformMode
+        self.debugMode = debugMode
+        self.defaultImageProcessor = ImageProcessor(debugMode: debugMode)
         
         // Set up the transformer
         if let transformer = transformer {
@@ -187,8 +191,13 @@ actor StreamProcessor {
         }
         lastProcessedTime = frame.timestamp
 
-        let target = await roiStrategy.determineROI(in: frame.buffer, orientation: frame.orientation)
-        
+        let target = await roiStrategy.determineROI(
+            in: frame.buffer, 
+            orientation: frame.orientation, 
+            isMirrored: frame.isMirrored,
+            roiMethod: config.roiMethod
+        )
+
         // Notify the UI instantly if the face state changes
         let isFacePresent = (target != nil)
         if isFacePresent != lastFacePresence {
@@ -229,6 +238,10 @@ actor StreamProcessor {
         
         // Signal inference loop
         frameSignal?.yield()
+    }
+
+    nonisolated var debugImage: CGImage? {
+        return defaultImageProcessor.lastProcessedCGImage
     }
     
     /// Background task that monitors buffers and triggers inference when ready.

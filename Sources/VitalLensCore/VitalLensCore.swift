@@ -2135,6 +2135,70 @@ extension BufferActionType: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FaceDetector {
+    
+    case `default`
+    case appleVision
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFaceDetector: FfiConverterRustBuffer {
+    typealias SwiftType = FaceDetector
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FaceDetector {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .`default`
+        
+        case 2: return .appleVision
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FaceDetector, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .`default`:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .appleVision:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFaceDetector_lift(_ buf: RustBuffer) throws -> FaceDetector {
+    return try FfiConverterTypeFaceDetector.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFaceDetector_lower(_ value: FaceDetector) -> RustBuffer {
+    return FfiConverterTypeFaceDetector.lower(value)
+}
+
+
+
+extension FaceDetector: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum InferenceMode {
     
     case stream
@@ -2755,11 +2819,12 @@ fileprivate struct FfiConverterDictionaryStringTypeWaveformResult: FfiConverterR
         return dict
     }
 }
-public func calculateRoi(face: Rect, method: RoiMethod, containerWidth: Float?, containerHeight: Float?, forceEven: Bool) -> Rect {
+public func calculateRoi(face: Rect, method: RoiMethod, detector: FaceDetector, containerWidth: Float?, containerHeight: Float?, forceEven: Bool) -> Rect {
     return try!  FfiConverterTypeRect.lift(try! rustCall() {
     uniffi_vitallens_core_fn_func_calculate_roi(
         FfiConverterTypeRect.lower(face),
         FfiConverterTypeRoiMethod.lower(method),
+        FfiConverterTypeFaceDetector.lower(detector),
         FfiConverterOptionFloat.lower(containerWidth),
         FfiConverterOptionFloat.lower(containerHeight),
         FfiConverterBool.lower(forceEven),$0
@@ -2813,7 +2878,7 @@ private var initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_vitallens_core_checksum_func_calculate_roi() != 41747) {
+    if (uniffi_vitallens_core_checksum_func_calculate_roi() != 36547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_func_compute_buffer_config() != 60181) {

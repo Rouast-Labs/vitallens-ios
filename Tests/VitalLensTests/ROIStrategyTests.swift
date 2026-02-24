@@ -7,23 +7,23 @@ import VitalLensInference
 final class ROIStrategyTests: XCTestCase {
     
     func testDetermineROI_FirstCall_TriggersDetection() async throws {
-        let expectedRect = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
-        let mockDetector = MockFaceDetector(rects: [expectedRect]) 
+        let rawRect = CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2)
+        let expectedRect = ROICalculator.calculateROI(from: rawRect, method: "face")
+        
+        // FIX 1: Pass the rawRect to the mock detector
+        let mockDetector = MockFaceDetector(rects: [rawRect]) 
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.5)
         let buffer = createDummyBuffer()
         
-        // Act 1: Detection starts but returns immediately
-        let initialROI = await strategy.determineROI(in: buffer, orientation: .up)
+        let initialROI = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         XCTAssertNil(initialROI)
         
-        // Let async detection finish
         try await Task.sleep(nanoseconds: 100_000_000) 
         
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 1)
         
-        // Act 2: Next frame gets the populated result
-        let subsequentROI = await strategy.determineROI(in: buffer, orientation: .up)
+        let subsequentROI = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         XCTAssertEqual(subsequentROI, expectedRect)
     }
     
@@ -32,18 +32,18 @@ final class ROIStrategyTests: XCTestCase {
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 1.0)
         let buffer = createDummyBuffer()
         
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         try await Task.sleep(nanoseconds: 50_000_000) 
         
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 1, "Should not re-trigger detection before interval elapses")
     }
     
     func testDetermineROI_UpdatesAfterInterval() async throws {
-        let rect1 = CGRect(x: 0, y: 0, width: 0.1, height: 0.1)
+        let rect1 = CGRect(x: 0.0, y: 0.0, width: 0.1, height: 0.1)
         let rect2 = CGRect(x: 0.5, y: 0.5, width: 0.1, height: 0.1)
         
         let mockDetector = MockFaceDetector(rects: [rect1, rect2]) 
@@ -51,22 +51,26 @@ final class ROIStrategyTests: XCTestCase {
         let buffer = createDummyBuffer()
         
         // 1. First Call
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         try await Task.sleep(nanoseconds: 50_000_000)
         
-        let roi1 = await strategy.determineROI(in: buffer, orientation: .up)
-        XCTAssertEqual(roi1, rect1)
+        // FIX 2: Capture roi1
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        let expected1 = ROICalculator.calculateROI(from: rect1, method: "face")
+        XCTAssertEqual(roi1, expected1)
         
         // 2. Wait past interval
         try await Task.sleep(nanoseconds: 150_000_000) 
         
         // 3. Second Call triggers next detection
-        _ = await strategy.determineROI(in: buffer, orientation: .up)
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         try await Task.sleep(nanoseconds: 50_000_000)
         
         // 4. Verify
-        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
-        XCTAssertEqual(roi2, rect2)
+        // FIX 3: Capture roi2
+        let roi2 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        let expected2 = ROICalculator.calculateROI(from: rect2, method: "face")
+        XCTAssertEqual(roi2, expected2)
         
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 2)
@@ -74,27 +78,28 @@ final class ROIStrategyTests: XCTestCase {
     
     func testDetermineROI_DropsROIImmediatelyOnFailure() async throws {
         let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
-        // We provide enough mock responses for 3 detection cycles
         let mockDetector = MockFaceDetector(rects: [validRect, nil, nil])  
         
         let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1)
         let buffer = createDummyBuffer()
         
         // 1. First call triggers Detection #1. It returns nil immediately (default).
-        _ = await strategy.determineROI(in: buffer, orientation: .up) 
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face") 
         
-        // Wait for Detection #1 to finish setting `currentROI = validRect`
+        // Wait for Detection #1 to finish
         try await Task.sleep(nanoseconds: 120_000_000)
         
         // 2. Second call returns the result of Detection #1 (validRect) AND triggers Detection #2.
-        let roi1 = await strategy.determineROI(in: buffer, orientation: .up) 
-        XCTAssertEqual(roi1, validRect)
+        // FIX 4: Capture roi1
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        let expectedRect = ROICalculator.calculateROI(from: validRect, method: "face")
+        XCTAssertEqual(roi1, expectedRect)
         
         // Wait for Detection #2 to finish setting `currentROI = nil`
         try await Task.sleep(nanoseconds: 120_000_000)
         
         // 3. Third call returns the result of Detection #2 (nil) AND triggers Detection #3.
-        let roi2 = await strategy.determineROI(in: buffer, orientation: .up)
+        let roi2 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
         XCTAssertNil(roi2, "Should immediately drop the ROI if detection fails")
         
         // Yield the thread for a fraction of a second so the internal Task has time to hit the mock detector
@@ -121,12 +126,14 @@ final class ROIStrategyTests: XCTestCase {
             self.rects = rects
         }
         
-        func detectFace(in pixelBuffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async throws -> CGRect? {
+        func detectFace(
+            in pixelBuffer: SendablePixelBuffer, 
+            orientation: CGImagePropertyOrientation, 
+            isMirrored: Bool
+        ) async throws -> CGRect? {
             callCount += 1
-            if !rects.isEmpty {
-                return rects.removeFirst()
-            }
-            return nil
+            guard !rects.isEmpty else { return nil }
+            return rects.removeFirst()
         }
     }
 }

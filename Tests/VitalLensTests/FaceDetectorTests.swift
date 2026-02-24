@@ -89,6 +89,40 @@ final class FaceDetectorTests: XCTestCase {
         // 3. Verify
         XCTAssertNil(result, "Should not detect face in black noise")
     }
+
+    func testDetectFace_Mirroring_FlipsXAxis() async throws {
+        // 1. Setup resource
+        guard let url = Bundle.module.url(forResource: "sample_video_2", withExtension: "mp4") else { return }
+        let asset = AVAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        
+        let cgImage: CGImage
+        do {
+            cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
+        } catch {
+            throw XCTSkip("⚠️ Hardware decoding unavailable.")
+        }
+        
+        let buffer = try buffer(from: cgImage)
+        let sendable = SendablePixelBuffer(buffer)
+        
+        // 2. Run Detection twice (Normal and Mirrored)
+        let unmirroredRect = try await detector.detectFace(in: sendable, orientation: .up, isMirrored: false)
+        let mirroredRect = try await detector.detectFace(in: sendable, orientation: .up, isMirrored: true)
+        
+        XCTAssertNotNil(unmirroredRect)
+        XCTAssertNotNil(mirroredRect)
+        
+        // 3. Verify the horizontal flip math
+        // If unmirrored X is 0.1 and width is 0.2, mirrored X must be 0.7 (1.0 - 0.1 - 0.2)
+        let expectedMirroredX = 1.0 - unmirroredRect!.origin.x - unmirroredRect!.width
+        
+        XCTAssertEqual(mirroredRect!.origin.x, expectedMirroredX, accuracy: 0.0001)
+        XCTAssertEqual(mirroredRect!.origin.y, unmirroredRect!.origin.y, accuracy: 0.0001, "Y axis should not change during horizontal mirroring")
+        XCTAssertEqual(mirroredRect!.width, unmirroredRect!.width, accuracy: 0.0001)
+        XCTAssertEqual(mirroredRect!.height, unmirroredRect!.height, accuracy: 0.0001)
+    }
     
     // MARK: - Helpers
     

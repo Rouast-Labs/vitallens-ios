@@ -62,7 +62,7 @@ actor FileProcessor {
             if frameCount % stride != 0 { continue }
             
             // Note: FileSource determines orientation from track transform
-            if let rect = try? await detector.detectFace(in: frame, orientation: source.orientation) {
+            if let rect = try? await detector.detectFace(in: frame, orientation: source.orientation, isMirrored: false) {
                 detections.append(rect)
             }
         }

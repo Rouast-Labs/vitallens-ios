@@ -12,7 +12,12 @@ public protocol ROIStrategy: Sendable {
     ///   - buffer: The current video frame.
     ///   - orientation: The orientation of the frame.
     /// - Returns: A single ROI (normalized 0.0-1.0) to process, or nil.
-    func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect?
+    func determineROI(
+        in buffer: SendablePixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        isMirrored: Bool,
+        roiMethod: String
+    ) async -> CGRect?
 }
 
 // MARK: - Face Detection Strategy (Default)
@@ -36,25 +41,36 @@ public actor FaceROIStrategy: ROIStrategy {
         self.detectionInterval = interval
     }
     
-    public func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
+    public func determineROI(
+        in buffer: SendablePixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        isMirrored: Bool,
+        roiMethod: String
+    ) async -> CGRect? {
         let now = Date()
         
-        // Check if we should run a new detection
         if !isDetecting && now.timeIntervalSince(lastDetectionTime) >= detectionInterval {
             isDetecting = true
             
-            // Start detection detached so we don't block the current frame return
             Task {
-                let roi = await performDetection(in: buffer, orientation: orientation)
-                self.updateROI(roi, time: now)
+                let faceRect = await performDetection(in: buffer, orientation: orientation, isMirrored: isMirrored)
+                
+                let finalROI: CGRect?
+                if let face = faceRect {
+                    finalROI = ROICalculator.calculateROI(from: face, method: roiMethod)
+                } else {
+                    finalROI = nil
+                }
+                
+                self.updateROI(finalROI, time: now)
             }
         }
         
         return currentROI
     }
     
-    private func performDetection(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
-        if let rect = try? await detector.detectFace(in: buffer, orientation: orientation) {
+    private func performDetection(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation, isMirrored: Bool) async -> CGRect? {
+        if let rect = try? await detector.detectFace(in: buffer, orientation: orientation, isMirrored: isMirrored) {
             return rect
         }
         return nil

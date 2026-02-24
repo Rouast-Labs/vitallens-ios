@@ -59,7 +59,11 @@ public struct VitalLensMonitorView: View {
     @State private var ppgConf: Double = 0.0
     @State private var respHistory: [Double] = []
     @State private var respConf: Double = 0.0
-    
+
+    @State private var showDebug: Bool = false
+    @State private var debugImage: UIImage? = nil
+    @State private var debugROI: CGRect? = nil
+
     private var maxHistoryPoints: Int {
         return Int(windowSize * currentMode.fps)
     }
@@ -136,6 +140,27 @@ public struct VitalLensMonitorView: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if showDebug, let img = debugImage {
+                VStack {
+                    Image(uiImage: img)
+                        .resizable()
+                        .frame(width: 80, height: 80)
+                        .border(Color.red, width: 2)
+                    Text("API INPUT")
+                        .font(.caption2)
+                        .background(Color.black)
+                }
+                .padding(.top, 100)
+                .padding(.trailing, 20)
+            }
+        }
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+            guard showDebug else { return }
+            if let cgImg = client?.debugLatestCrop {
+                self.debugImage = UIImage(cgImage: cgImg)
+            }
+        }
         .onDisappear { stopProcessing() }
     }
     
@@ -146,6 +171,23 @@ public struct VitalLensMonitorView: View {
                 startSession(in: view)
             }
             .edgesIgnoringSafeArea(.all)
+            .overlay(
+                GeometryReader { geo in
+                    if showDebug, let roi = debugROI {
+                        Rectangle()
+                            .stroke(Color.yellow, lineWidth: 3)
+                            .frame(
+                                width: roi.width * geo.size.width,
+                                height: roi.height * geo.size.height
+                            )
+                            .offset(
+                                x: roi.minX * geo.size.width,
+                                y: roi.minY * geo.size.height
+                            )
+                            .animation(.linear(duration: 0.1), value: roi)
+                    }
+                }
+            )
         } else {
             Color.black.edgesIgnoringSafeArea(.all)
         }
@@ -161,6 +203,9 @@ public struct VitalLensMonitorView: View {
                         .frame(width: 32, height: 32)
                         .background(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .onTapGesture(count: 2) {
+                    showDebug.toggle()
                 }
                 
                 Spacer()
@@ -299,6 +344,8 @@ public struct VitalLensMonitorView: View {
         clearMeasurements()
         isFaceCurrentlyDetected = false
     }
+
+    // TODO: Need to be able to hide any vitals that are not returned (hrv, ie)
     
     private func startSession(in view: UIView) {
         guard client == nil, isProcessing else { return }
@@ -308,7 +355,8 @@ public struct VitalLensMonitorView: View {
             method: method,
             proxyURL: proxyURL,
             overrideFps: currentMode.fps,
-            waveformMode: .incremental
+            waveformMode: .incremental,
+            debugMode: showDebug
         )
         
         newClient.onFaceStateChanged = { @Sendable isPresent in
@@ -346,6 +394,8 @@ public struct VitalLensMonitorView: View {
     @MainActor
     private func updateUI(with result: VitalLensResult) {
         guard isProcessing, isFaceCurrentlyDetected else { return }
+
+        self.debugROI = result.face.boundingBoxes.last
         
         let faceConfs = result.face.confidence ?? []
         let currentFaceConf = faceConfs.isEmpty ? 0.0 : faceConfs.last!
@@ -572,6 +622,9 @@ struct GroupedMetricsTile: View {
     let s2Unit: String
     let hasSec1: Bool
     let hasSec2: Bool
+    let pFormat: String
+    let s1Format: String
+    let s2Format: String
     
     init(
         primaryId: String, primaryValue: Double?, isPrimaryReady: Bool,
@@ -585,6 +638,15 @@ struct GroupedMetricsTile: View {
         self.secondary2Value = secondary2Value
         self.isSecondary2Ready = isSecondary2Ready
         
+        func format(for id: String?) -> String {
+            guard let id = id else { return "%.0f" }
+            return (id == "ie_ratio" || id == "hrv_lfhf") ? "%.2f" : "%.0f"
+        }
+
+        self.pFormat = format(for: primaryId)
+        self.s1Format = format(for: secondary1Id)
+        self.s2Format = format(for: secondary2Id)
+
         let pMeta = VitalMetadataCache.getMeta(for: primaryId)
         self.pTitle = pMeta?.shortName ?? primaryId
         self.pUnit = pMeta?.unit.uppercased() ?? ""
@@ -624,7 +686,7 @@ struct GroupedMetricsTile: View {
                 
                 // Bottom line: VALUE
                 if isPrimaryReady, let val = primaryValue {
-                    Text(String(format: "%.0f", val))
+                    Text(String(format: pFormat, val))
                         .font(.system(size: 32, weight: .bold, design: .rounded)) 
                         .monospacedDigit()
                         .foregroundColor(.primary)
@@ -660,7 +722,7 @@ struct GroupedMetricsTile: View {
                             
                             // Bottom line: VALUE
                             if isSecondary1Ready, let val = secondary1Value {
-                                Text(String(format: "%.0f", val))
+                                Text(String(format: s1Format, val))
                                     .font(.system(size: 14, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundColor(.primary)
@@ -691,7 +753,7 @@ struct GroupedMetricsTile: View {
                             
                             // Bottom line: VALUE
                             if isSecondary2Ready, let val = secondary2Value {
-                                Text(String(format: "%.0f", val))
+                                Text(String(format: s2Format, val))
                                     .font(.system(size: 14, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundColor(.primary)

@@ -4,6 +4,10 @@ import CoreVideo
 @preconcurrency import Accelerate
 import VitalLensInference
 
+#if canImport(UIKit)
+import UIKit
+#endif
+
 /// A high-performance image processor using the Accelerate framework (vImage).
 /// It handles cropping, scaling, format conversion, rotation, and reflection efficiently.
 public final class ImageProcessor: @unchecked Sendable {
@@ -14,14 +18,18 @@ public final class ImageProcessor: @unchecked Sendable {
     private var argbBuffer1 = vImage_Buffer()
     private var argbBuffer2 = vImage_Buffer()
     private var finalRGBBuffer = vImage_Buffer()
-    
+
+    public var lastProcessedCGImage: CGImage?
+    public var debugMode: Bool
+
     /// Cached conversion info for YpCbCr -> ARGB
     private var conversionInfo: vImage_YpCbCrToARGB?
     
     /// Track the current buffer size to detect when we need to re-allocate
     private var currentTargetSize: Int = 0
     
-    public init() {
+    public init(debugMode: Bool = false) {
+        self.debugMode = debugMode
         initConversionInfo()
     }
     
@@ -62,6 +70,10 @@ public final class ImageProcessor: @unchecked Sendable {
         // Apply rotation and reflection into argbBuffer2
         try applyRotationAndReflection(source: &argbBuffer1, dest: &argbBuffer2, orientation: orientation, isMirrored: isMirrored)
         
+        if debugMode {
+            self.lastProcessedCGImage = createCGImage(from: argbBuffer2)
+        }
+
         // Convert finalized ARGB to RGB
         let error = vImageConvert_ARGB8888toRGB888(&argbBuffer2, &finalRGBBuffer, vImage_Flags(kvImageNoFlags))
         guard error == kvImageNoError else { throw VitalLensError.processingError("vImage ARGB->RGB failed: \(error)") }
@@ -266,5 +278,25 @@ public final class ImageProcessor: @unchecked Sendable {
         var info = vImage_YpCbCrToARGB()
         vImageConvert_YpCbCrToARGB_GenerateConversion(kvImage_YpCbCrToARGBMatrix_ITU_R_601_4!, &pixelRange, &info, kvImage420Yp8_CbCr8, kvImageARGB8888, vImage_Flags(kvImageNoFlags))
         self.conversionInfo = info
+    }
+
+    // Helper to convert vImage_Buffer to CGImage
+    private func createCGImage(from vBuffer: vImage_Buffer) -> CGImage? {
+        // Create a local mutable copy of the descriptor (not the data itself) 
+        // to satisfy the inout requirement of the vImage function.
+        var mutableBuffer = vBuffer
+        
+        var format = vImage_CGImageFormat(
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            colorSpace: nil,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.first.rawValue),
+            version: 0,
+            decode: nil,
+            renderingIntent: .defaultIntent
+        )
+        
+        var error = kvImageNoError
+        return vImageCreateCGImageFromBuffer(&mutableBuffer, &format, nil, nil, vImage_Flags(kvImageNoFlags), &error)?.takeRetainedValue()
     }
 }

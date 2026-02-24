@@ -19,7 +19,12 @@ actor MockROIStrategy: ROIStrategy {
         self.currentROI = roi
     }
     
-    func determineROI(in buffer: SendablePixelBuffer, orientation: CGImagePropertyOrientation) async -> CGRect? {
+    func determineROI(
+        in buffer: SendablePixelBuffer, 
+        orientation: CGImagePropertyOrientation, 
+        isMirrored: Bool, 
+        roiMethod: String
+    ) async -> CGRect? {
         return currentROI
     }
 }
@@ -426,5 +431,29 @@ final class StreamProcessorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         let count = await strategy.inferCallCount
         XCTAssertEqual(count, 0, "API calls should not have been made because the buffer was purged on face loss")
+    }
+
+    func testProcessFrame_WithCustomTransformer_UsesCustomLogic() async throws {
+        let expectation = XCTestExpectation(description: "Custom transformer called")
+        
+        let customTransformer: FrameTransformer = { buffer, roi, config, orientation, isMirrored in
+            expectation.fulfill()
+            return .rgbData(Data([0xFF, 0x00, 0x00]))
+        }
+        
+        let mockROI = MockROIStrategy()
+        await mockROI.setROI(CGRect(x: 0, y: 0, width: 1, height: 1))
+        
+        let processor = StreamProcessor(
+            strategy: MockInferenceStrategy(),
+            roiStrategy: mockROI,
+            transformer: customTransformer
+        )
+        
+        _ = try await processor.start()
+        
+        await processor.processFrame(makeFrame(at: 1.0))
+        
+        await fulfillment(of: [expectation], timeout: 1.0)
     }
 }

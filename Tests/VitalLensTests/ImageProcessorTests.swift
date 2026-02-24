@@ -5,6 +5,14 @@ import ImageIO
 @testable import VitalLens
 @testable import VitalLensInference
 
+#if canImport(UIKit)
+import UIKit
+typealias PlatformColor = UIColor
+#elseif canImport(AppKit)
+import AppKit
+typealias PlatformColor = NSColor
+#endif
+
 final class ImageProcessorTests: XCTestCase {
     
     var processor: ImageProcessor!
@@ -290,6 +298,22 @@ final class ImageProcessorTests: XCTestCase {
             }
         }
     }
+
+    func testProcess_DebugMode_ControlsCGImageCreation() throws {
+        // 1. Test Debug OFF (Default)
+        let prodProcessor = ImageProcessor(debugMode: false)
+        let buffer1 = createSolidColorBuffer(width: 40, height: 40)
+        
+        _ = try prodProcessor.process(pixelBuffer: buffer1, roi: CGRect(x: 0, y: 0, width: 1, height: 1), targetSize: 40, orientation: .up, isMirrored: false)
+        XCTAssertNil(prodProcessor.lastProcessedCGImage, "CGImage should NOT be created in production mode")
+        
+        // 2. Test Debug ON
+        let debugProcessor = ImageProcessor(debugMode: true)
+        let buffer2 = createSolidColorBuffer(width: 40, height: 40)
+        
+        _ = try debugProcessor.process(pixelBuffer: buffer2, roi: CGRect(x: 0, y: 0, width: 1, height: 1), targetSize: 40, orientation: .up, isMirrored: false)
+        XCTAssertNotNil(debugProcessor.lastProcessedCGImage, "CGImage MUST be created in debug mode")
+    }
     
     // MARK: - Helpers
     
@@ -402,6 +426,35 @@ final class ImageProcessorTests: XCTestCase {
                 for c in 0..<width/2 { rowStart[c * 2] = u; rowStart[c * 2 + 1] = v }
             }
         }
+        return pixelBuffer
+    }
+
+    private func createSolidColorBuffer(width: Int, height: Int) -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer)
+        let pixelBuffer = buffer!
+        
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        
+        let context = CGContext(
+            data: CVPixelBufferGetBaseAddress(pixelBuffer),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        )!
+        
+        // Hardcode a fill color (e.g., Red) using CGColor to avoid UIKit/AppKit
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        
         return pixelBuffer
     }
 }

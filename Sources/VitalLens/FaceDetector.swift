@@ -46,7 +46,8 @@ public actor FaceDetector: FaceDetecting {
     ///            or `nil` if no face is found.
     public func detectFace(
         in pixelBuffer: SendablePixelBuffer, 
-        orientation: CGImagePropertyOrientation = .up
+        orientation: CGImagePropertyOrientation = .up,
+        isMirrored: Bool = false
     ) async throws -> CGRect? {
         let buffer = pixelBuffer.buffer
         
@@ -60,7 +61,7 @@ public actor FaceDetector: FaceDetecting {
         }
         
         let visionRect = face.boundingBox
-        return convertVisionToTopLeft(visionRect)
+        return convertVisionToTopLeft(visionRect, isMirrored: isMirrored)
     }
     
     // MARK: - Helpers
@@ -69,13 +70,9 @@ public actor FaceDetector: FaceDetecting {
     ///
     /// - Parameter rect: The normalized rect from Vision (y is distance from bottom).
     /// - Returns: The normalized rect with y as distance from top.
-    private func convertVisionToTopLeft(_ rect: CGRect) -> CGRect {
-        // x and width remain the same.
-        // y in Vision is the bottom edge. In Top-Left, y is the top edge.
-        // Vision Rect: (x, y_bottom, w, h)
-        // Top-Left Rect: (x, 1.0 - y_bottom - h, w, h)
-        
+    private func convertVisionToTopLeft(_ rect: CGRect, isMirrored: Bool) -> CGRect {
         let newY = 1.0 - rect.origin.y - rect.height
-        return CGRect(x: rect.origin.x, y: newY, width: rect.width, height: rect.height)
+        let newX = isMirrored ? 1.0 - rect.origin.x - rect.width : rect.origin.x
+        return CGRect(x: newX, y: newY, width: rect.width, height: rect.height)
     }
 }

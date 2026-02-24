@@ -33,7 +33,8 @@ public struct SendableUIPreview: @unchecked Sendable {
 public protocol FaceDetecting: Sendable {
     func detectFace(
         in pixelBuffer: SendablePixelBuffer, 
-        orientation: CGImagePropertyOrientation
+        orientation: CGImagePropertyOrientation,
+        isMirrored: Bool,
     ) async throws -> CGRect?
 }
 

@@ -16,6 +16,7 @@ public struct ROICalculator {
         let result = VitalLensCore.calculateRoi(
             face: faceRect.toRustRect(),
             method: rustMethod,
+            detector: .appleVision,
             containerWidth: 1.0,
             containerHeight: 1.0,
             forceEven: false
