@@ -31,10 +31,11 @@ public struct VitalLensMonitorView: View {
     private let proxyURL: URL?
     private let method: String
     private let showWaveforms: Bool
-    private let mode: VitalLensMode
     private let bufferOffset: TimeInterval
     private let windowSize: TimeInterval
     private let minDisplayDuration: TimeInterval
+    
+    @State private var currentMode: VitalLensMode
     
     @State private var client: VitalLens?
     @State private var isProcessing = false
@@ -43,7 +44,6 @@ public struct VitalLensMonitorView: View {
     
     @State private var isFaceCurrentlyDetected = false
     
-    // Vital states
     @State private var hrValue: Double?
     @State private var hrConf: Double = 0.0
     @State private var rrValue: Double?
@@ -52,15 +52,20 @@ public struct VitalLensMonitorView: View {
     @State private var sdnnConf: Double = 0.0
     @State private var rmssdValue: Double?
     @State private var rmssdConf: Double = 0.0
+    @State private var ieRatioValue: Double?
+    @State private var ieRatioConf: Double = 0.0
     
-    // Waveform states
     @State private var ppgHistory: [Double] = []
     @State private var ppgConf: Double = 0.0
     @State private var respHistory: [Double] = []
     @State private var respConf: Double = 0.0
     
     private var maxHistoryPoints: Int {
-        return Int(minDisplayDuration * mode.fps)
+        return Int(windowSize * currentMode.fps)
+    }
+    
+    private var requiredSamplesForDisplay: Int {
+        return Int(minDisplayDuration * currentMode.fps)
     }
     
     struct BufferedPoint {
@@ -81,8 +86,8 @@ public struct VitalLensMonitorView: View {
         proxyURL: URL? = nil,
         method: String = "vitallens",
         showWaveforms: Bool = true,
-        mode: VitalLensMode = .eco,
-        bufferOffset: TimeInterval = 0.4,
+        initialMode: VitalLensMode = .eco,
+        bufferOffset: TimeInterval = 0.15,
         windowSize: TimeInterval = 10.0,
         minDisplayDuration: TimeInterval = 5.0 
     ) {
@@ -90,50 +95,49 @@ public struct VitalLensMonitorView: View {
         self.proxyURL = proxyURL
         self.method = method
         self.showWaveforms = showWaveforms
-        self.mode = mode
         self.bufferOffset = bufferOffset
         self.windowSize = windowSize
         self.minDisplayDuration = minDisplayDuration
+        
+        self._currentMode = State(initialValue: initialMode)
     }
     
-    // MARK: - Computed Properties for UI Readiness
-    // Moving these out of the body block fixes the compiler timeout
-    private var hasEnoughData: Bool { ppgHistory.count >= maxHistoryPoints }
-    private var isHrReady: Bool { hrConf >= vitalConfThreshold && hasEnoughData }
-    private var isRrReady: Bool { rrConf >= vitalConfThreshold && hasEnoughData }
-    private var isSdnnReady: Bool { sdnnConf >= hrvConfThreshold && hasEnoughData }
-    private var isRmssdReady: Bool { rmssdConf >= hrvConfThreshold && hasEnoughData }
+    private var hasEnoughData: Bool { ppgHistory.count >= requiredSamplesForDisplay }
+    
+    private var isHrReady: Bool { hrValue != nil && hrConf >= vitalConfThreshold }
+    private var isRrReady: Bool { rrValue != nil && rrConf >= vitalConfThreshold }
+    private var isSdnnReady: Bool { sdnnValue != nil && sdnnConf >= hrvConfThreshold }
+    private var isRmssdReady: Bool { rmssdValue != nil && rmssdConf >= hrvConfThreshold }
+    private var isIeReady: Bool { ieRatioValue != nil && ieRatioConf >= vitalConfThreshold }
     private var isPpgReady: Bool { ppgConf >= vitalConfThreshold && hasEnoughData }
     private var isRespReady: Bool { respConf >= vitalConfThreshold && hasEnoughData }
     
     private var dynamicMessage: String {
         if !feedbackMessage.isEmpty { return feedbackMessage }
         if monitorState == .warmingUp {
-            let progress = min(100, Int((Double(ppgHistory.count) / Double(maxHistoryPoints)) * 100))
+            let progress = min(100, Int((Double(ppgHistory.count) / Double(requiredSamplesForDisplay)) * 100))
             return "Calibrating signals... (\(progress)%)"
         }
         return ""
     }
     
-    // MARK: - Body
     public var body: some View {
         ZStack {
             cameraLayer
             
-            VStack(spacing: 0) {
-                topBarLayer
-                Spacer()
-                middleGapLayer
-                bottomMetricsLayer
+            if monitorState == .idle {
+                idleOverlayLayer
+            } else {
+                VStack(spacing: 0) {
+                    topBarLayer
+                    Spacer()
+                    middleGapLayer
+                    bottomMetricsLayer
+                }
             }
-            
-            idleOverlayLayer
         }
-        .onTapGesture { toggleProcessing() }
         .onDisappear { stopProcessing() }
     }
-    
-    // MARK: - Extracted View Layers
     
     @ViewBuilder
     private var cameraLayer: some View {
@@ -148,17 +152,32 @@ public struct VitalLensMonitorView: View {
     }
     
     private var topBarLayer: some View {
-        HStack {
-            Link(destination: URL(string: "https://www.rouast.com/api/")!) {
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt.heart.fill")
-                        .foregroundColor(.red)
-                    Text("VitalLens API")
-                        .font(.headline)
-                        .foregroundColor(.primary)
+        ZStack {
+            HStack {
+                Link(destination: URL(string: "https://www.rouast.com/api/")!) {
+                    Image("vitallens_logo", bundle: .module) 
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                
+                Spacer()
+                
+                if isProcessing {
+                    Button(action: {
+                        stopProcessing()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundColor(.white)
+                            .padding(.leading, 8)
+                    }
                 }
             }
-            Spacer()
+            
             StatusBadge(state: monitorState)
         }
         .padding(.horizontal)
@@ -184,85 +203,74 @@ public struct VitalLensMonitorView: View {
     
     @ViewBuilder
     private var bottomMetricsLayer: some View {
-        if monitorState != .idle {
-            VStack(spacing: 10) {
-                
-                if !dynamicMessage.isEmpty {
-                    Text(dynamicMessage)
-                        .font(.footnote)
-                        .fontWeight(.medium)
-                        .foregroundColor(.orange)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                
-                // ROW 1: Cardiac
-                HStack(spacing: 10) {
-                    if showWaveforms {
-                        WaveformContainer(title: "PPG Waveform", color: .red, history: ppgHistory, isReady: isPpgReady)
-                    }
-                    
-                    GroupedMetricsTile(
-                        primaryTitle: "Heart Rate", primaryValue: hrValue, primaryUnit: "BPM", isPrimaryReady: isHrReady,
-                        secondary1Title: "SDNN", secondary1Value: sdnnValue, secondary1Unit: "ms", isSecondary1Ready: isSdnnReady, isSecondary1Placeholder: false,
-                        secondary2Title: "RMSSD", secondary2Value: rmssdValue, secondary2Unit: "ms", isSecondary2Ready: isRmssdReady, isSecondary2Placeholder: false
-                    )
-                    .frame(width: showWaveforms ? 140 : .infinity)
-                }
-                .frame(height: 90)
-                .padding(.horizontal)
-                
-                // ROW 2: Respiration
-                HStack(spacing: 10) {
-                    if showWaveforms {
-                        WaveformContainer(title: "Respiratory Waveform", color: .blue, history: respHistory, isReady: isRespReady)
-                    }
-                    
-                    GroupedMetricsTile(
-                        primaryTitle: "Resp Rate", primaryValue: rrValue, primaryUnit: "RPM", isPrimaryReady: isRrReady,
-                        secondary1Title: "I:E Ratio", secondary1Value: nil, secondary1Unit: "", isSecondary1Ready: false, isSecondary1Placeholder: true,
-                        secondary2Title: "", secondary2Value: nil, secondary2Unit: "", isSecondary2Ready: false, isSecondary2Placeholder: true 
-                    )
-                    .frame(width: showWaveforms ? 140 : .infinity)
-                }
-                .frame(height: 90)
-                .padding(.horizontal)
+        VStack(spacing: 12) {
+            
+            if !dynamicMessage.isEmpty {
+                Text(dynamicMessage)
+                    .font(.footnote)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)  
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
             }
-            .padding(.top, 12)
-            .padding(.bottom, 20)
-            .background(
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .edgesIgnoringSafeArea(.bottom)
-            )
+            
+            HStack(spacing: 12) {
+                if showWaveforms {
+                    WaveformContainer(vitalId: "ppg_waveform", history: ppgHistory, isReady: isPpgReady)
+                }
+                
+                GroupedMetricsTile(
+                    primaryId: "heart_rate", primaryValue: hrValue, isPrimaryReady: isHrReady,
+                    secondary1Id: "hrv_sdnn", secondary1Value: sdnnValue, isSecondary1Ready: isSdnnReady,
+                    secondary2Id: "hrv_rmssd", secondary2Value: rmssdValue, isSecondary2Ready: isRmssdReady
+                )
+                .frame(width: showWaveforms ? 170 : .infinity)
+            }
+            .frame(height: 90)
+            .padding(.horizontal)
+            
+            HStack(spacing: 12) {
+                if showWaveforms {
+                    WaveformContainer(vitalId: "respiratory_waveform", history: respHistory, isReady: isRespReady)
+                }
+                
+                GroupedMetricsTile(
+                    primaryId: "respiratory_rate", primaryValue: rrValue, isPrimaryReady: isRrReady,
+                    secondary1Id: "ie_ratio", secondary1Value: ieRatioValue, isSecondary1Ready: isIeReady,
+                    secondary2Id: nil, secondary2Value: nil, isSecondary2Ready: false
+                )
+                .frame(width: showWaveforms ? 170 : .infinity)
+            }
+            .frame(height: 90)
+            .padding(.horizontal)
         }
+        .padding(.top, 12)
+        .padding(.bottom, 24)
+        .background(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .edgesIgnoringSafeArea(.bottom)
+        )
     }
     
     @ViewBuilder
     private var idleOverlayLayer: some View {
-        if monitorState == .idle {
-            Color.black.opacity(0.6).edgesIgnoringSafeArea(.all)
-            VStack {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 64))
-                    .foregroundColor(.white)
-                Text("Tap to Start")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.top, 8)
-            }
-        }
+        VitalLensStartView(
+            title: "VitalLens Vitals Monitor",
+            subtitle: "Estimate your vital signs using\nonly your camera",
+            timingHintLabel: "Scan runs\ncontinuously.",
+            startButtonLabel: "Start Monitor",
+            currentMode: $currentMode,
+            onStart: { startProcessing() }
+        )
     }
     
-    // MARK: - Logic Methods
+    // MARK: - Core Operations
     
-    private func toggleProcessing() {
-        if isProcessing { stopProcessing() } else {
-            isProcessing = true
-            monitorState = .searching
-            feedbackMessage = "Face the camera, ensure good lighting and hold still."
-        }
+    private func startProcessing() {
+        isProcessing = true
+        monitorState = .searching
+        feedbackMessage = "Face the camera, ensure good lighting and hold still."
     }
     
     private func stopProcessing() {
@@ -280,6 +288,8 @@ public struct VitalLensMonitorView: View {
         rrValue = nil; rrConf = 0.0
         sdnnValue = nil; sdnnConf = 0.0
         rmssdValue = nil; rmssdConf = 0.0
+        ieRatioValue = nil; ieRatioConf = 0.0
+        
         ppgHistory.removeAll(); ppgQueue.removeAll(); ppgConf = 0.0
         respHistory.removeAll(); respQueue.removeAll(); respConf = 0.0
         timeAnchor = nil
@@ -291,24 +301,27 @@ public struct VitalLensMonitorView: View {
     }
     
     private func startSession(in view: UIView) {
-        guard client == nil else { return }
+        guard client == nil, isProcessing else { return }
         
         let newClient = VitalLens(
             apiKey: apiKey,
             method: method,
             proxyURL: proxyURL,
-            overrideFps: mode.fps,
+            overrideFps: currentMode.fps,
             waveformMode: .incremental
         )
         
         newClient.onFaceStateChanged = { @Sendable isPresent in
             Task { @MainActor in
+                guard self.isProcessing else { return } 
+                
                 self.isFaceCurrentlyDetected = isPresent
                 if !isPresent {
                     self.monitorState = .issue
                     self.feedbackMessage = "Check Position: Face the camera and hold still."
+                    self.client?.resetStream()
                     self.clearMeasurements()
-                } else if self.monitorState == .issue {
+                } else if self.monitorState == .issue || self.monitorState == .idle {
                     self.monitorState = .searching
                     self.feedbackMessage = "Face detected, analyzing..."
                 }
@@ -332,10 +345,10 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        guard isFaceCurrentlyDetected else { return }
+        guard isProcessing, isFaceCurrentlyDetected else { return }
         
         let faceConfs = result.face.confidence ?? []
-        let currentFaceConf = faceConfs.isEmpty ? 1.0 : faceConfs.last!
+        let currentFaceConf = faceConfs.isEmpty ? 0.0 : faceConfs.last!
         
         if currentFaceConf < faceConfThreshold {
             monitorState = .issue
@@ -344,12 +357,14 @@ public struct VitalLensMonitorView: View {
         }
         
         if showWaveforms { queueWaveformData(result: result) }
-        
+
         if let hr = result.heartRate { hrValue = hr.value; hrConf = hr.confidence }
         if let rr = result.respiratoryRate { rrValue = rr.value; rrConf = rr.confidence }
         if let sdnn = result.hrvSdnn { sdnnValue = sdnn.value; sdnnConf = sdnn.confidence }
         if let rmssd = result.hrvRmssd { rmssdValue = rmssd.value; rmssdConf = rmssd.confidence }
+        if let ie = result.vitals["ie_ratio"] { ieRatioValue = ie.value; ieRatioConf = ie.confidence }
         
+        // TODO: What if model does not support HRV?
         let hasConfidentHr = hrConf >= vitalConfThreshold
         let hasConfidentRr = rrConf >= vitalConfThreshold
         let hasConfidentHrv = sdnnConf >= hrvConfThreshold || rmssdConf >= hrvConfThreshold
@@ -357,7 +372,7 @@ public struct VitalLensMonitorView: View {
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
             feedbackMessage = "Low confidence. Ensure you are well lit and hold still."
-        } else if !hasEnoughData {
+        } else if showWaveforms && !hasEnoughData {
             monitorState = .warmingUp
             feedbackMessage = "" 
         } else {
@@ -365,6 +380,7 @@ public struct VitalLensMonitorView: View {
             feedbackMessage = "Tracking vitals"
         }
         
+        // TODO: Use the average values instead
         if let ppg = result.ppg { ppgConf = Double(ppg.confidence.last ?? 0) }
         if let resp = result.resp { respConf = Double(resp.confidence.last ?? 0) }
     }
@@ -431,7 +447,7 @@ public struct VitalLensMonitorView: View {
     }
 }
 
-// MARK: - UI Components
+// MARK: - Subcomponents
 
 struct StatusBadge: View {
     let state: MonitorState
@@ -455,7 +471,7 @@ struct StatusBadge: View {
     var color: Color {
         switch state {
         case .idle: return .gray
-        case .searching: return .blue
+        case .searching: return VitalMetadataCache.brandBlue
         case .warmingUp: return .purple
         case .tracking: return .green
         case .issue: return .orange
@@ -498,11 +514,23 @@ struct PulseEffect: ViewModifier {
     }
 }
 
+// MARK: - Dynamic UI Tiles (Evaluates Cache on Init Only)
+
 struct WaveformContainer: View {
-    let title: String
-    let color: Color
     let history: [Double]
     let isReady: Bool
+    
+    let title: String
+    let chartColor: Color
+    
+    init(vitalId: String, history: [Double], isReady: Bool) {
+        self.history = history
+        self.isReady = isReady
+        
+        let meta = VitalMetadataCache.getMeta(for: vitalId)
+        self.title = meta?.displayName ?? vitalId
+        self.chartColor = meta.flatMap { Color(hex: $0.color) } ?? .red
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -514,7 +542,7 @@ struct WaveformContainer: View {
             
             ZStack {
                 if isReady && !history.isEmpty {
-                    WaveformView(samples: history, color: color)
+                    WaveformView(samples: history, color: chartColor)
                         .padding(.horizontal, 6)
                         .padding(.bottom, 6)
                 } else {
@@ -529,107 +557,159 @@ struct WaveformContainer: View {
 }
 
 struct GroupedMetricsTile: View {
-    let primaryTitle: String
     let primaryValue: Double?
-    let primaryUnit: String
     let isPrimaryReady: Bool
-    
-    let secondary1Title: String
     let secondary1Value: Double?
-    let secondary1Unit: String
     let isSecondary1Ready: Bool
-    let isSecondary1Placeholder: Bool
-    
-    let secondary2Title: String
     let secondary2Value: Double?
-    let secondary2Unit: String
     let isSecondary2Ready: Bool
-    let isSecondary2Placeholder: Bool
+    
+    let pTitle: String
+    let pUnit: String
+    let s1Title: String
+    let s1Unit: String
+    let s2Title: String
+    let s2Unit: String
+    let hasSec1: Bool
+    let hasSec2: Bool
+    
+    init(
+        primaryId: String, primaryValue: Double?, isPrimaryReady: Bool,
+        secondary1Id: String?, secondary1Value: Double?, isSecondary1Ready: Bool,
+        secondary2Id: String?, secondary2Value: Double?, isSecondary2Ready: Bool
+    ) {
+        self.primaryValue = primaryValue
+        self.isPrimaryReady = isPrimaryReady
+        self.secondary1Value = secondary1Value
+        self.isSecondary1Ready = isSecondary1Ready
+        self.secondary2Value = secondary2Value
+        self.isSecondary2Ready = isSecondary2Ready
+        
+        let pMeta = VitalMetadataCache.getMeta(for: primaryId)
+        self.pTitle = pMeta?.shortName ?? primaryId
+        self.pUnit = pMeta?.unit.uppercased() ?? ""
+        
+        self.hasSec1 = secondary1Id != nil
+        if let s1 = secondary1Id {
+            let m = VitalMetadataCache.getMeta(for: s1)
+            self.s1Title = m?.shortName ?? s1
+            self.s1Unit = m?.unit.uppercased() ?? ""
+        } else { self.s1Title = ""; self.s1Unit = "" }
+        
+        self.hasSec2 = secondary2Id != nil
+        if let s2 = secondary2Id {
+            let m = VitalMetadataCache.getMeta(for: s2)
+            self.s2Title = m?.shortName ?? s2
+            self.s2Unit = m?.unit.uppercased() ?? ""
+        } else { self.s2Title = ""; self.s2Unit = "" }
+    }
     
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                Text(primaryTitle)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 16) {
+            
+            // 1. Primary Metric Column
+            VStack(alignment: .leading, spacing: 2) {
+                // Top line: NAME UNIT
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(pTitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    
+                    if !pUnit.isEmpty {
+                        Text(pUnit)
+                            .font(.system(size: 8, weight: .regular))
+                            .foregroundStyle(.secondary.opacity(0.6)) // Less pronounced
+                    }
+                }
                 
+                // Bottom line: VALUE
                 if isPrimaryReady, let val = primaryValue {
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(String(format: "%.0f", val))
-                            .font(.system(size: 28, weight: .bold, design: .rounded)) // Reduced
-                            .monospacedDigit()
-                            .foregroundColor(.primary)
-                        Text(primaryUnit)
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(String(format: "%.0f", val))
+                        .font(.system(size: 32, weight: .bold, design: .rounded)) 
+                        .monospacedDigit()
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.4)
                 } else {
-                    ProgressView()
-                        .frame(height: 30) // Tighter
+                    Text("--")
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.3))
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 12)
             
-            Divider()
-                .padding(.horizontal, 12)
-            
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    Text(secondary1Title)
-                        .font(.system(size: 8)) // Micro font
-                        .foregroundStyle(.secondary)
+            // 2. Secondary Metrics Column
+            if hasSec1 || hasSec2 {
+                VStack(alignment: .leading, spacing: 8) { 
                     
-                    if isSecondary1Placeholder {
-                        Text("--")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.secondary.opacity(0.3))
-                    } else if isSecondary1Ready, let val = secondary1Value {
-                        HStack(alignment: .firstTextBaseline, spacing: 1) {
-                            Text(String(format: "%.0f", val))
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                            Text(secondary1Unit)
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
+                    if hasSec1 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            // Top line: NAME UNIT
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(s1Title)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                
+                                if !s1Unit.isEmpty {
+                                    Text(s1Unit)
+                                        .font(.system(size: 7, weight: .regular))
+                                        .foregroundStyle(.secondary.opacity(0.6))
+                                }
+                            }
+                            
+                            // Bottom line: VALUE
+                            if isSecondary1Ready, let val = secondary1Value {
+                                Text(String(format: "%.0f", val))
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                            } else {
+                                Text("--")
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundColor(.secondary.opacity(0.3))
+                            }
                         }
-                    } else {
-                        ProgressView().frame(height: 14)
+                    }
+                    
+                    if hasSec2 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            // Top line: NAME UNIT
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(s2Title)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                
+                                if !s2Unit.isEmpty {
+                                    Text(s2Unit)
+                                        .font(.system(size: 7, weight: .regular))
+                                        .foregroundStyle(.secondary.opacity(0.6))
+                                }
+                            }
+                            
+                            // Bottom line: VALUE
+                            if isSecondary2Ready, let val = secondary2Value {
+                                Text(String(format: "%.0f", val))
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                            } else {
+                                Text("--")
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundColor(.secondary.opacity(0.3))
+                            }
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .opacity(secondary1Title.isEmpty ? 0 : 1.0)
-                
-                Divider()
-                    .frame(height: 16)
-                    .opacity(secondary2Title.isEmpty ? 0 : 1.0)
-                
-                VStack(spacing: 0) {
-                    Text(secondary2Title)
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                    
-                    if isSecondary2Placeholder {
-                        Text("--")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.secondary.opacity(0.3))
-                    } else if isSecondary2Ready, let val = secondary2Value {
-                        HStack(alignment: .firstTextBaseline, spacing: 1) {
-                            Text(String(format: "%.0f", val))
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                            Text(secondary2Unit)
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        ProgressView().frame(height: 14)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .opacity(secondary2Title.isEmpty ? 0 : 1.0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 8)
             }
-            .padding(.vertical, 6) // Tighter bottom padding
         }
+        .padding(.vertical, 12) 
         .background(Color(UIColor.secondarySystemBackground))
         .cornerRadius(12) 
     }

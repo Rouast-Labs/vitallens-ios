@@ -2,6 +2,13 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 
+class VideoPreviewView: UIView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.sublayers?.forEach { $0.frame = bounds }
+    }
+}
+
 /// A SwiftUI wrapper that provides a UIView for the camera preview layer.
 public struct CameraPreview: UIViewRepresentable {
     
@@ -13,19 +20,28 @@ public struct CameraPreview: UIViewRepresentable {
     }
     
     public func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = VideoPreviewView(frame: .zero)
         view.backgroundColor = .black
-        // Ensure the view lays out correctly for the layer
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.defaultLow, for: .vertical)
         return view
     }
     
     public func updateUIView(_ uiView: UIView, context: Context) {
-        // One-time initialization of the preview attachment
-        DispatchQueue.main.async {
-            onViewAvailable(uiView)
+        if !context.coordinator.hasCalledOnViewAvailable {
+            context.coordinator.hasCalledOnViewAvailable = true
+            DispatchQueue.main.async {
+                onViewAvailable(uiView)
+            }
         }
+    }
+    
+    public func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    public class Coordinator {
+        var hasCalledOnViewAvailable = false
     }
 }
 #endif

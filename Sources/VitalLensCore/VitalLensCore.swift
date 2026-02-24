@@ -708,6 +708,8 @@ public protocol SessionProtocol : AnyObject {
     
     func process(input: SessionInput, mode: WaveformMode)  -> SessionResult
     
+    func reset() 
+    
 }
 
 open class Session:
@@ -775,6 +777,12 @@ open func process(input: SessionInput, mode: WaveformMode) -> SessionResult {
         FfiConverterTypeWaveformMode.lower(mode),$0
     )
 })
+}
+    
+open func reset() {try! rustCall() {
+    uniffi_vitallens_core_fn_method_session_reset(self.uniffiClonePointer(),$0
+    )
+}
 }
     
 
@@ -1792,6 +1800,104 @@ public func FfiConverterTypeSignalInput_lower(_ value: SignalInput) -> RustBuffe
 }
 
 
+public struct VitalDisplayMeta {
+    public var id: String
+    public var displayName: String
+    public var shortName: String
+    public var unit: String
+    public var color: String
+    public var emoji: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, displayName: String, shortName: String, unit: String, color: String, emoji: String) {
+        self.id = id
+        self.displayName = displayName
+        self.shortName = shortName
+        self.unit = unit
+        self.color = color
+        self.emoji = emoji
+    }
+}
+
+
+
+extension VitalDisplayMeta: Equatable, Hashable {
+    public static func ==(lhs: VitalDisplayMeta, rhs: VitalDisplayMeta) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.displayName != rhs.displayName {
+            return false
+        }
+        if lhs.shortName != rhs.shortName {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        if lhs.color != rhs.color {
+            return false
+        }
+        if lhs.emoji != rhs.emoji {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(displayName)
+        hasher.combine(shortName)
+        hasher.combine(unit)
+        hasher.combine(color)
+        hasher.combine(emoji)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVitalDisplayMeta: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VitalDisplayMeta {
+        return
+            try VitalDisplayMeta(
+                id: FfiConverterString.read(from: &buf), 
+                displayName: FfiConverterString.read(from: &buf), 
+                shortName: FfiConverterString.read(from: &buf), 
+                unit: FfiConverterString.read(from: &buf), 
+                color: FfiConverterString.read(from: &buf), 
+                emoji: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VitalDisplayMeta, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.shortName, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterString.write(value.color, into: &buf)
+        FfiConverterString.write(value.emoji, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalDisplayMeta_lift(_ buf: RustBuffer) throws -> VitalDisplayMeta {
+    return try FfiConverterTypeVitalDisplayMeta.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalDisplayMeta_lower(_ value: VitalDisplayMeta) -> RustBuffer {
+    return FfiConverterTypeVitalDisplayMeta.lower(value)
+}
+
+
 public struct VitalResult {
     public var value: Float
     public var confidence: Float
@@ -2402,6 +2508,30 @@ fileprivate struct FfiConverterOptionTypeRect: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeVitalDisplayMeta: FfiConverterRustBuffer {
+    typealias SwiftType = VitalDisplayMeta?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeVitalDisplayMeta.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeVitalDisplayMeta.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]?
 
@@ -2651,6 +2781,13 @@ public func computeIou(a: Rect, b: Rect) -> Float {
     )
 })
 }
+public func getVitalInfo(vitalId: String) -> VitalDisplayMeta? {
+    return try!  FfiConverterOptionTypeVitalDisplayMeta.lift(try! rustCall() {
+    uniffi_vitallens_core_fn_func_get_vital_info(
+        FfiConverterString.lower(vitalId),$0
+    )
+})
+}
 public func isContained(inner: Rect, outer: Rect, minOverlapPct: Float) -> Bool {
     return try!  FfiConverterBool.lift(try! rustCall() {
     uniffi_vitallens_core_fn_func_is_contained(
@@ -2685,6 +2822,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_vitallens_core_checksum_func_compute_iou() != 40748) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_vitallens_core_checksum_func_get_vital_info() != 12718) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_vitallens_core_checksum_func_is_contained() != 19341) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2698,6 +2838,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_method_session_process() != 27116) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vitallens_core_checksum_method_session_reset() != 39224) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vitallens_core_checksum_constructor_bufferplanner_new() != 8442) {

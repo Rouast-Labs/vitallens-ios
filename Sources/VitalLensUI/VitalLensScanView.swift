@@ -120,11 +120,11 @@ public struct VitalLensScanView: View {
                 self.faceDetected = isPresent
                 
                 if !isPresent && self.isScanning {
-                    // Punish movement: immediately kill the scan
                     self.isScanning = false
                     self.progress = 0.0
                     self.currentHeartRate = 0
-                    self.statusMessage = "Face lost. Please reposition."
+                    self.statusMessage = "Face lost. Please reposition."                    
+                    self.client?.resetStream()                    
                 } else if isPresent && !self.isScanning {
                     self.statusMessage = "Position your face in the oval"
                 }

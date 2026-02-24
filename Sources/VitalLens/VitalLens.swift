@@ -179,6 +179,12 @@ public final class VitalLens: @unchecked Sendable {
         return try await processor.start(preview: wrapper)
     }
 
+    public func resetStream() {
+        Task {
+            await streamProcessor?.reset()
+        }
+    }
+
     public func stopStream() {
         Task {
             await streamProcessor?.stop()

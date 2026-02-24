@@ -40,7 +40,8 @@ actor StreamProcessor {
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
     
     private var lastProcessedTime: TimeInterval = -1.0
-        
+    private var streamGeneration: Int = 0
+
     private var outputContinuation: AsyncStream<VitalLensResult>.Continuation?
     private var frameSignal: AsyncStream<Void>.Continuation?
     private var inferenceTask: Task<Void, Never>?
@@ -142,6 +143,12 @@ actor StreamProcessor {
         try await camera.start()
         #endif
     }
+
+    func reset() async {
+        await bufferManager.reset()
+        self.session?.reset()
+        self.streamGeneration += 1
+    }
     
     func stop() {
         self.isPaused = true
@@ -242,6 +249,7 @@ actor StreamProcessor {
                 
                 guard let window = await bufferManager.execute(command: command) else { break }
                 let currentState = await bufferManager.getState()
+                let currentGeneration = self.streamGeneration
                 
                 do {
                     let (rawResult, newState) = try await strategy.infer(
@@ -250,6 +258,10 @@ actor StreamProcessor {
                         mode: .stream,
                         model: self.config?.modelName
                     )
+
+                    guard currentGeneration == self.streamGeneration else {
+                        continue 
+                    }
                     
                     consecutiveErrors = 0
                     

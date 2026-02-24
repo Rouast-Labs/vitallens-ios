@@ -55,7 +55,10 @@ let package = Package(
         // UI: SwiftUI Components. Depends on Lib.
         .target(
             name: "VitalLensUI",
-            dependencies: ["VitalLens"]
+            dependencies: ["VitalLens"],
+            resources: [
+                .process("Assets.xcassets")
+            ]
         ),
         
         // Inference Logic Tests
