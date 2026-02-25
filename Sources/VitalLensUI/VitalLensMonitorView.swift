@@ -360,8 +360,6 @@ public struct VitalLensMonitorView: View {
         clearMeasurements()
         isFaceCurrentlyDetected = false
     }
-
-    // TODO: Need to be able to hide any vitals that are not returned (hrv, ie)
     
     private func startSession(in view: UIView) {
         guard client == nil, isProcessing else { return }

@@ -33,6 +33,9 @@ public struct VitalLensScanView: View {
     private let scanDuration: TimeInterval = 30.0
     private let warmUpDuration: TimeInterval = 5.0
     private let recoveryTimeout: TimeInterval = 10.0
+    
+    private let vitalConfThreshold = 0.6
+    private let hrvConfThreshold = 0.5
     
     /// Initializes the Scan View.
     public init(
@@ -71,77 +74,72 @@ public struct VitalLensScanView: View {
         }
     }
     
-    // TODO: Fix up the oval loading bar alignment with cutout
     @ViewBuilder
     private var scanUILayer: some View {
-        ZStack {
-            Color.black.edgesIgnoringSafeArea(.all)
-            
-            CameraPreview { view in
-                startSession(in: view)
-            }
-            .edgesIgnoringSafeArea(.all)
-            
-            CutoutOverlay()
-            
-            VStack {
-                topBarLayer
-                Spacer()
-                
-                ZStack {
-                    Ellipse()
-                        .stroke(Color.white.opacity(0.3), lineWidth: 3)
-                        .frame(width: 250, height: 350)
-                    
-                    if scanState == .tracking || scanState == .recovering || scanState == .warmingUp {
+        VStack {
+            topBarLayer
+            Spacer()
+            
+            Text(statusMessage)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(20)
+                .padding(.bottom, 40)
+        }
+        .background {
+            ZStack {
+                Color.black
+                
+                CameraPreview { view in
+                    startSession(in: view)
+                }
+                
+                CutoutOverlay()
+                
+                if scanState == .tracking || scanState == .recovering || scanState == .warmingUp {
+                    ZStack {
                         Ellipse()
                             .trim(from: 0.0, to: CGFloat(progress))
                             .stroke(VitalMetadataCache.brandBlue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                            .frame(width: 450, height: 320)
                             .rotationEffect(.degrees(-90))
-                            .frame(width: 250, height: 350)
                             .animation(.linear(duration: 0.2), value: progress)
                     }
+                    .frame(width: 320, height: 450)
                 }
-                
-                Spacer()
-                
-                Text(statusMessage)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(20)
-                    .padding(.bottom, 40)
             }
+            .ignoresSafeArea()
         }
     }
     
     private var topBarLayer: some View {
-        HStack {
-            Image("vitallens_logo", bundle: .module)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 32, height: 32)
-                .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            
-            Spacer()
-            
-            ScanStatusBadge(state: scanState)
-            
-            Spacer()
-            
-            Button(action: {
-                transition(to: .issue, message: "Scan cancelled by user.")
-            }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundColor(.white)
-                    .padding(.leading, 8)
+        ZStack {
+            HStack {
+                Image("vitallens_logo", bundle: .module)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 32)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                
+                Spacer()
+                
+                Button(action: {
+                    transition(to: .issue, message: "Scan cancelled by user.")
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundColor(.white)
+                        .padding(.leading, 8)
+                }
             }
+            
+            ScanStatusBadge(state: scanState)
         }
         .padding(.horizontal)
         .padding(.top, 8)
@@ -151,9 +149,9 @@ public struct VitalLensScanView: View {
     private var resultOverlay: some View {
         if let res = finalResult {
             ZStack {
-                Color(red: 0.08, green: 0.09, blue: 0.11).edgesIgnoringSafeArea(.all)
-                
-                VStack(spacing: 0) {
+                Color(red: 0.06, green: 0.07, blue: 0.09).edgesIgnoringSafeArea(.all)
+                
+                VStack(spacing: 24) {
                     HStack(spacing: 12) {
                         Image("vitallens_logo", bundle: .module)
                             .resizable()
@@ -161,53 +159,70 @@ public struct VitalLensScanView: View {
                             .frame(width: 32, height: 32)
                             .background(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Text("VitalLens Vitals Scan")
+                        Text("Scan Complete")
                             .font(.headline)
                             .foregroundColor(.white)
                         Spacer()
                     }
-                    .padding(.bottom, 32)
-                    
-                    HStack(spacing: 16) {
-                        ScanResultTile(title: "HEART RATE", value: res.heartRate?.value, unit: "bpm", format: "%.0f")
-                        ScanResultTile(title: "RESPIRATION", value: res.respiratoryRate?.value, unit: "rpm", format: "%.0f")
+                    .padding(.top, 8)
+                    
+                    Spacer()
+                    
+                    // Evaluate Confidence
+                    let hrVal = res.heartRate?.confidence ?? 0 >= vitalConfThreshold ? res.heartRate?.value : nil
+                    let rrVal = res.respiratoryRate?.confidence ?? 0 >= vitalConfThreshold ? res.respiratoryRate?.value : nil
+                    
+                    let sdnnVal = res.hrvSdnn?.confidence ?? 0 >= hrvConfThreshold ? res.hrvSdnn?.value : nil
+                    let rmssdVal = res.hrvRmssd?.confidence ?? 0 >= hrvConfThreshold ? res.hrvRmssd?.value : nil
+                    let ieVal = res.vitals["ie_ratio"]?.confidence ?? 0 >= vitalConfThreshold ? res.vitals["ie_ratio"]?.value : nil
+                    
+                    let extras = [
+                        ("hrv_sdnn", sdnnVal),
+                        ("hrv_rmssd", rmssdVal),
+                        ("ie_ratio", ieVal)
+                    ].filter { $0.1 != nil }
+                    
+                    VStack(spacing: 16) {
+                        HStack(spacing: 16) {
+                            ScanResultTile(vitalId: "heart_rate", value: hrVal)
+                            ScanResultTile(vitalId: "respiratory_rate", value: rrVal)
+                        }
+                        
+                        if !extras.isEmpty {
+                            HStack(spacing: 16) {
+                                ForEach(extras, id: \.0) { item in
+                                    ScanResultTile(vitalId: item.0, value: item.1)
+                                }
+                            }
+                        }
                     }
-                    
-                    Divider().background(Color(white: 0.3)).padding(.vertical, 24)
-                    
-                    HStack(spacing: 16) {
-                        ScanResultTile(title: "HRV (SDNN)", value: res.hrvSdnn?.value, unit: "ms", format: "%.0f")
-                        ScanResultTile(title: "HRV (RMSSD)", value: res.hrvRmssd?.value, unit: "ms", format: "%.0f")
-                    }
-                    
-                    HStack(spacing: 16) {
+                    
+                    Spacer()
+                    
+                    VStack(spacing: 12) {
                         Button(action: { resetToIdle() }) {
                             Text("Scan Again")
-                                .font(.subheadline)
+                                .font(.headline)
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color(white: 0.1))
-                                .cornerRadius(12)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(white: 0.2), lineWidth: 1))
+                                .padding(.vertical, 18)
+                                .background(VitalMetadataCache.brandBlue)
+                                .cornerRadius(16)
                         }
+                        
                         Button(action: { resetToIdle() }) {
                             Text("View Details")
-                                .font(.subheadline)
+                                .font(.headline)
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color(white: 0.1))
-                                .cornerRadius(12)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(white: 0.2), lineWidth: 1))
+                                .padding(.vertical, 18)
+                                .background(Color(white: 0.12))
+                                .cornerRadius(16)
                         }
                     }
-                    .padding(.top, 32)
+                    .padding(.bottom, 24)
                 }
-                .padding(32)
-                .background(Color(red: 0.12, green: 0.13, blue: 0.14))
-                .cornerRadius(24)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 24)
             }
         }
     }
@@ -464,49 +479,56 @@ struct CutoutOverlay: View {
             Rectangle()
                 .fill(.ultraThinMaterial)
             Ellipse()
-                .frame(width: 250, height: 350)
+                .frame(width: 320, height: 450)
                 .blendMode(.destinationOut)
         }
         .compositingGroup()
-        .edgesIgnoringSafeArea(.all)
     }
 }
 
 
-// TODO: Only show each result if confidence was high enough
-// TODO: Re-design similar to monitor view
-// TODO: Pull name, unit etc. from core like monitor view
 struct ScanResultTile: View {
-    let title: String
+    let vitalId: String
     let value: Double?
-    let unit: String
-    let format: String
-    
+    
     var body: some View {
+        let meta = VitalMetadataCache.getMeta(for: vitalId)
+        let title = meta?.displayName ?? vitalId
+        let unit = meta?.unit.uppercased() ?? ""
+        let format = (vitalId == "ie_ratio" || vitalId == "hrv_lfhf") ? "%.2f" : "%.0f"
+        
         VStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary)
-                
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 if let val = value {
                     Text(String(format: format, val))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
                 } else {
                     Text("--")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.5))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.3))
                 }
-                Text(unit)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                
+                if !unit.isEmpty {
+                    Text(unit)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(Color(white: 0.16))
-        .cornerRadius(16)
+        .padding(.vertical, 24)
+        .padding(.horizontal, 8)
+        .background(Color(white: 0.12))
+        .cornerRadius(20)
     }
 }
 
