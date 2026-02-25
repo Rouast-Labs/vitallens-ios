@@ -8,32 +8,22 @@ public enum ScanState {
     case idle, searching, warmingUp, tracking, recovering, issue, completed
 }
 
-struct ResolvedVital: Identifiable {
-    let id: String
-    let title: String
-    let value: Double?
-    let unit: String
-    let format: String
-    let confidence: Double?
-    let emoji: String
-}
-
 public struct VitalLensScanView: View {
-    
+    
     private let apiKey: String?
     private let proxyURL: URL?
     private let method: String
     private let onComplete: (VitalLensResult) -> Void
-    
+    
     @State private var client: VitalLens?
     @State private var scanState: ScanState = .idle
     @State private var currentModeState: VitalLensMode
-    
+    
     @State private var progress: Double = 0.0
     @State private var statusMessage: String = "Position your face in the oval"
     @State private var finalResult: VitalLensResult? = nil
     @State private var showDetails: Bool = false
-    
+    
     @State private var accumulatedScanTime: TimeInterval = 0
     @State private var lastFrameTime: Date? = nil
     @State private var stateStartTime: Date? = nil
@@ -41,11 +31,11 @@ public struct VitalLensScanView: View {
     @State private var ppgConfHistory: [Double] = []
     @State private var respConfHistory: [Double] = []
     @State private var faceConfHistory: [Double] = []
-    
+    
     @State private var totalFramesProcessed: Int = 0
     @State private var primaryVitals: [ResolvedVital] = []
     @State private var secondaryVitals: [ResolvedVital] = []
-    @State private var scanStats: (duration: Double, sampleCount: Int, avgFaceConf: Double) = (0, 0, 0)
+    @State private var scanStats = ScanStats(duration: 0, sampleCount: 0, avgFaceConf: 0)
 
     private let scanDuration: TimeInterval = 30.0
     private let warmUpDuration: TimeInterval = 3.0
@@ -53,7 +43,7 @@ public struct VitalLensScanView: View {
     
     private let vitalConfThreshold = 0.8
     private let hrvConfThreshold = 0.7
-    
+    
     /// Initializes the Scan View.
     public init(
         apiKey: String? = nil,
@@ -68,7 +58,7 @@ public struct VitalLensScanView: View {
         self._currentModeState = State(initialValue: mode)
         self.onComplete = onComplete
     }
-    
+    
     public var body: some View {
         ZStack {
             if scanState == .idle {
@@ -81,7 +71,13 @@ public struct VitalLensScanView: View {
                     onStart: { startProcessing() }
                 )
             } else if scanState == .completed {
-                resultOverlay
+                VitalLensResultView(
+                    title: "Scan Complete",
+                    primaryVitals: primaryVitals,
+                    secondaryVitals: secondaryVitals,
+                    stats: scanStats,
+                    onDone: resetToIdle
+                )
             } else {
                 scanUILayer
             }
@@ -90,7 +86,7 @@ public struct VitalLensScanView: View {
             client?.stopStream()
         }
     }
-    
+    
     @ViewBuilder
     private var scanUILayer: some View {
         VStack {
@@ -132,16 +128,18 @@ public struct VitalLensScanView: View {
             .ignoresSafeArea()
         }
     }
-    
+    
     private var topBarLayer: some View {
         ZStack {
             HStack {
-                Image("vitallens_logo", bundle: .module)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 32, height: 32)
-                    .background(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                Link(destination: URL(string: "https://www.rouast.com/api/")!) {
+                    Image("vitallens_logo", bundle: .module)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
                 
                 Spacer()
                 
@@ -160,63 +158,8 @@ public struct VitalLensScanView: View {
         }
         .padding(.horizontal)
         .padding(.top, 8)
-    }
-    
-    @ViewBuilder
-    private var resultOverlay: some View {
-        ZStack {
-            Color(red: 0.06, green: 0.07, blue: 0.09).edgesIgnoringSafeArea(.all)
-            VStack(spacing: 24) {
-                // Header
-                HStack(spacing: 12) {
-                    Image("vitallens_logo", bundle: .module).resizable().scaledToFit()
-                        .frame(width: 32, height: 32).background(Color.white).clipShape(RoundedRectangle(cornerRadius: 8))
-                    Text("Scan Complete").font(.headline).foregroundColor(.white)
-                    Spacer()
-                }.padding(.top, 8)
-
-                Spacer()
-
-                VStack(spacing: 16) {
-                    HStack(spacing: 16) {
-                        ForEach(primaryVitals) { vital in
-                            ScanResultTile(vital: vital, showDetails: showDetails)
-                        }
-                    }
-                    if !secondaryVitals.isEmpty {
-                        HStack(spacing: 16) {
-                            ForEach(secondaryVitals) { vital in
-                                ScanResultTile(vital: vital, showDetails: showDetails)
-                            }
-                        }
-                    }
-                }
-
-                if showDetails {
-                    VStack(spacing: 8) {
-                        Text(String(format: "Total Usage: %.1fs (~%df)", scanStats.duration, scanStats.sampleCount))
-                        Text(String(format: "Avg Face Confidence: %.0f%%", scanStats.avgFaceConf * 100))
-                    }.font(.footnote).foregroundColor(.secondary).padding(.top, 8)
-                }
-
-                Spacer()
-
-                HStack(spacing: 16) {
-                    Button(action: { resetToIdle() }) {
-                        Text("Done").font(.headline).foregroundColor(.white).frame(maxWidth: .infinity)
-                            .padding(.vertical, 18).background(VitalMetadataCache.brandBlue).cornerRadius(16)
-                    }
-                    Button(action: { withAnimation { showDetails.toggle() } }) {
-                        Text(showDetails ? "Hide Details" : "View Details").font(.headline).foregroundColor(.white)
-                            .frame(maxWidth: .infinity).padding(.vertical, 18).background(Color(white: 0.12)).cornerRadius(16)
-                    }
-                }.padding(.bottom, 24)
-            }.padding(.horizontal, 24)
-        }
-    }
-    
-     
-    
+    }     
+    
     private func startProcessing() {
         scanState = .searching
         statusMessage = "Position your face in the oval"
@@ -230,7 +173,7 @@ public struct VitalLensScanView: View {
         faceConfHistory.removeAll()
         totalFramesProcessed = 0
     }
-    
+    
     private func resetToIdle() {
         client?.stopStream()
         client = nil
@@ -245,7 +188,7 @@ public struct VitalLensScanView: View {
         showDetails = false
         totalFramesProcessed = 0
     }
-    
+    
     private func transition(to newState: ScanState, message: String) {
         self.scanState = newState
         self.statusMessage = message
@@ -279,29 +222,29 @@ public struct VitalLensScanView: View {
             faceConfHistory.removeAll()
         }
     }
-    
+    
     private func isFaceGood(_ result: VitalLensResult) -> Bool {
         guard let box = result.face.boundingBoxes.last else { return false }
         let midX = box.midX
         let midY = box.midY
         return midX > 0.3 && midX < 0.7 && midY > 0.3 && midY < 0.7 && box.width > 0.15
     }
-    
+    
     private func startSession(in view: UIView) {
         guard client == nil else { return }
-        
+        
         if apiKey == nil && proxyURL == nil {
             transition(to: .issue, message: "Error: Missing API Key or Proxy URL")
             return
         }
-        
+        
         let newClient = VitalLens(
             apiKey: apiKey,
             method: method,
             proxyURL: proxyURL,
             overrideFps: currentModeState.fps
         )
-        
+        
         newClient.onFaceStateChanged = { @Sendable isPresent in
             Task { @MainActor in
                 guard self.scanState != .idle && self.scanState != .completed && self.scanState != .issue else { return }
@@ -311,9 +254,9 @@ public struct VitalLensScanView: View {
                 }
             }
         }
-        
+        
         self.client = newClient
-        
+        
         Task {
             do {
                 let stream = try await newClient.startStream(preview: view)
@@ -327,7 +270,7 @@ public struct VitalLensScanView: View {
             }
         }
     }
-    
+    
     @MainActor
     private func updateUI(with result: VitalLensResult) {
         // 1. Accumulate total frames for API usage
@@ -402,7 +345,7 @@ public struct VitalLensScanView: View {
                 }
                 
                 let globalAvgFace = faceConfHistory.isEmpty ? 0.0 : faceConfHistory.reduce(0, +) / Double(faceConfHistory.count)
-                self.scanStats = (
+                self.scanStats = ScanStats(
                     duration: Double(totalFramesProcessed) / (res.fps ?? currentModeState.fps),
                     sampleCount: totalFramesProcessed,
                     avgFaceConf: globalAvgFace
@@ -456,7 +399,7 @@ public struct VitalLensScanView: View {
 
 struct ScanStatusBadge: View {
     let state: ScanState
-    
+    
     var body: some View {
         HStack(spacing: 6) {
             Circle()
@@ -472,7 +415,7 @@ struct ScanStatusBadge: View {
         .background(.ultraThinMaterial)
         .cornerRadius(20)
     }
-    
+    
     var color: Color {
         switch state {
         case .idle, .completed: return .gray
@@ -483,7 +426,7 @@ struct ScanStatusBadge: View {
         case .issue: return .red
         }
     }
-    
+    
     var text: String {
         switch state {
         case .idle: return "Idle"
@@ -507,43 +450,6 @@ struct CutoutOverlay: View {
                 .blendMode(.destinationOut)
         }
         .compositingGroup()
-    }
-}
-
-struct ScanResultTile: View {
-    let vital: ResolvedVital
-    let showDetails: Bool
-    
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Text(vital.emoji)
-                Text(vital.title)
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.secondary)
-            
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                if let val = vital.value {
-                    Text(String(format: vital.format, val))
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                } else {
-                    Text("--").font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.3))
-                }
-                Text(vital.unit).font(.system(size: 10)).foregroundColor(.secondary)
-            }
-            
-            if showDetails {
-                Text(vital.confidence != nil ? String(format: "Conf: %.0f%%", vital.confidence! * 100) : "Conf: --")
-                    .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.7))
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(Color(white: 0.12))
-        .cornerRadius(20)
     }
 }
 

@@ -9,18 +9,18 @@ public struct VitalMetadataCache {
     nonisolated(unsafe) private static var cache: [String: VitalDisplayMeta] = [:]
     nonisolated(unsafe) private static var queriedKeys: Set<String> = []
     private static let lock = NSLock()
-    
+    
     public static func getMeta(for id: String) -> VitalDisplayMeta? {
         lock.lock()
         defer { lock.unlock() }
-        
+        
         if queriedKeys.contains(id) { return cache[id] }
-        
+        
         if let meta = VitalLensCore.getVitalInfo(vitalId: id) {
             cache[id] = meta
         }
         queriedKeys.insert(id)
-        
+        
         return cache[id]
     }
     
@@ -54,7 +54,11 @@ public struct VitalLensStartView: View {
     public let subtitle: String
     public let timingHintLabel: String
     public let startButtonLabel: String
+    public let instruction1: (icon: String, text: String)
+    public let instruction2: (icon: String, text: String)
+    public let showModeToggle: Bool
     @Binding public var currentMode: VitalLensMode
+        
     public let onStart: () -> Void
     
     public init(
@@ -63,6 +67,9 @@ public struct VitalLensStartView: View {
         timingHintLabel: String,
         startButtonLabel: String,
         currentMode: Binding<VitalLensMode>,
+        instruction1: (icon: String, text: String) = ("person.crop.circle.fill", "Center your face\nin the oval."),
+        instruction2: (icon: String, text: String) = ("pause.circle.fill", "Hold yourself and\ncamera still."),
+        showModeToggle: Bool = true,
         onStart: @escaping () -> Void
     ) {
         self.title = title
@@ -70,6 +77,9 @@ public struct VitalLensStartView: View {
         self.timingHintLabel = timingHintLabel
         self.startButtonLabel = startButtonLabel
         self._currentMode = currentMode
+        self.instruction1 = instruction1
+        self.instruction2 = instruction2
+        self.showModeToggle = showModeToggle
         self.onStart = onStart
     }
     
@@ -80,12 +90,14 @@ public struct VitalLensStartView: View {
             
             VStack(spacing: 24) {
                 HStack(spacing: 12) {
-                    Image("vitallens_logo", bundle: .module)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
-                        .background(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Link(destination: URL(string: "https://www.rouast.com/api/")!) {
+                        Image("vitallens_logo", bundle: .module)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
                     
                     Text(title)
                         .font(.headline)
@@ -105,8 +117,8 @@ public struct VitalLensStartView: View {
                 
                 VStack(spacing: 0) {
                     HStack(spacing: 0) {
-                        GuideItem(icon: "person.crop.circle.fill", text: "Center your face\nin the oval.")
-                        GuideItem(icon: "pause.circle.fill", text: "Hold yourself and\ncamera still.")
+                        GuideItem(icon: instruction1.icon, text: instruction1.text)
+                        GuideItem(icon: instruction2.icon, text: instruction2.text)
                     }
                     HStack(spacing: 0) {
                         GuideItem(icon: "sun.max.fill", text: "Ensure bright,\nsteady lighting.")
@@ -127,49 +139,51 @@ public struct VitalLensStartView: View {
                         .cornerRadius(16)
                 }
                 
-                Button(action: {
-                    currentMode = currentMode == .eco ? .standard : .eco
-                }) {
-                    HStack(spacing: 16) {
-                        HStack(spacing: 0) {
-                            ZStack {
-                                Circle().fill(currentMode == .eco ? VitalMetadataCache.brandBlue : Color.clear)
-                                Image(systemName: "leaf.fill")
-                                    .foregroundColor(currentMode == .eco ? .white : .gray)
-                                    .font(.system(size: 14))
+                if showModeToggle {
+                    Button(action: {
+                        currentMode = currentMode == .eco ? .standard : .eco
+                    }) {
+                        HStack(spacing: 16) {
+                            HStack(spacing: 0) {
+                                ZStack {
+                                    Circle().fill(currentMode == .eco ? VitalMetadataCache.brandBlue : Color.clear)
+                                    Image(systemName: "leaf.fill")
+                                        .foregroundColor(currentMode == .eco ? .white : .gray)
+                                        .font(.system(size: 14))
+                                }
+                                .frame(width: 36, height: 36)
+                                
+                                ZStack {
+                                    Circle().fill(currentMode == .standard ? VitalMetadataCache.brandBlue : Color.clear)
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(currentMode == .standard ? .white : .gray)
+                                        .font(.system(size: 14))
+                                }
+                                .frame(width: 36, height: 36)
                             }
-                            .frame(width: 36, height: 36)
+                            .background(Color.black.opacity(0.4))
+                            .cornerRadius(18)
                             
-                            ZStack {
-                                Circle().fill(currentMode == .standard ? VitalMetadataCache.brandBlue : Color.clear)
-                                Image(systemName: "bolt.fill")
-                                    .foregroundColor(currentMode == .standard ? .white : .gray)
-                                    .font(.system(size: 14))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(currentMode == .eco ? "Eco Mode" : "Standard Mode")
+                                    .font(.subheadline)
+                                    .bold()
+                                    .foregroundColor(.white)
+                                
+                                Text(currentMode == .eco ? "Standard accuracy, for slower connections and devices" : "High accuracy, for fast connections and devices")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                                    .multilineTextAlignment(.leading)
+                                    .lineLimit(2)
                             }
-                            .frame(width: 36, height: 36)
+                            Spacer()
                         }
-                        .background(Color.black.opacity(0.4))
-                        .cornerRadius(18)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(currentMode == .eco ? "Eco Mode" : "Standard Mode")
-                                .font(.subheadline)
-                                .bold()
-                                .foregroundColor(.white)
-                            
-                            Text(currentMode == .eco ? "Standard accuracy, for slower connections and devices" : "High accuracy, for fast connections and devices")
-                                .font(.caption2)
-                                .foregroundColor(.gray)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(2)
-                        }
-                        Spacer()
+                        .padding(14)
+                        .background(Color(white: 0.12))
+                        .cornerRadius(20)
                     }
-                    .padding(14)
-                    .background(Color(white: 0.12))
-                    .cornerRadius(20)
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
                 
                 Spacer()
             }

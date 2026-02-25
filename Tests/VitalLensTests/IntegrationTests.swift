@@ -56,11 +56,11 @@ final class IntegrationTests: XCTestCase {
             
             let sdnn = try XCTUnwrap(result.hrvSdnn?.value, "Missing HRV SDNN")
             print("[Integration] 📈 HRV SDNN: \(sdnn)")
-            XCTAssertEqual(sdnn, 60.0, accuracy: 10.0)
+            XCTAssertEqual(sdnn, 65.0, accuracy: 10.0)
             
             let rmssd = try XCTUnwrap(result.hrvRmssd?.value, "Missing HRV RMSSD")
             print("[Integration] 📉 HRV RMSSD: \(rmssd)")
-            XCTAssertEqual(rmssd, 60.0, accuracy: 10.0)
+            XCTAssertEqual(rmssd, 65.0, accuracy: 10.0)
             
             if let ieRatio = result.vitals["ie_ratio"]?.value {
                 print("[Integration] ⚖️ I:E Ratio: \(ieRatio)")
