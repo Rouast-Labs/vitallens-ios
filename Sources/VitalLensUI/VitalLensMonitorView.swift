@@ -17,6 +17,8 @@ public enum VitalLensMode {
     }
 }
 
+// TODO: Think about overhauling this after finishing scan view
+
 enum MonitorState {
     case idle
     case searching

@@ -106,7 +106,7 @@ public struct VitalLensStartView: View {
                         GuideItem(icon: "pause.circle.fill", text: "Hold yourself and\ncamera still.")
                     }
                     HStack(spacing: 0) {
-                        GuideItem(icon: "sun.max.fill", text: "Ensure good,\nsteady lighting.")
+                        GuideItem(icon: "sun.max.fill", text: "Ensure bright,\nsteady lighting.")
                         GuideItem(icon: "clock.fill", text: timingHintLabel)
                     }
                 }

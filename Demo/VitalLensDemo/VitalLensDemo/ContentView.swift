@@ -5,6 +5,7 @@ internal import VitalLensInference
 struct ContentView: View {
     let apiKey = ProcessInfo.processInfo.environment["VITALLENS_API_KEY"] ?? "YOUR_API_KEY_HERE"
     
+    //  TODO: Support proxyUrl here
     var body: some View {
         if apiKey == "YOUR_API_KEY_HERE" || apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             MissingKeyView()
