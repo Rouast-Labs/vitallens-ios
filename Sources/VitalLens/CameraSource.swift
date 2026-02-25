@@ -21,12 +21,34 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     /// The stream of video frames.
     public let stream: AsyncStream<InputFrame>
     private var continuation: AsyncStream<InputFrame>.Continuation?
+
+    /// Caching
+    private let orientationLock = NSLock()
+    private var _latestOrientation: UIDeviceOrientation = .portrait
+    private var latestOrientation: UIDeviceOrientation {
+        get { orientationLock.withLock { _latestOrientation } }
+        set { orientationLock.withLock { _latestOrientation = newValue } }
+    }
     
     override init() {
         let (s, c) = AsyncStream.makeStream(of: InputFrame.self)
         self.stream = s
         self.continuation = c
         super.init()
+        
+        Task { @MainActor in
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            self.latestOrientation = UIDevice.current.orientation
+            NotificationCenter.default.addObserver(
+                forName: UIDevice.orientationDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.latestOrientation = UIDevice.current.orientation
+                }
+            }
+        }
     }
     
     /// Configures and starts the camera session.
@@ -149,7 +171,7 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     /// Dynamically determines the current device orientation to map sideways faces back to upright
     private var currentDeviceOrientation: CGImagePropertyOrientation {
-        switch UIDevice.current.orientation {
+        switch latestOrientation {
         case .landscapeLeft:
             return .right
         case .landscapeRight:

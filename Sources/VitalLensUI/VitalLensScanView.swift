@@ -17,7 +17,8 @@ public struct VitalLensScanView: View {
     
     @State private var client: VitalLens?
     @State private var scanState: ScanState = .idle
-    @State private var currentModeState: VitalLensMode
+    @State private var currentModeState: VitalLensMode = .eco
+    private let initialMode: VitalLensMode
     
     @State private var progress: Double = 0.0
     @State private var statusMessage: String = "Position your face in the oval"
@@ -55,7 +56,7 @@ public struct VitalLensScanView: View {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
         self.method = method
-        self._currentModeState = State(initialValue: mode)
+        self.initialMode = mode
         self.onComplete = onComplete
     }
     
@@ -82,6 +83,7 @@ public struct VitalLensScanView: View {
                 scanUILayer
             }
         }
+        .onAppear { self.currentModeState = self.initialMode }
         .onDisappear {
             client?.stopStream()
         }
@@ -261,7 +263,7 @@ public struct VitalLensScanView: View {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 for await result in stream {
-                    await updateUI(with: result)
+                    updateUI(with: result)
                 }
             } catch {
                 await MainActor.run {

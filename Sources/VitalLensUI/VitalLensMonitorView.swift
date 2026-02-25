@@ -35,8 +35,9 @@ public struct VitalLensMonitorView: View {
     private let windowSize: TimeInterval
     private let minDisplayDuration: TimeInterval
     
-    @State private var currentMode: VitalLensMode
-    
+    @State private var currentMode: VitalLensMode = .eco
+    private let initialMode: VitalLensMode
+
     @State private var client: VitalLens?
     @State private var isProcessing = false
     @State private var monitorState: MonitorState = .idle
@@ -116,8 +117,7 @@ public struct VitalLensMonitorView: View {
         self.bufferOffset = bufferOffset
         self.windowSize = windowSize
         self.minDisplayDuration = minDisplayDuration
-        
-        self._currentMode = State(initialValue: initialMode)
+        self.initialMode = initialMode        
     }
     
     private var hasEnoughData: Bool { ppgHistory.count >= requiredSamplesForDisplay }
@@ -181,6 +181,7 @@ public struct VitalLensMonitorView: View {
                 self.debugImage = UIImage(cgImage: cgImg)
             }
         }
+        .onAppear { self.currentMode = self.initialMode }
         .onDisappear { stopProcessing() }
     }
     
@@ -406,7 +407,7 @@ public struct VitalLensMonitorView: View {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 for await result in stream {
-                    await updateUI(with: result)
+                    updateUI(with: result)
                 }
             } catch {
                 await MainActor.run { stopProcessing() }
