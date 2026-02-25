@@ -60,6 +60,8 @@ public struct VitalLensMonitorView: View {
     @State private var respHistory: [Double] = []
     @State private var respConf: Double = 0.0
 
+    @State private var receivedVitals: Set<String> = []
+
     @State private var showDebug: Bool = false
     @State private var debugImage: UIImage? = nil
     @State private var debugROI: CGRect? = nil
@@ -72,6 +74,15 @@ public struct VitalLensMonitorView: View {
         return Int(minDisplayDuration * currentMode.fps)
     }
     
+    private var hasSecondaryVitals: Bool {
+        !receivedVitals.isDisjoint(with: ["hrv_sdnn", "hrv_rmssd", "ie_ratio"])
+    }
+
+    private var dynamicTileWidth: CGFloat? {
+        guard showWaveforms else { return nil }
+        return hasSecondaryVitals ? 170 : 110
+    }
+
     struct BufferedPoint {
         let value: Double
         let displayTime: TimeInterval
@@ -266,10 +277,11 @@ public struct VitalLensMonitorView: View {
                 
                 GroupedMetricsTile(
                     primaryId: "heart_rate", primaryValue: hrValue, isPrimaryReady: isHrReady,
-                    secondary1Id: "hrv_sdnn", secondary1Value: sdnnValue, isSecondary1Ready: isSdnnReady,
-                    secondary2Id: "hrv_rmssd", secondary2Value: rmssdValue, isSecondary2Ready: isRmssdReady
+                    secondary1Id: receivedVitals.contains("hrv_sdnn") ? "hrv_sdnn" : nil, secondary1Value: sdnnValue, isSecondary1Ready: isSdnnReady,
+                    secondary2Id: receivedVitals.contains("hrv_rmssd") ? "hrv_rmssd" : nil, secondary2Value: rmssdValue, isSecondary2Ready: isRmssdReady
                 )
-                .frame(width: showWaveforms ? 170 : .infinity)
+                .frame(width: dynamicTileWidth)
+                .frame(maxWidth: showWaveforms ? nil : .infinity)
             }
             .frame(height: 90)
             .padding(.horizontal)
@@ -281,10 +293,11 @@ public struct VitalLensMonitorView: View {
                 
                 GroupedMetricsTile(
                     primaryId: "respiratory_rate", primaryValue: rrValue, isPrimaryReady: isRrReady,
-                    secondary1Id: "ie_ratio", secondary1Value: ieRatioValue, isSecondary1Ready: isIeReady,
+                    secondary1Id: receivedVitals.contains("ie_ratio") ? "ie_ratio" : nil, secondary1Value: ieRatioValue, isSecondary1Ready: isIeReady,
                     secondary2Id: nil, secondary2Value: nil, isSecondary2Ready: false
                 )
-                .frame(width: showWaveforms ? 170 : .infinity)
+                .frame(width: dynamicTileWidth)
+                .frame(maxWidth: showWaveforms ? nil : .infinity)
             }
             .frame(height: 90)
             .padding(.horizontal)
@@ -338,6 +351,7 @@ public struct VitalLensMonitorView: View {
         ppgHistory.removeAll(); ppgQueue.removeAll(); ppgConf = 0.0
         respHistory.removeAll(); respQueue.removeAll(); respConf = 0.0
         timeAnchor = nil
+        receivedVitals.removeAll()
     }
     
     private func resetUI() {
@@ -396,6 +410,10 @@ public struct VitalLensMonitorView: View {
         guard isProcessing, isFaceCurrentlyDetected else { return }
 
         self.debugROI = result.face.boundingBoxes.last
+
+        for key in result.vitals.keys {
+            receivedVitals.insert(key)
+        }
         
         let faceConfs = result.face.confidence ?? []
         let currentFaceConf = faceConfs.isEmpty ? 0.0 : faceConfs.last!
@@ -414,7 +432,6 @@ public struct VitalLensMonitorView: View {
         if let rmssd = result.hrvRmssd { rmssdValue = rmssd.value; rmssdConf = rmssd.confidence }
         if let ie = result.vitals["ie_ratio"] { ieRatioValue = ie.value; ieRatioConf = ie.confidence }
         
-        // TODO: What if model does not support HRV?
         let hasConfidentHr = hrConf >= vitalConfThreshold
         let hasConfidentRr = rrConf >= vitalConfThreshold
         let hasConfidentHrv = sdnnConf >= hrvConfThreshold || rmssdConf >= hrvConfThreshold
@@ -771,7 +788,8 @@ struct GroupedMetricsTile: View {
                 .padding(.trailing, 8)
             }
         }
-        .padding(.vertical, 12) 
+        .padding(.vertical, 12)
+        .frame(maxHeight: .infinity)
         .background(Color(UIColor.secondarySystemBackground))
         .cornerRadius(12) 
     }
