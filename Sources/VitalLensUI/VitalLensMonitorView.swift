@@ -94,8 +94,8 @@ public struct VitalLensMonitorView: View {
     @State private var timeAnchor: (videoTime: TimeInterval, realTime: TimeInterval)? = nil
     @State private var playbackTask: Task<Void, Never>? = nil
     
-    private let vitalConfThreshold = 0.6
-    private let hrvConfThreshold = 0.5
+    private let vitalConfThreshold = 0.9
+    private let hrvConfThreshold = 0.7
     private let faceConfThreshold = 0.5
     
     public init(

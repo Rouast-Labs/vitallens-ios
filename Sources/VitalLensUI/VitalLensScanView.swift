@@ -8,6 +8,16 @@ public enum ScanState {
     case idle, searching, warmingUp, tracking, recovering, issue, completed
 }
 
+struct ResolvedVital: Identifiable {
+    let id: String
+    let title: String
+    let value: Double?
+    let unit: String
+    let format: String
+    let confidence: Double?
+    let emoji: String
+}
+
 public struct VitalLensScanView: View {
     
     private let apiKey: String?
@@ -22,6 +32,7 @@ public struct VitalLensScanView: View {
     @State private var progress: Double = 0.0
     @State private var statusMessage: String = "Position your face in the oval"
     @State private var finalResult: VitalLensResult? = nil
+    @State private var showDetails: Bool = false
     
     @State private var accumulatedScanTime: TimeInterval = 0
     @State private var lastFrameTime: Date? = nil
@@ -30,12 +41,17 @@ public struct VitalLensScanView: View {
     @State private var ppgConfHistory: [Double] = []
     @State private var faceConfHistory: [Double] = []
     
+    @State private var totalFramesProcessed: Int = 0
+    @State private var primaryVitals: [ResolvedVital] = []
+    @State private var secondaryVitals: [ResolvedVital] = []
+    @State private var scanStats: (duration: Double, sampleCount: Int, avgFaceConf: Double) = (0, 0, 0)
+
     private let scanDuration: TimeInterval = 30.0
-    private let warmUpDuration: TimeInterval = 5.0
+    private let warmUpDuration: TimeInterval = 3.0
     private let recoveryTimeout: TimeInterval = 10.0
     
-    private let vitalConfThreshold = 0.6
-    private let hrvConfThreshold = 0.5
+    private let vitalConfThreshold = 0.9
+    private let hrvConfThreshold = 0.7
     
     /// Initializes the Scan View.
     public init(
@@ -147,83 +163,54 @@ public struct VitalLensScanView: View {
     
     @ViewBuilder
     private var resultOverlay: some View {
-        if let res = finalResult {
-            ZStack {
-                Color(red: 0.06, green: 0.07, blue: 0.09).edgesIgnoringSafeArea(.all)
-                
-                VStack(spacing: 24) {
-                    HStack(spacing: 12) {
-                        Image("vitallens_logo", bundle: .module)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 32, height: 32)
-                            .background(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Text("Scan Complete")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Spacer()
-                    }
-                    .padding(.top, 8)
-                    
+        ZStack {
+            Color(red: 0.06, green: 0.07, blue: 0.09).edgesIgnoringSafeArea(.all)
+            VStack(spacing: 24) {
+                // Header
+                HStack(spacing: 12) {
+                    Image("vitallens_logo", bundle: .module).resizable().scaledToFit()
+                        .frame(width: 32, height: 32).background(Color.white).clipShape(RoundedRectangle(cornerRadius: 8))
+                    Text("Scan Complete").font(.headline).foregroundColor(.white)
                     Spacer()
-                    
-                    // Evaluate Confidence
-                    let hrVal = res.heartRate?.confidence ?? 0 >= vitalConfThreshold ? res.heartRate?.value : nil
-                    let rrVal = res.respiratoryRate?.confidence ?? 0 >= vitalConfThreshold ? res.respiratoryRate?.value : nil
-                    
-                    let sdnnVal = res.hrvSdnn?.confidence ?? 0 >= hrvConfThreshold ? res.hrvSdnn?.value : nil
-                    let rmssdVal = res.hrvRmssd?.confidence ?? 0 >= hrvConfThreshold ? res.hrvRmssd?.value : nil
-                    let ieVal = res.vitals["ie_ratio"]?.confidence ?? 0 >= vitalConfThreshold ? res.vitals["ie_ratio"]?.value : nil
-                    
-                    let extras = [
-                        ("hrv_sdnn", sdnnVal),
-                        ("hrv_rmssd", rmssdVal),
-                        ("ie_ratio", ieVal)
-                    ].filter { $0.1 != nil }
-                    
-                    VStack(spacing: 16) {
-                        HStack(spacing: 16) {
-                            ScanResultTile(vitalId: "heart_rate", value: hrVal)
-                            ScanResultTile(vitalId: "respiratory_rate", value: rrVal)
+                }.padding(.top, 8)
+
+                Spacer()
+
+                VStack(spacing: 16) {
+                    HStack(spacing: 16) {
+                        ForEach(primaryVitals) { vital in
+                            ScanResultTile(vital: vital, showDetails: showDetails)
                         }
-                        
-                        if !extras.isEmpty {
-                            HStack(spacing: 16) {
-                                ForEach(extras, id: \.0) { item in
-                                    ScanResultTile(vitalId: item.0, value: item.1)
-                                }
+                    }
+                    if !secondaryVitals.isEmpty {
+                        HStack(spacing: 16) {
+                            ForEach(secondaryVitals) { vital in
+                                ScanResultTile(vital: vital, showDetails: showDetails)
                             }
                         }
                     }
-                    
-                    Spacer()
-                    
-                    VStack(spacing: 12) {
-                        Button(action: { resetToIdle() }) {
-                            Text("Scan Again")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 18)
-                                .background(VitalMetadataCache.brandBlue)
-                                .cornerRadius(16)
-                        }
-                        
-                        Button(action: { resetToIdle() }) {
-                            Text("View Details")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 18)
-                                .background(Color(white: 0.12))
-                                .cornerRadius(16)
-                        }
-                    }
-                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 24)
-            }
+
+                if showDetails {
+                    VStack(spacing: 8) {
+                        Text(String(format: "Total Usage: %.1fs (~%df)", scanStats.duration, scanStats.sampleCount))
+                        Text(String(format: "Avg Face Confidence: %.0f%%", scanStats.avgFaceConf * 100))
+                    }.font(.footnote).foregroundColor(.secondary).padding(.top, 8)
+                }
+
+                Spacer()
+
+                HStack(spacing: 16) {
+                    Button(action: { resetToIdle() }) {
+                        Text("Done").font(.headline).foregroundColor(.white).frame(maxWidth: .infinity)
+                            .padding(.vertical, 18).background(VitalMetadataCache.brandBlue).cornerRadius(16)
+                    }
+                    Button(action: { withAnimation { showDetails.toggle() } }) {
+                        Text(showDetails ? "Hide Details" : "View Details").font(.headline).foregroundColor(.white)
+                            .frame(maxWidth: .infinity).padding(.vertical, 18).background(Color(white: 0.12)).cornerRadius(16)
+                    }
+                }.padding(.bottom, 24)
+            }.padding(.horizontal, 24)
         }
     }
     
@@ -251,6 +238,8 @@ public struct VitalLensScanView: View {
         strikeCount = 0
         ppgConfHistory.removeAll()
         faceConfHistory.removeAll()
+        showDetails = false
+        totalFramesProcessed = 0
     }
     
     private func transition(to newState: ScanState, message: String) {
@@ -338,6 +327,9 @@ public struct VitalLensScanView: View {
     private func updateUI(with result: VitalLensResult) {
         guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
         
+        let framesInThisUpdate = result.sampleCount ?? result.time.count
+        self.totalFramesProcessed += framesInThisUpdate
+
         let facePresent = result.face.boundingBoxes.last != nil
         if !facePresent {
             if scanState != .searching {
@@ -384,10 +376,41 @@ public struct VitalLensScanView: View {
             // Check for completion immediately so it can finish even during recovery
             if accumulatedScanTime >= scanDuration {
                 client?.stopStream()
+                let res = result
+                let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
+                let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")
+                
+                self.primaryVitals = [
+                    ResolvedVital(id: "hr", title: hrMeta?.displayName ?? "Heart Rate", 
+                                value: (res.heartRate?.confidence ?? 0) >= vitalConfThreshold ? res.heartRate?.value : nil, 
+                                unit: hrMeta?.unit.uppercased() ?? "BPM", format: "%.0f", 
+                                confidence: res.heartRate?.confidence, emoji: hrMeta?.emoji ?? "❤️"),
+                    ResolvedVital(id: "rr", title: rrMeta?.displayName ?? "Respiration", 
+                                value: (res.respiratoryRate?.confidence ?? 0) >= vitalConfThreshold ? res.respiratoryRate?.value : nil, 
+                                unit: rrMeta?.unit.uppercased() ?? "RPM", format: "%.0f", 
+                                confidence: res.respiratoryRate?.confidence, emoji: rrMeta?.emoji ?? "🫁")
+                ]
+                
+                self.secondaryVitals = [
+                    ("hrv_sdnn", res.hrvSdnn?.value, res.hrvSdnn?.confidence ?? 0, hrvConfThreshold),
+                    ("hrv_rmssd", res.hrvRmssd?.value, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
+                    ("ie_ratio", res.vitals["ie_ratio"]?.value, res.vitals["ie_ratio"]?.confidence ?? 0, vitalConfThreshold)
+                ].compactMap { id, val, conf, thresh in
+                    guard conf >= thresh, let v = val, let m = VitalMetadataCache.getMeta(for: id) else { return nil }
+                    return ResolvedVital(id: id, title: m.shortName, value: v, unit: m.unit.uppercased(), 
+                                        format: (id == "ie_ratio" ? "%.2f" : "%.0f"), confidence: conf, emoji: m.emoji)
+                }
+                
+                let avgConf = faceConfHistory.isEmpty ? 0.0 : faceConfHistory.reduce(0, +) / Double(faceConfHistory.count)
+                self.scanStats = (
+                    duration: Double(totalFramesProcessed) / (res.fps ?? currentModeState.fps),
+                    sampleCount: totalFramesProcessed,
+                    avgFaceConf: avgConf
+                )
+
                 finalResult = result
                 scanState = .completed
                 onComplete(result)
-                return
             }
         } else {
             lastFrameTime = nil
@@ -488,45 +511,37 @@ struct CutoutOverlay: View {
 
 
 struct ScanResultTile: View {
-    let vitalId: String
-    let value: Double?
+    let vital: ResolvedVital
+    let showDetails: Bool
     
     var body: some View {
-        let meta = VitalMetadataCache.getMeta(for: vitalId)
-        let title = meta?.displayName ?? vitalId
-        let unit = meta?.unit.uppercased() ?? ""
-        let format = (vitalId == "ie_ratio" || vitalId == "hrv_lfhf") ? "%.2f" : "%.0f"
-        
         VStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                
+            HStack(spacing: 4) {
+                Text(vital.emoji)
+                Text(vital.title)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.secondary)
+            
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                if let val = value {
-                    Text(String(format: format, val))
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                if let val = vital.value {
+                    Text(String(format: vital.format, val))
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
                 } else {
-                    Text("--")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                    Text("--").font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundColor(.white.opacity(0.3))
                 }
-                
-                if !unit.isEmpty {
-                    Text(unit)
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
+                Text(vital.unit).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            
+            if showDetails {
+                Text(vital.confidence != nil ? String(format: "Conf: %.0f%%", vital.confidence! * 100) : "Conf: --")
+                    .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.7))
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 20)
         .background(Color(white: 0.12))
         .cornerRadius(20)
     }

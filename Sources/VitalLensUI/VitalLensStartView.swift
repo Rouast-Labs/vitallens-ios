@@ -7,18 +7,21 @@ import VitalLensCore
 // MARK: - FFI Metadata Cache
 public struct VitalMetadataCache {
     nonisolated(unsafe) private static var cache: [String: VitalDisplayMeta] = [:]
+    nonisolated(unsafe) private static var queriedKeys: Set<String> = []
     private static let lock = NSLock()
-    
+    
     public static func getMeta(for id: String) -> VitalDisplayMeta? {
         lock.lock()
         defer { lock.unlock() }
-        
-        if let cached = cache[id] { return cached }
+        
+        if queriedKeys.contains(id) { return cache[id] }
+        
         if let meta = VitalLensCore.getVitalInfo(vitalId: id) {
             cache[id] = meta
-            return meta
         }
-        return nil
+        queriedKeys.insert(id)
+        
+        return cache[id]
     }
     
     /// Dynamically fetches the brand accent color based on Respiratory Rate, falling back to default blue.
