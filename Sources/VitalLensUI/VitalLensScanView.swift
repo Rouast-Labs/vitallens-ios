@@ -39,6 +39,7 @@ public struct VitalLensScanView: View {
     @State private var stateStartTime: Date? = nil
     @State private var strikeCount: Int = 0
     @State private var ppgConfHistory: [Double] = []
+    @State private var respConfHistory: [Double] = []
     @State private var faceConfHistory: [Double] = []
     
     @State private var totalFramesProcessed: Int = 0
@@ -50,7 +51,7 @@ public struct VitalLensScanView: View {
     private let warmUpDuration: TimeInterval = 3.0
     private let recoveryTimeout: TimeInterval = 10.0
     
-    private let vitalConfThreshold = 0.9
+    private let vitalConfThreshold = 0.8
     private let hrvConfThreshold = 0.7
     
     /// Initializes the Scan View.
@@ -225,7 +226,9 @@ public struct VitalLensScanView: View {
         lastFrameTime = nil
         strikeCount = 0
         ppgConfHistory.removeAll()
+        respConfHistory.removeAll()
         faceConfHistory.removeAll()
+        totalFramesProcessed = 0
     }
     
     private func resetToIdle() {
@@ -237,6 +240,7 @@ public struct VitalLensScanView: View {
         finalResult = nil
         strikeCount = 0
         ppgConfHistory.removeAll()
+        respConfHistory.removeAll()
         faceConfHistory.removeAll()
         showDetails = false
         totalFramesProcessed = 0
@@ -271,6 +275,7 @@ public struct VitalLensScanView: View {
             lastFrameTime = nil
             client?.resetStream()
             ppgConfHistory.removeAll()
+            respConfHistory.removeAll()
             faceConfHistory.removeAll()
         }
     }
@@ -325,47 +330,42 @@ public struct VitalLensScanView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
-        
+        // 1. Accumulate total frames for API usage
         let framesInThisUpdate = result.sampleCount ?? result.time.count
         self.totalFramesProcessed += framesInThisUpdate
-
-        let facePresent = result.face.boundingBoxes.last != nil
-        if !facePresent {
-            if scanState != .searching {
-                handleIssue(message: "Face lost.")
-            }
-            return
-        }
         
+        // 2. Append to Global Histories (Do not trim, we need all for the final stats)
+        if let newFaceConfs = result.face.confidence {
+            faceConfHistory.append(contentsOf: newFaceConfs)
+        }
+        if let newPpgConfs = result.ppg?.confidence {
+            ppgConfHistory.append(contentsOf: newPpgConfs.map { Double($0) })
+        }
+        if let newRespConfs = result.resp?.confidence {
+            respConfHistory.append(contentsOf: newRespConfs.map { Double($0) })
+        }
+
+        // 3. Guard against inactive states
+        guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
+
+        // 4. Calculate Rolling Averages for the last 1 second
+        let fps = currentModeState.fps
+        let samplesInOneSecond = Int(fps)        
+        
+        let lastSecFaceConf = faceConfHistory.suffix(samplesInOneSecond)
+        let avgFaceConfLastSec = lastSecFaceConf.isEmpty ? 0.0 : lastSecFaceConf.reduce(0, +) / Double(lastSecFaceConf.count)
+        
+        let lastSecPpgConf = ppgConfHistory.suffix(samplesInOneSecond)
+        let avgPpgConfLastSec = lastSecPpgConf.isEmpty ? 0.0 : lastSecPpgConf.reduce(0, +) / Double(lastSecPpgConf.count)
+
+        // 5. Evaluate current real-time conditions
+        let isLowSignal = avgPpgConfLastSec < 0.5 || avgFaceConfLastSec < 0.5
         let goodFace = isFaceGood(result)
+        
         let now = Date()
         let elapsedInState = stateStartTime.map { now.timeIntervalSince($0) } ?? 0
         
-        let maxHistory = Int(currentModeState.fps)
-        
-        if let newConfs = result.ppg?.confidence {
-            ppgConfHistory.append(contentsOf: newConfs.map { Double($0) })
-            if ppgConfHistory.count > maxHistory {
-                ppgConfHistory.removeFirst(ppgConfHistory.count - maxHistory)
-            }
-        }
-        
-        if let newFaceConfs = result.face.confidence {
-            faceConfHistory.append(contentsOf: newFaceConfs)
-            if faceConfHistory.count > maxHistory {
-                faceConfHistory.removeFirst(faceConfHistory.count - maxHistory)
-            }
-        }
-        
-        var isLowSignal = false
-        if ppgConfHistory.count >= maxHistory && faceConfHistory.count >= maxHistory {
-            let avgPpgConf = ppgConfHistory.reduce(0, +) / Double(ppgConfHistory.count)
-            let avgFaceConf = faceConfHistory.reduce(0, +) / Double(faceConfHistory.count)
-            isLowSignal = avgPpgConf < 0.5 || avgFaceConf < 0.5
-        }
-        
-        // Let the timer run during BOTH tracking and recovering
+        // 6. Process Progress and Completion
         if scanState == .tracking || scanState == .recovering {
             if let last = lastFrameTime {
                 accumulatedScanTime += now.timeIntervalSince(last)
@@ -373,9 +373,9 @@ public struct VitalLensScanView: View {
             }
             lastFrameTime = now
             
-            // Check for completion immediately so it can finish even during recovery
             if accumulatedScanTime >= scanDuration {
                 client?.stopStream()
+                
                 let res = result
                 let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
                 let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")
@@ -401,21 +401,23 @@ public struct VitalLensScanView: View {
                                         format: (id == "ie_ratio" ? "%.2f" : "%.0f"), confidence: conf, emoji: m.emoji)
                 }
                 
-                let avgConf = faceConfHistory.isEmpty ? 0.0 : faceConfHistory.reduce(0, +) / Double(faceConfHistory.count)
+                let globalAvgFace = faceConfHistory.isEmpty ? 0.0 : faceConfHistory.reduce(0, +) / Double(faceConfHistory.count)
                 self.scanStats = (
                     duration: Double(totalFramesProcessed) / (res.fps ?? currentModeState.fps),
                     sampleCount: totalFramesProcessed,
-                    avgFaceConf: avgConf
+                    avgFaceConf: globalAvgFace
                 )
 
                 finalResult = result
                 scanState = .completed
                 onComplete(result)
+                return // Required so the state machine below isn't triggered
             }
         } else {
             lastFrameTime = nil
         }
         
+        // 7. State Machine
         switch scanState {
         case .searching:
             if goodFace {
@@ -423,7 +425,6 @@ public struct VitalLensScanView: View {
             }
             
         case .warmingUp:
-            // Grace period: we only abort if face completely lost (handled above)
             if elapsedInState >= warmUpDuration {
                 transition(to: .tracking, message: "Scanning...")
                 lastFrameTime = now
@@ -508,7 +509,6 @@ struct CutoutOverlay: View {
         .compositingGroup()
     }
 }
-
 
 struct ScanResultTile: View {
     let vital: ResolvedVital

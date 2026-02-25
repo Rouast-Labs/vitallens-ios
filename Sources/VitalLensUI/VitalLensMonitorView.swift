@@ -17,8 +17,6 @@ public enum VitalLensMode {
     }
 }
 
-// TODO: Think about overhauling this after finishing scan view
-
 enum MonitorState {
     case idle
     case searching
@@ -59,7 +57,9 @@ public struct VitalLensMonitorView: View {
     
     @State private var ppgHistory: [Double] = []
     @State private var ppgConf: Double = 0.0
+    @State private var ppgConfHistory: [Double] = []
     @State private var respHistory: [Double] = []
+    @State private var respConfHistory: [Double] = []
     @State private var respConf: Double = 0.0
 
     @State private var receivedVitals: Set<String> = []
@@ -87,6 +87,7 @@ public struct VitalLensMonitorView: View {
 
     struct BufferedPoint {
         let value: Double
+        let confidence: Double
         let displayTime: TimeInterval
     }
     @State private var ppgQueue: [BufferedPoint] = []
@@ -94,7 +95,7 @@ public struct VitalLensMonitorView: View {
     @State private var timeAnchor: (videoTime: TimeInterval, realTime: TimeInterval)? = nil
     @State private var playbackTask: Task<Void, Never>? = nil
     
-    private let vitalConfThreshold = 0.9
+    private let vitalConfThreshold = 0.8
     private let hrvConfThreshold = 0.7
     private let faceConfThreshold = 0.5
     
@@ -105,8 +106,8 @@ public struct VitalLensMonitorView: View {
         showWaveforms: Bool = true,
         initialMode: VitalLensMode = .eco,
         bufferOffset: TimeInterval = 0.15,
-        windowSize: TimeInterval = 10.0,
-        minDisplayDuration: TimeInterval = 5.0 
+        windowSize: TimeInterval = 8.0,
+        minDisplayDuration: TimeInterval = 6.0 
     ) {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
@@ -126,8 +127,14 @@ public struct VitalLensMonitorView: View {
     private var isSdnnReady: Bool { sdnnValue != nil && sdnnConf >= hrvConfThreshold }
     private var isRmssdReady: Bool { rmssdValue != nil && rmssdConf >= hrvConfThreshold }
     private var isIeReady: Bool { ieRatioValue != nil && ieRatioConf >= vitalConfThreshold }
-    private var isPpgReady: Bool { ppgConf >= vitalConfThreshold && hasEnoughData }
-    private var isRespReady: Bool { respConf >= vitalConfThreshold && hasEnoughData }
+    private var isPpgReady: Bool { 
+        let avgConf = ppgConfHistory.isEmpty ? 0.0 : ppgConfHistory.reduce(0, +) / Double(ppgConfHistory.count)
+        return avgConf >= vitalConfThreshold && hasEnoughData 
+    }
+    private var isRespReady: Bool { 
+        let avgConf = respConfHistory.isEmpty ? 0.0 : respConfHistory.reduce(0, +) / Double(respConfHistory.count)
+        return avgConf >= vitalConfThreshold && hasEnoughData 
+    }
     
     private var dynamicMessage: String {
         if !feedbackMessage.isEmpty { return feedbackMessage }
@@ -352,6 +359,8 @@ public struct VitalLensMonitorView: View {
         
         ppgHistory.removeAll(); ppgQueue.removeAll(); ppgConf = 0.0
         respHistory.removeAll(); respQueue.removeAll(); respConf = 0.0
+        ppgConfHistory.removeAll()
+        respConfHistory.removeAll()
         timeAnchor = nil
         receivedVitals.removeAll()
     }
@@ -447,15 +456,21 @@ public struct VitalLensMonitorView: View {
             feedbackMessage = "Tracking vitals"
         }
         
-        // TODO: Use the average values instead
-        if let ppg = result.ppg { ppgConf = Double(ppg.confidence.last ?? 0) }
-        if let resp = result.resp { respConf = Double(resp.confidence.last ?? 0) }
+        if !ppgConfHistory.isEmpty {
+            ppgConf = ppgConfHistory.reduce(0, +) / Double(ppgConfHistory.count)
+        }
+        
+        if !respConfHistory.isEmpty {
+            respConf = respConfHistory.reduce(0, +) / Double(respConfHistory.count)
+        }
     }
     
     @MainActor
     private func queueWaveformData(result: VitalLensResult) {
         let ppgChunk = result.ppg?.data ?? []
+        let ppgConfs = result.ppg?.confidence ?? []
         let respChunk = result.resp?.data ?? []
+        let respConfs = result.resp?.confidence ?? []
         guard !ppgChunk.isEmpty || !respChunk.isEmpty else { return }
         
         if bufferOffset > 0 {
@@ -468,19 +483,31 @@ public struct VitalLensMonitorView: View {
                     let targetDisplayTime = anchor.realTime + (time - anchor.videoTime) + bufferOffset
                     
                     if index < ppgChunk.count {
-                        ppgQueue.append(BufferedPoint(value: Double(ppgChunk[index]), displayTime: targetDisplayTime))
+                        let conf = Double(index < ppgConfs.count ? ppgConfs[index] : (ppgConfs.last ?? 0))
+                        ppgQueue.append(BufferedPoint(value: Double(ppgChunk[index]), confidence: conf, displayTime: targetDisplayTime))
                     }
                     if index < respChunk.count {
-                        respQueue.append(BufferedPoint(value: Double(respChunk[index]), displayTime: targetDisplayTime))
+                        let conf = Double(index < respConfs.count ? respConfs[index] : (respConfs.last ?? 0))
+                        respQueue.append(BufferedPoint(value: Double(respChunk[index]), confidence: conf, displayTime: targetDisplayTime))
                     }
                 }
             }
         } else {
             self.ppgHistory.append(contentsOf: ppgChunk.map { Double($0) })
-            if self.ppgHistory.count > maxHistoryPoints { self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints) }
+            self.ppgConfHistory.append(contentsOf: ppgConfs.map { Double($0) })
+            
+            if self.ppgHistory.count > maxHistoryPoints { 
+                self.ppgHistory.removeFirst(self.ppgHistory.count - maxHistoryPoints) 
+                self.ppgConfHistory.removeFirst(self.ppgConfHistory.count - maxHistoryPoints)
+            }
             
             self.respHistory.append(contentsOf: respChunk.map { Double($0) })
-            if self.respHistory.count > maxHistoryPoints { self.respHistory.removeFirst(self.respHistory.count - maxHistoryPoints) }
+            self.respConfHistory.append(contentsOf: respConfs.map { Double($0) })
+            
+            if self.respHistory.count > maxHistoryPoints { 
+                self.respHistory.removeFirst(self.respHistory.count - maxHistoryPoints) 
+                self.respConfHistory.removeFirst(self.respConfHistory.count - maxHistoryPoints)
+            }
         }
     }
     
@@ -489,24 +516,38 @@ public struct VitalLensMonitorView: View {
         while !Task.isCancelled {
             let now = CACurrentMediaTime()
             
-            var ppgToAdd: [Double] = []
+            // PPG
+            var newPpgVals: [Double] = []
+            var newPpgConfs: [Double] = []
             while let first = ppgQueue.first, now >= first.displayTime {
-                ppgToAdd.append(first.value)
+                newPpgVals.append(first.value)
+                newPpgConfs.append(first.confidence)
                 ppgQueue.removeFirst()
             }
-            if !ppgToAdd.isEmpty {
-                ppgHistory.append(contentsOf: ppgToAdd)
-                if ppgHistory.count > maxHistoryPoints { ppgHistory.removeFirst(ppgHistory.count - maxHistoryPoints) }
+            if !newPpgVals.isEmpty {
+                ppgHistory.append(contentsOf: newPpgVals)
+                ppgConfHistory.append(contentsOf: newPpgConfs)
+                if ppgHistory.count > maxHistoryPoints {
+                    ppgHistory.removeFirst(ppgHistory.count - maxHistoryPoints)
+                    ppgConfHistory.removeFirst(ppgConfHistory.count - maxHistoryPoints)
+                }
             }
-            
-            var respToAdd: [Double] = []
+
+            // Respiration logic (Add this)
+            var newRespVals: [Double] = []
+            var newRespConfs: [Double] = []
             while let first = respQueue.first, now >= first.displayTime {
-                respToAdd.append(first.value)
+                newRespVals.append(first.value)
+                newRespConfs.append(first.confidence)
                 respQueue.removeFirst()
             }
-            if !respToAdd.isEmpty {
-                respHistory.append(contentsOf: respToAdd)
-                if respHistory.count > maxHistoryPoints { respHistory.removeFirst(respHistory.count - maxHistoryPoints) }
+            if !newRespVals.isEmpty {
+                respHistory.append(contentsOf: newRespVals)
+                respConfHistory.append(contentsOf: newRespConfs)
+                if respHistory.count > maxHistoryPoints {
+                    respHistory.removeFirst(respHistory.count - maxHistoryPoints)
+                    respConfHistory.removeFirst(respConfHistory.count - maxHistoryPoints)
+                }
             }
             
             try? await Task.sleep(nanoseconds: 16_666_666)
