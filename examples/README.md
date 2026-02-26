@@ -128,8 +128,7 @@ class MyExistingCameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         super.init()
         
         // Initialize client with the passive source
-        let strategy = APIInference(apiKey: "YOUR_API_KEY")
-        client = VitalLens(source: passiveSource, strategy: strategy)
+        client = VitalLens(apiKey: "YOUR_API_KEY", source: passiveSource)
         
         Task {
             // Start the stream. No camera hardware will be claimed.

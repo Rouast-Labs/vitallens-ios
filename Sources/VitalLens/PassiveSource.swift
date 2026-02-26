@@ -12,29 +12,32 @@ import UIKit
 public final class PassiveSource: CameraStreaming, @unchecked Sendable {
     
     private let streamContinuation: AsyncStream<InputFrame>.Continuation
+
+    /// The asynchronous stream of injected video frames.
     public let stream: AsyncStream<InputFrame>
     
+    /// Initializes a new PassiveSource.
     public init() {
         let (s, c) = AsyncStream.makeStream(of: InputFrame.self)
         self.stream = s
         self.streamContinuation = c
     }
     
+    /// A no-op for `PassiveSource` since it does not manage any hardware.
     public func start() async throws {
-        // No-op: The external host manages the start lifecycle
     }
     
+    /// A no-op for `PassiveSource`. To stop the stream, simply stop injecting frames.
     public func stop() {
-        // We don't finish the stream here to allow the host to pause/resume injection without killing the AsyncStream.
-        // The host should simply stop calling inject().
     }
     
-    /// Injects a frame into the SDK processing pipeline.
+    /// Injects a frame into the SDK's processing pipeline.
+    /// 
     /// - Parameters:
-    ///   - buffer: The raw pixel buffer.
+    ///   - buffer: The raw `CVPixelBuffer` from your custom camera or video output.
     ///   - orientation: The orientation of the image.
-    ///   - isMirrored: Whether the image is mirrored.
-    ///   - timestamp: The capture timestamp.
+    ///   - isMirrored: Whether the image is horizontally mirrored.
+    ///   - timestamp: The capture timestamp in seconds.
     public func inject(buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, isMirrored: Bool, timestamp: TimeInterval) {
         let frame = InputFrame(
             buffer: SendablePixelBuffer(buffer),
@@ -46,8 +49,10 @@ public final class PassiveSource: CameraStreaming, @unchecked Sendable {
     }
     
     #if canImport(UIKit)
+    /// A no-op for `PassiveSource`. You must manage your own preview layer.
+    ///
+    /// - Parameter view: The view where the preview would normally be attached.
     public func showPreview(on view: UIView) {
-        // No-op: The external host manages the preview layer
     }
     #endif
 }

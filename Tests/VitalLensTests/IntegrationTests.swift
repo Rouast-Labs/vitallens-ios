@@ -98,12 +98,15 @@ final class IntegrationTests: XCTestCase {
             return
         }
         
-        // 1. Setup the custom source and strategy
+        // 1. Setup the custom source
         let passiveSource = PassiveSource()
-        let strategy = APIInference(apiKey: apiKey, requestedModel: "vitallens-2.0")
         
         // 2. Initialize VitalLens with the custom source
-        let client = VitalLens(source: passiveSource, strategy: strategy)
+        let client = VitalLens(
+            apiKey: apiKey,
+            method: "vitallens-2.0",
+            source: passiveSource,
+        )
         let fileSource = try await FileSource.from(url: videoURL)
         let nominalFPS = fileSource.nominalFrameRate
         let frameDuration = 1.0 / Double(nominalFPS)

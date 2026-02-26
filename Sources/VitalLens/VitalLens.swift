@@ -7,15 +7,14 @@ import VitalLensInference
 import UIKit
 #endif
 
-/// The primary client for the VitalLens API.
+/// The primary client for the VitalLens API and local inference.
+/// Handles initialization, configuration, and stream lifecycle management.
 public final class VitalLens: @unchecked Sendable {
 
     var streamProcessor: StreamProcessor?
 
-    // Observers for lifecycle management
     private var observers: [NSObjectProtocol] = []
     
-    // MARK: - Configuration
     public let apiKey: String?
     public let method: String
     public let proxyURL: URL?
@@ -25,7 +24,7 @@ public final class VitalLens: @unchecked Sendable {
     public let waveformMode: WaveformMode
     public let debugMode: Bool
 
-    /// Closure triggered instantly when a face enters or leaves the camera frame.
+    /// A closure triggered instantly when a face enters or leaves the camera frame.
     public var onFaceStateChanged: (@Sendable (Bool) -> Void)? {
         didSet {
             let cb = onFaceStateChanged
@@ -37,16 +36,20 @@ public final class VitalLens: @unchecked Sendable {
     private let customSource: (any CameraStreaming)?
     private let customTransformer: FrameTransformer?
     
-    // MARK: - Initialization
-    
     /// Initializes a new VitalLens client.
     ///
     /// - Parameters:
-    ///   - apiKey: Your VitalLens API Key (required if proxyUrl is not set).
+    ///   - apiKey: Your VitalLens API Key (required if proxyURL is not set and using API inference).
     ///   - method: The estimation method to use. Defaults to `"vitallens"`.
-    ///   - faceDetectionFrequency: Frequency in Hz to run face detection (default 1.0).
+    ///   - faceDetectionFrequency: Frequency in Hz to run face detection. Defaults to `1.0`.
     ///   - globalROI: A fixed region of interest (normalized 0.0-1.0) to use instead of face detection.
-    ///   - proxyURL: Optional URL to your backend proxy. If set, `apiKey` is ignored by the client (your server must add it).
+    ///   - proxyURL: Optional URL to your backend proxy. If set, `apiKey` is ignored.
+    ///   - overrideFps: Target FPS to sample the camera at. Overrides the model's default FPS if set.
+    ///   - waveformMode: How waveforms are returned: `.incremental` or `.global`. Defaults to `.incremental`.
+    ///   - debugMode: If true, exposes intermediate frame crops. Defaults to `false`.
+    ///   - source: A custom camera or frame source. Defaults to standard `CameraSource`.
+    ///   - strategy: A custom inference strategy. Defaults to `APIInference` using provided key/proxy.
+    ///   - transformer: An optional custom closure to preprocess frames before inference.
     public init(
         apiKey: String? = nil,
         method: String = "vitallens",
@@ -55,7 +58,10 @@ public final class VitalLens: @unchecked Sendable {
         proxyURL: URL? = nil,
         overrideFps: Double? = nil,
         waveformMode: WaveformMode = .incremental,
-        debugMode: Bool = false
+        debugMode: Bool = false,
+        source: (any CameraStreaming)? = nil,
+        strategy: (any InferenceStrategy)? = nil,
+        transformer: FrameTransformer? = nil
     ) {
         self.apiKey = apiKey
         self.method = method
@@ -64,40 +70,22 @@ public final class VitalLens: @unchecked Sendable {
         self.proxyURL = proxyURL
         self.overrideFps = overrideFps
         self.waveformMode = waveformMode
-        self.debugMode = debugMode
-        self.customSource = nil
-        self.customTransformer = nil
-        
-        let requestedModelName = method == "vitallens" ? nil : method
-        self.strategy = APIInference(
-            apiKey: apiKey,
-            proxyURL: proxyURL,
-            requestedModel: requestedModelName,
-            overrideFps: overrideFps
-        )
-
-        setupLifecycleObservers()
-    }
-
-    public init(
-        source: any CameraStreaming,
-        strategy: any InferenceStrategy,
-        transformer: FrameTransformer? = nil,
-        waveformMode: WaveformMode = .incremental,
-        debugMode: Bool = false
-    ) {
-        self.apiKey = nil
-        self.method = "vitallens"
-        self.faceDetectionFrequency = 1.0
-        self.globalROI = nil
-        self.proxyURL = nil
-        self.overrideFps = nil
-        self.waveformMode = waveformMode
+        self.debugMode = debugMode        
         self.customSource = source
-        self.debugMode = debugMode
-        self.strategy = strategy
         self.customTransformer = transformer
         
+        if let providedStrategy = strategy {
+            self.strategy = providedStrategy
+        } else {
+            let requestedModelName = method == "vitallens" ? nil : method
+            self.strategy = APIInference(
+                apiKey: apiKey,
+                proxyURL: proxyURL,
+                requestedModel: requestedModelName,
+                overrideFps: overrideFps
+            )
+        }
+
         setupLifecycleObservers()
     }
 
@@ -127,12 +115,10 @@ public final class VitalLens: @unchecked Sendable {
         #if canImport(UIKit)
         let center = NotificationCenter.default
         
-        // Pause on background
         let backgroundObserver = center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.handleAppBackground()
         }
         
-        // Resume on foreground
         let foregroundObserver = center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.handleAppForeground()
         }
@@ -156,12 +142,19 @@ public final class VitalLens: @unchecked Sendable {
     // MARK: - Public API
     
     #if canImport(UIKit)
-    /// Starts the live camera stream.
+    /// Starts the live camera stream and begins the inference loop.
+    ///
+    /// - Parameter preview: An optional `UIView` to render the live camera feed.
+    /// - Returns: An asynchronous stream yielding continuous `VitalLensResult` updates.
+    /// - Throws: `VitalLensError` if camera access is denied or stream initialization fails.
     public func startStream(preview: UIView? = nil) async throws -> AsyncStream<VitalLensResult> {
         return try await _startStream(preview: preview)
     }
     #else
-    /// Starts the stream in headless/test mode (no camera).
+    /// Starts the stream in headless mode (no camera preview).
+    ///
+    /// - Returns: An asynchronous stream yielding continuous `VitalLensResult` updates.
+    /// - Throws: `VitalLensError` if initialization fails.
     public func startStream() async throws -> AsyncStream<VitalLensResult> {
         return try await _startStream(preview: nil)
     }
@@ -192,18 +185,26 @@ public final class VitalLens: @unchecked Sendable {
         return try await processor.start(preview: wrapper)
     }
 
+    /// Resets the internal data buffers without stopping the camera.
+    /// Useful for forcing a new estimation window when the subject changes abruptly.
     public func resetStream() {
         Task {
             await streamProcessor?.reset()
         }
     }
 
+    /// Stops the active camera session, terminates the background inference loop, and clears internal buffers.
     public func stopStream() {
         Task {
             await streamProcessor?.stop()
         }
     }
     
+    /// Processes a local video file in batch mode.
+    ///
+    /// - Parameter url: The local file URL of the video to process.
+    /// - Returns: A complete `VitalLensResult` containing the time-series estimates for the entire file.
+    /// - Throws: `VitalLensError` if file reading, face detection, or inference fails.
     public func processVideoFile(at url: URL) async throws -> VitalLensResult {
         let processor = FileProcessor(url: url)
         return try await processor.process(strategy: strategy, globalROI: globalROI)

@@ -12,7 +12,6 @@ import UIKit
 /// It handles cropping, scaling, format conversion, rotation, and reflection efficiently.
 public final class ImageProcessor: @unchecked Sendable {
     
-    // Unified buffers
     private var scaledYBuffer = vImage_Buffer()
     private var scaledUVBuffer = vImage_Buffer()
     private var argbBuffer1 = vImage_Buffer()
@@ -28,6 +27,9 @@ public final class ImageProcessor: @unchecked Sendable {
     /// Track the current buffer size to detect when we need to re-allocate
     private var currentTargetSize: Int = 0
     
+    /// Initializes a new ImageProcessor.
+    ///
+    /// - Parameter debugMode: If true, caches a `CGImage` of the final crop for debugging.
     public init(debugMode: Bool = false) {
         self.debugMode = debugMode
         initConversionInfo()
@@ -37,9 +39,17 @@ public final class ImageProcessor: @unchecked Sendable {
         freeBuffers()
     }
     
-    // MARK: - Main Processing Functions
-    
-    /// Processes a video frame for the remote API: Crops, ccales, rotates, reflects, and converts to RGB data.
+    /// Processes a video frame for the remote API.
+    /// It crops, scales, rotates, reflects, and converts the pixel buffer to packed RGB data.
+    ///
+    /// - Parameters:
+    ///   - pixelBuffer: The raw camera frame.
+    ///   - roi: The normalized Region of Interest (0.0-1.0).
+    ///   - targetSize: The required width and height for the output image.
+    ///   - orientation: The original orientation of the frame.
+    ///   - isMirrored: Whether the frame is horizontally mirrored.
+    /// - Returns: Flattened RGB `Data` ready for network transmission.
+    /// - Throws: `VitalLensError` if processing or memory allocation fails.
     public func process(
         pixelBuffer: CVPixelBuffer,
         roi: CGRect,
@@ -57,7 +67,6 @@ public final class ImageProcessor: @unchecked Sendable {
         
         let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
         
-        // Extract and standardize to ARGB in argbBuffer1
         if format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
            format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
             try extractBiPlanarYUV(pixelBuffer, roi: rawROI, size: targetSize, destARGB: &argbBuffer1)
@@ -67,21 +76,29 @@ public final class ImageProcessor: @unchecked Sendable {
             throw VitalLensError.processingError("Unsupported pixel format: \(format)")
         }
         
-        // Apply rotation and reflection into argbBuffer2
         try applyRotationAndReflection(source: &argbBuffer1, dest: &argbBuffer2, orientation: orientation, isMirrored: isMirrored)
         
         if debugMode {
             self.lastProcessedCGImage = createCGImage(from: argbBuffer2)
         }
 
-        // Convert finalized ARGB to RGB
         let error = vImageConvert_ARGB8888toRGB888(&argbBuffer2, &finalRGBBuffer, vImage_Flags(kvImageNoFlags))
         guard error == kvImageNoError else { throw VitalLensError.processingError("vImage ARGB->RGB failed: \(error)") }
         
         return Data(bytes: finalRGBBuffer.data, count: targetSize * targetSize * 3)
     }
 
-    /// Optimized pipeline for Local CoreML. Outputs a CVPixelBuffer (kCVPixelFormatType_32ARGB).
+    /// An optimized pipeline designed for local CoreML inference.
+    /// Extracts the ROI and outputs a 32ARGB `CVPixelBuffer`.
+    ///
+    /// - Parameters:
+    ///   - pixelBuffer: The raw camera frame (must be YpCbCr BiPlanar).
+    ///   - roi: The normalized Region of Interest (0.0-1.0).
+    ///   - targetSize: The required width and height for the output image.
+    ///   - orientation: The original orientation of the frame.
+    ///   - isMirrored: Whether the frame is horizontally mirrored.
+    /// - Returns: A cropped and rotated `CVPixelBuffer` in 32ARGB format.
+    /// - Throws: `VitalLensError` if processing or memory allocation fails.
     public func processToPixelBuffer(
         pixelBuffer: CVPixelBuffer,
         roi: CGRect,
@@ -103,10 +120,8 @@ public final class ImageProcessor: @unchecked Sendable {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         
-        // Extract and standardize to ARGB in argbBuffer1
         try extractBiPlanarYUV(pixelBuffer, roi: rawROI, size: targetSize, destARGB: &argbBuffer1)
         
-        // Prepare output pixel buffer
         var outputPixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(kCFAllocatorDefault, targetSize, targetSize, kCVPixelFormatType_32ARGB, nil, &outputPixelBuffer)
         guard status == kCVReturnSuccess, let destBuffer = outputPixelBuffer else {
@@ -124,14 +139,12 @@ public final class ImageProcessor: @unchecked Sendable {
             rowBytes: CVPixelBufferGetBytesPerRow(destBuffer)
         )
         
-        // Deposit directly into the target pixel buffer
         try applyRotationAndReflection(source: &argbBuffer1, dest: &destVImage, orientation: orientation, isMirrored: isMirrored)
         
         return destBuffer
     }
     
-    // MARK: - Extraction Helpers
-    
+    /// Extracts a cropped region from a YUV BiPlanar buffer, scales it, and converts it to ARGB.
     private func extractBiPlanarYUV(_ pixelBuffer: CVPixelBuffer, roi: CGRect, size: Int, destARGB: inout vImage_Buffer) throws {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
@@ -167,6 +180,7 @@ public final class ImageProcessor: @unchecked Sendable {
         guard error == kvImageNoError else { throw VitalLensError.processingError("vImage YUV->ARGB failed") }
     }
     
+    /// Extracts a cropped region from a BGRA/ARGB buffer and scales it.
     private func extractBGRA(_ pixelBuffer: CVPixelBuffer, roi: CGRect, size: Int, destARGB: inout vImage_Buffer) throws {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
@@ -187,11 +201,9 @@ public final class ImageProcessor: @unchecked Sendable {
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         var sourceBuffer = vImage_Buffer(data: base.advanced(by: cropY * bytesPerRow + cropX * 4), height: vImagePixelCount(cropH), width: vImagePixelCount(cropW), rowBytes: bytesPerRow)
         
-        // Scale to destination
         var error = vImageScale_ARGB8888(&sourceBuffer, &destARGB, nil, vImage_Flags(kvImageNoFlags))
         guard error == kvImageNoError else { throw VitalLensError.processingError("vImage Scale BGRA failed") }
         
-        // Ensure format is ARGB. If BGRA, permute channels in place: B(0)->A(3), G(1)->R(2), R(2)->G(1), A(3)->B(0)
         let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
         if format == kCVPixelFormatType_32BGRA {
             error = vImagePermuteChannels_ARGB8888(&destARGB, &destARGB, [3, 2, 1, 0], vImage_Flags(kvImageNoFlags))
@@ -199,8 +211,7 @@ public final class ImageProcessor: @unchecked Sendable {
         }
     }
     
-    // MARK: - Transformation Helpers
-
+    /// Applies 90-degree rotations and horizontal reflections based on metadata.
     private func applyRotationAndReflection(source: inout vImage_Buffer, dest: inout vImage_Buffer, orientation: CGImagePropertyOrientation, isMirrored: Bool) throws {
         let rotation = rotationConstant(for: orientation)
         var bgColor: [UInt8] = [0,0,0,0]
@@ -234,9 +245,7 @@ public final class ImageProcessor: @unchecked Sendable {
         default: return 0
         }
     }
-    
-    // MARK: - Memory Management
-    
+        
     private func checkAndReallocate(targetSize: Int) throws {
         if targetSize != currentTargetSize {
             freeBuffers()
@@ -280,10 +289,8 @@ public final class ImageProcessor: @unchecked Sendable {
         self.conversionInfo = info
     }
 
-    // Helper to convert vImage_Buffer to CGImage
+    /// Creates a debug CGImage from the intermediate ARGB vImage buffer.
     private func createCGImage(from vBuffer: vImage_Buffer) -> CGImage? {
-        // Create a local mutable copy of the descriptor (not the data itself) 
-        // to satisfy the inout requirement of the vImage function.
         var mutableBuffer = vBuffer
         
         var format = vImage_CGImageFormat(

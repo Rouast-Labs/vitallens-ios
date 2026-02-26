@@ -4,33 +4,79 @@ The `VitalLens` class is the main entry point for the SDK. You should use this c
 
 ## Initialization
 
+The `VitalLens` client initializer allows you to start with simple defaults or inject custom components for advanced integrations.
+
 ```swift
-let client = VitalLens(
-    apiKey: "YOUR_API_KEY",
-    method: "vitallens"
+public init(
+    apiKey: String? = nil,
+    method: String = "vitallens",
+    faceDetectionFrequency: Double = 1.0,
+    globalROI: CGRect? = nil,
+    proxyURL: URL? = nil,
+    overrideFps: Double? = nil,
+    waveformMode: WaveformMode = .incremental,
+    debugMode: Bool = false,
+    source: (any CameraStreaming)? = nil,
+    strategy: (any InferenceStrategy)? = nil,
+    transformer: FrameTransformer? = nil
 )
 ```
 
-**Method Options:**
+### Parameters
+
+| Name | Type | Description | Default |
+| --- | --- | --- | --- |
+| `apiKey` | `String?` | Your API Key. Required if `proxyURL` and `strategy` are not set. | `nil` |
+| `method` | `String` | The model version to use (e.g., `"vitallens"`, `"vitallens-2.0"`). | `"vitallens"` |
+| `proxyURL` | `URL?` | URL to a backend proxy (Recommended for production). | `nil` |
+| `faceDetectionFrequency` | `Double` | Frequency (Hz) to run face detection. Lower values save battery. | `1.0` |
+| `globalROI` | `CGRect?` | A fixed ROI (normalized `0.0`-`1.0`) to bypass face detection. | `nil` |
+| `overrideFps` | `Double?` | Target sampling FPS. Overrides model default if set. | `nil` |
+| `waveformMode` | `WaveformMode` | Waveform return mode: `.incremental` or `.global`. | `.incremental` |
+| `debugMode` | `Bool` | If `true`, exposes intermediate frame crops for debugging. | `false` |
+| `source` | `CameraStreaming?` | A custom frame source. Defaults to standard `CameraSource`. | `nil` |
+| `strategy` | `InferenceStrategy?` | A custom inference backend (e.g., CoreML). Defaults to `APIInference`. | `nil` |
+| `transformer` | `FrameTransformer?` | A custom closure to preprocess frames before inference. | `nil` |
+
+### Configuration Logic
+
+The SDK intelligently configures itself based on the parameters you provide:
+
+1. **Inference Strategy:** If you provide a `strategy`, the SDK uses it directly. If `strategy` is `nil`, the SDK initializes an `APIInference` strategy using your `apiKey` or `proxyURL`.
+2. **Camera Source:** If you provide a `source` (such as a `PassiveSource` for external camera frames), the SDK uses it. Otherwise, it initializes a standard `CameraSource` to manage the device hardware.
+
+### Method Options
+
+When using the default API `InferenceStrategy`, these options are available for `method`:
 
 - `"vitallens"`: **(Recommended)** Uses the VitalLens API and automatically selects the best model available for your API key (e.g., VitalLens 2.0 with HRV support).
 - `"vitallens-2.0"`: Forces the use of the VitalLens 2.0 model.
 - `"vitallens-1.0"` / `"vitallens-1.1"`: Forces the use of older model versions.
 
-*Note: Unlike the Python and JS clients, the iOS SDK relies on the remote API by default to offload heavy computation and preserve device battery. Local fallbacks (like `pos`, `chrom`) are not included out of the box, meaning an `apiKey` or `proxyURL` is required.*
+### Examples
 
-**Parameters:**
+**Standard API Integration:**
 
-| Name | Type | Description | Default |
-| --- | --- | --- | --- |
-| `apiKey` | `String?` | Your API Key. Required if `proxyURL` is not set. | `nil` |
-| `method` | `String` | The model version to be used for inference. | `"vitallens"` |
-| `proxyURL` | `URL?` | URL to a backend proxy to hide your API Key (Recommended for production). | `nil` |
-| `faceDetectionFrequency` | `Double` | How often (Hz) to run Vision face detection. Lower values save battery but track movement slower. | `1.0` |
-| `globalROI` | `CGRect?` | A fixed region of interest (normalized `0.0`-`1.0`) to use instead of automatic face detection. | `nil` |
-| `overrideFps` | `Double?` | Target FPS to sample the camera at. Overrides the model's default FPS if set. | `nil` |
-| `waveformMode` | `WaveformMode` | How waveforms are processed: `.incremental` (real-time) or `.global` (batch). | `.incremental` |
-| `debugMode` | `Bool` | If `true`, exposes intermediate processing crops for debugging. | `false` |
+```swift
+let client = VitalLens(apiKey: "YOUR_KEY")
+```
+
+**Custom Camera with API Inference:**
+
+```swift
+let client = VitalLens(
+    apiKey: "YOUR_KEY", 
+    source: myPassiveSource
+)
+```
+
+**Local CoreML Integration:**
+
+```swift
+let client = VitalLens(
+    strategy: MyCoreMLStrategy()
+)
+```
 
 ---
 

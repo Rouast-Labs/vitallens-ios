@@ -3,7 +3,7 @@ import VitalLensCore
 import VitalLensInference
 import CoreVideo
 
-/// Handles the two-pass processing of video files for high-accuracy vital sign estimation.
+/// Handles the two-pass processing of video files for vital sign estimation.
 ///
 /// - Pass 1 (Scanning): Iterates through the video to detect faces and calculate a stable, global ROI.
 /// - Pass 2 (Inference): Processes frames using the stable ROI and batches them for the inference strategy.
@@ -13,30 +13,35 @@ actor FileProcessor {
     private let processor: ImageProcessor
     private let detector: any FaceDetecting
     
+    /// Initializes a new FileProcessor.
+    ///
+    /// - Parameters:
+    ///   - url: The local file URL of the video to process.
+    ///   - detector: The face detection strategy to use. Defaults to `FaceDetector()`.
     init(url: URL, detector: any FaceDetecting = FaceDetector()) {
         self.url = url
         self.detector = detector
         self.processor = ImageProcessor()
     }
     
-    /// Execute the full processing pipeline.
+    /// Executes the full processing pipeline on the video file.
+    ///
+    /// - Parameters:
+    ///   - strategy: The inference strategy used to estimate vital signs.
+    ///   - globalROI: An optional fixed region of interest. If provided, skips the scanning pass.
+    /// - Returns: The aggregated `VitalLensResult` containing the estimated vital signs and waveforms.
+    /// - Throws: `VitalLensError` if processing, face detection, or inference fails.
     func process(strategy: any InferenceStrategy, globalROI: CGRect? = nil) async throws -> VitalLensResult {
-        // 1. Resolve Configs
         let config = try await strategy.resolveConfig()
         let bufConfig = try await strategy.bufferConfig
         
-        // 2. Establish ROI (Pass 1)
         let finalROI: CGRect
         if let provided = globalROI {
             finalROI = provided
         } else {
-            // print("[FileProcessor] Starting Pass 1: ROI Scanning...")
             finalROI = try await performScanningPass(config: config)
-            // print("[FileProcessor] Pass 1 Complete. ROI: \(finalROI)")
         }
         
-        // 3. Inference (Pass 2)
-        // print("[FileProcessor] Starting Pass 2: Inference...")
         return try await performInferencePass(
             roi: finalROI,
             config: config,
@@ -44,15 +49,15 @@ actor FileProcessor {
             strategy: strategy
         )
     }
-    
-    // MARK: - Pass 1: Scanning
-    
-    /// Scans the video to determine a stable "Median Face" and derives the ROI.
+        
+    /// Scans the video to determine a stable "Median Face" and derives the overall region of interest.
+    ///
+    /// - Parameter config: The resolved model configuration.
+    /// - Returns: The calculated stable ROI across the video.
+    /// - Throws: `VitalLensError` if no face is detected in the video.
     private func performScanningPass(config: ModelConfig) async throws -> CGRect {
         let source = try await FileSource.from(url: url)
         
-        // We optimize by checking only a subset of frames (e.g. 1 Hz stride)
-        // This is significantly faster than running face detection on every frame.
         let stride = max(1, Int(source.nominalFrameRate * 1.0))
         var frameCount = 0
         var detections: [CGRect] = []
@@ -61,7 +66,6 @@ actor FileProcessor {
             frameCount += 1
             if frameCount % stride != 0 { continue }
             
-            // Note: FileSource determines orientation from track transform
             if let rect = try? await detector.detectFace(in: frame, orientation: source.orientation, isMirrored: false) {
                 detections.append(rect)
             }
@@ -71,13 +75,10 @@ actor FileProcessor {
             throw VitalLensError.processingError("No face detected in video file.")
         }
         
-        // Calculate the "Median Face" to avoid outliers (jitters/false positives).
-        // 1. Calculate Centroid of all detections
         let totalX = detections.reduce(0) { $0 + $1.midX }
         let totalY = detections.reduce(0) { $0 + $1.midY }
         let centroid = CGPoint(x: totalX / CGFloat(detections.count), y: totalY / CGFloat(detections.count))
         
-        // 2. Find the single detection closest to the centroid
         let bestFace = detections.min { a, b in
             let distA = hypot(a.midX - centroid.x, a.midY - centroid.y)
             let distB = hypot(b.midX - centroid.x, b.midY - centroid.y)
@@ -86,10 +87,16 @@ actor FileProcessor {
         
         return ROICalculator.calculateROI(from: bestFace, method: config.roiMethod)
     }
-    
-    // MARK: - Pass 2: Inference
-    
+        
     /// Reads the video linearly, applies the fixed ROI, and performs batched inference.
+    ///
+    /// - Parameters:
+    ///   - roi: The fixed region of interest to apply to all frames.
+    ///   - config: The model configuration dictating input size and model characteristics.
+    ///   - bufConfig: The buffer configuration dictating batch sizes.
+    ///   - strategy: The inference strategy to execute.
+    /// - Returns: The final aggregated `VitalLensResult`.
+    /// - Throws: `VitalLensError` if inference fails.
     private func performInferencePass(
         roi: CGRect,
         config: ModelConfig,
@@ -128,7 +135,6 @@ actor FileProcessor {
             
             totalFramesProcessed += 1
 
-            // 1. SAFETY CLAMP: Only batch if fileMax > 0, and ensure keep <= take
             if bufConfig.fileMax > 0 && buffer.count >= bufConfig.fileMax {
                 let take = UInt32(bufConfig.fileMax)
                 let keep = bufConfig.overlap

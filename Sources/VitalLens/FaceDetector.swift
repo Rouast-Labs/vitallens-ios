@@ -8,13 +8,11 @@ import CoreML
 /// An actor responsible for detecting faces in video frames using the Vision framework.
 /// It handles the coordinate space conversion (Vision Bottom-Left -> Normalized Top-Left).
 public actor FaceDetector: FaceDetecting {
-    
-    // MARK: - Properties
-    
+        
     private let faceRequest: VNDetectFaceRectanglesRequest
     
-    // MARK: - Initialization
-    
+    /// Initializes a new FaceDetector.
+    /// Configures the Vision request and optimizes execution for the simulator if applicable.
     public init() {
         let request = VNDetectFaceRectanglesRequest()
         request.revision = VNDetectFaceRectanglesRequestRevision3
@@ -29,7 +27,6 @@ public actor FaceDetector: FaceDetecting {
                 }
             }
         } else {
-            // Fallback for older iOS versions
             request.usesCPUOnly = true
         }
         #endif
@@ -37,13 +34,15 @@ public actor FaceDetector: FaceDetecting {
         self.faceRequest = request
     }    
     
-    // MARK: - Detection
-    
     /// Detects the most prominent face in the provided pixel buffer.
     ///
-    /// - Parameter pixelBuffer: The video frame to analyze.
+    /// - Parameters:
+    ///   - pixelBuffer: The video frame to analyze.
+    ///   - orientation: The orientation of the image. Default is `.up`.
+    ///   - isMirrored: Whether the image is horizontally mirrored. Default is `false`.
     /// - Returns: The bounding box of the face in **normalized coordinates (0.0-1.0)** with Top-Left origin,
     ///            or `nil` if no face is found.
+    /// - Throws: An error if the underlying Vision request fails.
     public func detectFace(
         in pixelBuffer: SendablePixelBuffer, 
         orientation: CGImagePropertyOrientation = .up,
@@ -64,11 +63,11 @@ public actor FaceDetector: FaceDetecting {
         return convertVisionToTopLeft(visionRect, isMirrored: isMirrored)
     }
     
-    // MARK: - Helpers
-    
     /// Converts Vision's coordinate system (Bottom-Left origin) to standard Top-Left origin.
     ///
-    /// - Parameter rect: The normalized rect from Vision (y is distance from bottom).
+    /// - Parameters:
+    ///   - rect: The normalized rect from Vision (y is distance from bottom).
+    ///   - isMirrored: Whether to flip the x-axis to account for mirroring.
     /// - Returns: The normalized rect with y as distance from top.
     private func convertVisionToTopLeft(_ rect: CGRect, isMirrored: Bool) -> CGRect {
         let newY = 1.0 - rect.origin.y - rect.height

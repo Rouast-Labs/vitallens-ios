@@ -15,8 +15,8 @@ let passiveSource = PassiveSource()
 
 // 2. Pass it to the VitalLens client
 let client = VitalLens(
-    source: passiveSource,
-    strategy: APIInference(apiKey: "YOUR_KEY")
+    apiKey: "YOUR_API_KEY",
+    source: passiveSource
 )
 
 // 3. Start the inference stream
@@ -93,8 +93,7 @@ class MyCoreMLStrategy: LocalInferenceBase {
 }
 
 // Use it in the client
-let localClient = VitalLens(
-    source: CameraSource(),
+let client = VitalLens(
     strategy: MyCoreMLStrategy()
 )
 ```

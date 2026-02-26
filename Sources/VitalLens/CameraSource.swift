@@ -6,23 +6,21 @@ import CoreVideo
 #if canImport(UIKit)
 import UIKit
 
+/// A camera source that captures video frames using AVFoundation and provides an async stream of `InputFrame` objects.
 class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, CameraStreaming, @unchecked Sendable {
     
     private let queue = DispatchQueue(label: "com.vitallens.camera", qos: .userInitiated)
     
-    // Camera components
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
     private var previewLayer: AVCaptureVideoPreviewLayer?
     
-    // Simulator task
     private var simulatorTask: Task<Void, Never>?
     
-    /// The stream of video frames.
+    /// The asynchronous stream of captured video frames and metadata.
     public let stream: AsyncStream<InputFrame>
     private var continuation: AsyncStream<InputFrame>.Continuation?
 
-    /// Caching
     private let orientationLock = NSLock()
     private var _latestOrientation: UIDeviceOrientation = .portrait
     private var latestOrientation: UIDeviceOrientation {
@@ -51,17 +49,17 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
     }
     
-    /// Configures and starts the camera session.
+    /// Configures and starts the camera session. Requests camera permissions if not already granted.
+    ///
+    /// - Throws: `VitalLensError` if camera access is denied, restricted, or configuration fails.
     func start() async throws {
         
-        // Simulator setup
         #if targetEnvironment(simulator)
         print("[CameraSource] Running on Simulator. Starting synthetic stream.")
         startSimulatorStream()
         return
         #else
         
-        // Request permissions
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             break
@@ -91,15 +89,13 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         #endif
     }
     
-    /// Stops the camera session.
+    /// Stops the active camera session and terminates the frame stream.
     func stop() {
-        // Stop simulator
         #if targetEnvironment(simulator)
         simulatorTask?.cancel()
         simulatorTask = nil
         #endif
         
-        // Stop session
         queue.async { [weak self] in
             if self?.session.isRunning == true {
                 self?.session.stopRunning()
@@ -109,11 +105,12 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
     }
 
-    /// Attaches the camera preview to a UIView.
+    /// Attaches the live camera preview to the provided view.
+    ///
+    /// - Parameter view: The `UIView` to which the camera preview layer will be added.
     @MainActor
     func showPreview(on view: UIView) {
         #if targetEnvironment(simulator)
-        // Simulator placeholder
         view.backgroundColor = .darkGray
         #else
         if previewLayer == nil {
@@ -134,6 +131,9 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
     
     // MARK: - Session Configuration
     
+    /// Configures the capture session inputs, outputs, and pixel formats.
+    ///
+    /// - Throws: `VitalLensError` if a suitable camera or output cannot be added.
     private func configureSession() throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
@@ -185,6 +185,12 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
     }
     
+    /// Processes captured sample buffers and yields them to the async stream.
+    ///
+    /// - Parameters:
+    ///   - output: The capture output.
+    ///   - sampleBuffer: The captured video frame.
+    ///   - connection: The connection from which the video was received.
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         
@@ -241,7 +247,6 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         
         guard status == kCVReturnSuccess, let pixelBuffer = buffer else { return nil }
         
-        // Fill with gray placeholder
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         

@@ -9,6 +9,7 @@ import UIKit
 #endif
 
 /// A transformation closure that converts a raw CVPixelBuffer into an InferenceUnit.
+///
 /// - Parameters:
 ///   - buffer: The raw camera frame.
 ///   - roi: The normalized Region of Interest.
@@ -18,7 +19,7 @@ import UIKit
 /// - Returns: An InferenceUnit (either RGB data or a PixelBuffer).
 public typealias FrameTransformer = @Sendable (CVPixelBuffer, CGRect, ModelConfig, CGImagePropertyOrientation, Bool) throws -> InferenceUnit
 
-/// The engine that coordinates the camera, and inference loop.
+/// The core engine that coordinates the camera, ROI tracking, buffering, and the background inference loop.
 actor StreamProcessor {
 
     #if canImport(UIKit)
@@ -50,6 +51,15 @@ actor StreamProcessor {
 
     private let defaultImageProcessor: ImageProcessor
 
+    /// Initializes a new StreamProcessor.
+    ///
+    /// - Parameters:
+    ///   - strategy: The inference strategy used to estimate vital signs.
+    ///   - roiStrategy: The strategy used to track regions of interest (e.g., faces). Defaults to `FaceROIStrategy`.
+    ///   - camera: The camera source providing the video feed. Defaults to `CameraSource`.
+    ///   - transformer: An optional custom closure to preprocess frames before inference.
+    ///   - waveformMode: How waveforms are accumulated by the internal session engine. Defaults to `.incremental`.
+    ///   - debugMode: If true, exposes intermediate frame crops for debugging. Defaults to `false`.
     init(
         strategy: any InferenceStrategy,
         roiStrategy: (any ROIStrategy)? = nil,
@@ -69,11 +79,9 @@ actor StreamProcessor {
         self.debugMode = debugMode
         self.defaultImageProcessor = ImageProcessor(debugMode: debugMode)
         
-        // Set up the transformer
         if let transformer = transformer {
             self.transformer = transformer
         } else {
-            // Default transformer for API Inference (RGB Data)
             let processor = self.defaultImageProcessor
             self.transformer = { buffer, roi, config, orientation, isMirrored in
                 let data = try processor.process(
@@ -88,11 +96,13 @@ actor StreamProcessor {
         }
     }
     
-    /// Starts the processing loop.
-    /// - Parameter preview: A sendable wrapper containing the UIView (iOS Only).
+    /// Starts the camera stream and the background inference loop.
+    ///
+    /// - Parameter preview: A thread-safe wrapper containing a `UIView` to render the camera feed (iOS only).
+    /// - Returns: An asynchronous stream yielding `VitalLensResult` objects.
+    /// - Throws: `VitalLensError` if camera access is denied or model configuration fails.
     func start(preview: SendableUIPreview? = nil) async throws -> AsyncStream<VitalLensResult> {
         
-        // Resolve config and setup session
         self.config = try await strategy.resolveConfig()
         let bufConfig = try await strategy.bufferConfig
 
@@ -101,7 +111,6 @@ actor StreamProcessor {
         
         self.isPaused = false
         
-        // Setup signal stream for incoming frames
         let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
         self.frameSignal = signalContinuation
         
@@ -109,7 +118,6 @@ actor StreamProcessor {
             await self.runInferenceLoop(source: signalStream)
         }
         
-        // Start camera
         #if canImport(UIKit)
         if let wrapper = preview, let view = wrapper.view as? UIView {
             await MainActor.run { camera.showPreview(on: view) }
@@ -117,7 +125,6 @@ actor StreamProcessor {
         try await camera.start()
         #endif
         
-        // Return output stream
         let (outputStream, outputContinuation) = AsyncStream.makeStream(of: VitalLensResult.self)
         self.outputContinuation = outputContinuation
         
@@ -134,6 +141,7 @@ actor StreamProcessor {
         return outputStream
     }
     
+    /// Pauses the camera stream and prevents new frames from being processed.
     func pause() async {
         self.isPaused = true
         #if canImport(UIKit)
@@ -141,6 +149,9 @@ actor StreamProcessor {
         #endif
     }
     
+    /// Resumes the camera stream and frame processing.
+    ///
+    /// - Throws: `VitalLensError` if the camera fails to restart.
     func resume() async throws {
         self.isPaused = false
         #if canImport(UIKit)
@@ -148,12 +159,14 @@ actor StreamProcessor {
         #endif
     }
 
+    /// Resets the internal buffers and the inference session state. Use this when the subject changes abruptly.
     func reset() async {
         await bufferManager.reset()
         self.session?.reset()
         self.streamGeneration += 1
     }
     
+    /// Stops the camera stream, cancels background tasks, and cleans up all resources.
     func stop() {
         self.isPaused = true
         #if canImport(UIKit)
@@ -170,21 +183,26 @@ actor StreamProcessor {
         
         Task {
             await bufferManager.reset()
-            // TODO do we need to reset session?
         }
     }
 
+    /// Sets a callback to be triggered immediately when face presence changes.
+    ///
+    /// - Parameter callback: A closure that receives `true` when a face enters the frame, and `false` when lost.
     func setFaceStateCallback(_ callback: (@Sendable (Bool) -> Void)?) {
         self.onFaceStateChanged = callback
     }
     
-    /// Called on every frame arrival.
+    /// Processes an incoming video frame. Handles framerate targeting, ROI determination, and buffer insertion.
+    ///
+    /// - Parameter frame: The input video frame and its metadata.
     func processFrame(_ frame: InputFrame) async {
         guard let config = self.config, !isPaused else { return }
 
-        // Enforce the target FPS by dropping excess frames
+        // Reset tracking if the stream loops or time travels backwards
         if frame.timestamp < lastProcessedTime { lastProcessedTime = -1.0 }
 
+        // Throttle input to match the target FPS, allowing a 5ms jitter tolerance
         let minInterval = 1.0 / config.fpsTarget
         if frame.timestamp - lastProcessedTime < minInterval - 0.005 { 
             return 
@@ -198,14 +216,13 @@ actor StreamProcessor {
             roiMethod: config.roiMethod
         )
 
-        // Notify the UI instantly if the face state changes
         let isFacePresent = (target != nil)
         if isFacePresent != lastFacePresence {
             lastFacePresence = isFacePresent
             onFaceStateChanged?(isFacePresent)
         }
 
-        // If the face is lost, purge buffers to stop API calls and clear memory
+        // Drop accumulated temporal history immediately if the subject is lost
         guard target != nil else {
             await bufferManager.reset()
             return
@@ -220,7 +237,6 @@ actor StreamProcessor {
         
         for item in allBuffers {
             do {
-                // Transform frame using the updated closure signature
                 let unit = try transformer(cvBuffer, item.roi, config, frame.orientation, frame.isMirrored)
 
                 let context = InferenceContext(
@@ -232,11 +248,10 @@ actor StreamProcessor {
                 
                 await bufferManager.append(bufferId: item.id, unit: unit, context: context)
             } catch {
-                // print("[StreamProcessor] Transform failed for buffer \(item.id): \(error)")
+                // Silently ignore transformation errors for individual frames
             }
         }
         
-        // Signal inference loop
         frameSignal?.yield()
     }
 
@@ -244,7 +259,9 @@ actor StreamProcessor {
         return defaultImageProcessor.lastProcessedCGImage
     }
     
-    /// Background task that monitors buffers and triggers inference when ready.
+    /// The background task that continuously polls the buffer manager and triggers the inference strategy when ready.
+    ///
+    /// - Parameter source: An asynchronous stream that yields void signals whenever new frames are buffered.
     private func runInferenceLoop(source: AsyncStream<Void>) async {
         
         var consecutiveErrors = 0

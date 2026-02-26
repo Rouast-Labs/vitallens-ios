@@ -15,6 +15,12 @@ final class FileSource: @unchecked Sendable {
     let nominalFrameRate: Float
     let orientation: CGImagePropertyOrientation
     
+    /// Initializes a new FileSource with the loaded asset and track properties.
+    ///
+    /// - Parameters:
+    ///   - asset: The loaded video asset.
+    ///   - track: The primary video track.
+    ///   - orientation: The pre-calculated orientation of the video.
     private init(asset: AVAsset, track: AVAssetTrack, orientation: CGImagePropertyOrientation) async throws {
         self.asset = asset
         self.track = track
@@ -23,20 +29,26 @@ final class FileSource: @unchecked Sendable {
         self.nominalFrameRate = try await track.load(.nominalFrameRate)
     }
     
+    /// Creates a `FileSource` instance asynchronously from a local file URL.
+    ///
+    /// - Parameter url: The local file URL of the video.
+    /// - Returns: An initialized `FileSource` ready to stream frames.
+    /// - Throws: `VitalLensError` if the file cannot be read or contains no video track.
     static func from(url: URL) async throws -> FileSource {
         let asset = AVAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw VitalLensError.processingError("No video track found in file.")
         }
         
-        // Extract the transform and convert to orientation
         let transform = try await track.load(.preferredTransform)
         let orientation = FileSource.calculateOrientation(from: transform)
         
         return try await FileSource(asset: asset, track: track, orientation: orientation)
     }
     
-    /// Returns an AsyncStream of pixel buffers.
+    /// Creates an asynchronous stream of pixel buffers by reading the video file sequentially.
+    ///
+    /// - Returns: An `AsyncStream` yielding `SendablePixelBuffer` frames.
     func frames() -> AsyncStream<SendablePixelBuffer> {
         AsyncStream { continuation in
             Task.detached(priority: .userInitiated) {
@@ -95,15 +107,19 @@ final class FileSource: @unchecked Sendable {
 }
 
 extension FileSource {
+    /// Calculates the image orientation based on the video track's affine transform matrix.
+    ///
+    /// - Parameter transform: The affine transform of the video track.
+    /// - Returns: The corresponding `CGImagePropertyOrientation`.
     static func calculateOrientation(from transform: CGAffineTransform) -> CGImagePropertyOrientation {
         if transform.a == 0 && transform.b == 1.0 && transform.c == -1.0 && transform.d == 0 {
-            return .left // Portrait (Home button bottom)
+            return .left
         } else if transform.a == 0 && transform.b == -1.0 && transform.c == 1.0 && transform.d == 0 {
-            return .right // Portrait Upside Down
+            return .right
         } else if transform.a == -1.0 && transform.b == 0 && transform.c == 0 && transform.d == -1.0 {
-            return .down // Landscape Left
+            return .down
         } else {
-            return .up // Landscape Right (Default)
+            return .up
         }
     }
 }
