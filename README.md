@@ -13,7 +13,7 @@
 </div>
 
 <!-- mkdocs-start -->
-`vitallens-ios` is the official Swift client for the [**VitalLens API**](https://www.rouast.com/api/), a service for estimating physiological vital signs from facial video.
+`vitallens-ios` is the official Swift SDK for the [**VitalLens API**](https://www.rouast.com/api/), a service for estimating physiological vital signs from facial video.
 
 The library provides:
 

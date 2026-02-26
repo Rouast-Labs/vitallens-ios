@@ -1,18 +1,16 @@
-# Contributing to vitallens-ios
+# Contributing & Development Guide
 
-This guide serves as a reference for developing, testing, and building the `vitallens-ios` SDK.
+This guide covers how to set up, test, and build the `vitallens-ios` SDK.
 
-## 🛠 Development Setup
+## Prerequisites
 
-### Prerequisites
+- **Xcode 15.0+**
+- **iOS 16.0+** SDK
+- **macOS 13.0+** (For running core logic tests natively on Mac)
 
-- **Xcode 15.0+** (Required for Swift 5.9 features)
-- **iOS 15.0+** SDK
-- **macOS 13.0+** (For running Core logic tests on Mac)
+## Development Setup
 
-### Clone and Open
-
-The project is configured as a standalone Swift Package.
+The project is a standalone Swift Package. To get started:
 
 ```bash
 # Clone the repo
@@ -23,89 +21,57 @@ cd vitallens-ios
 xed .
 ```
 
----
+## Building
 
-## 🏗 Building
-
-You can build the library using the command line or Xcode.
-
-### Command Line
+You can build the library using Xcode (select the `vitallens-ios` scheme and hit **Cmd + B**) or via the command line:
 
 ```bash
 # Build all targets
 swift build
 
-# Build specific target (e.g. Core logic)
+# Build a specific target
 swift build --target VitalLensInference
 ```
 
-### Xcode
+## Testing
 
-Simply select the `vitallens-ios` scheme and hit **Cmd + B**.
+The test suite is split into logic tests and integration/UI tests. **Not all tests can run via the command line.**
 
----
+### Logic Tests (Command Line)
 
-## 🧪 Running Tests
-
-The test suite is split into logic tests (Core) and integration tests.
-
-### VitalLensInference Tests (Logic)
-
-These tests cover the signal processing, math, and buffering logic. They **do not** require a simulator and run natively on macOS.
+Tests for the core signal processing, math, and buffering (`VitalLensInferenceTests`) do not require a simulator and run natively on macOS.
 
 ```bash
-# Run all tests
 swift test
-
-# Run specific test suite (e.g. VitalsEstimateManager)
-swift test --filter VitalsEstimateManagerTests
 ```
 
-### UI & Integration Tests
+### UI & Camera Tests (Xcode Simulator)
 
-Tests involving `CameraSource` or `VitalLensUI` components must be run inside an iOS Simulator via Xcode.
+Tests involving `CameraSource` or `VitalLensUI` components **must** be run inside an iOS Simulator via Xcode.
 
 1. Select the **vitallens-ios** scheme.
 2. Select an iOS Simulator (e.g., iPhone 15 Pro).
 3. Press **Cmd + U**.
 
-> **Note:** `APIInference` uses a Mock URLProtocol, so it does not hit the real API. No API Key is required for standard testing.
+### API Integration Tests
 
----
+Some integration tests make real network calls to the VitalLens API. To run these successfully, you must provide your API key via environment variables in your Xcode scheme:
 
-## 🏛 Project Architecture
+1. Edit the `vitallens-ios` scheme in Xcode.
+2. Go to the **Test** action > **Arguments** tab.
+3. Under **Environment Variables**, add:
+    * `VITALLENS_API_KEY`: Your actual API key.
+    * `VITALLENS_BASE_URL`: (Optional) Overrides the default API URL if you are testing against a proxy or staging environment.
 
-This repository is split into three distinct modules to ensure separation of concerns and testability.
+## Release Process
 
-| Module | Description | Dependencies |
-| --- | --- | --- |
-| **`VitalLensInference`** | **The Brain.** Pure logic, math (`Accelerate`), data structures, and the `InferenceStrategy` protocol. Runs on macOS/iOS. | None |
-| **`VitalLens`** | **The Client.** Handles `AVCaptureSession`, Face Detection (Vision), and the `StreamProcessor` actor. Wires the Strategy to the Camera. | `VitalLensInference` |
-| **`VitalLensUI`** | **The Views.** SwiftUI components (`ScanView`, `MonitorView`) and Charts. | `VitalLens` |
+We rely on Git tags for Swift Package Manager versioning. To cut a new release:
 
-### Key Design Patterns
-
-- **InferenceStrategy:** The `StreamProcessor` in `VitalLens` does not know about the API. It talks to an `InferenceStrategy`. This allows us to swap the API for a local CoreML model later.
-- **Everything is an Array:** The `VitalLensResult` stores all data (heart rate, etc.) as `Waveform` arrays. We use `VitalRegistry` to decide how to derive scalar values (averaging vs FFT) from these arrays.
-
----
-
-## 📦 Release Process
-
-1. **Update Version:**
-
-Update the version number in any documentation or `README.md` if hardcoded.
-
+1. **Update Version:** Update the version number in any documentation (like `README.md`) if it is hardcoded.
 2. **Commit & Tag:**
-
-SPM relies on Git tags for versioning.
-
-```bash
-git commit -am "Release 1.0.0"
-git tag 1.0.0
-git push origin main --tags
-```
-
-3. **Verify:**
-
-Check that the tag is visible on GitHub. Clients using `from: "1.0.0"` will automatically pick up the new version.
+    ```bash
+    git commit -am "Release 1.0.0"
+    git tag 1.0.0
+    git push origin main --tags
+    ```
+3. **Verify:** Ensure the tag is visible on GitHub. Clients using `from: "1.0.0"` in their `Package.swift` will automatically pick up the new version.
