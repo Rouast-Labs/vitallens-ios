@@ -1,27 +1,30 @@
-# SwiftUI Views (`VitalLensUI`)
+# SwiftUI Views
 
-`vitallens-ios` includes a set of pre-built SwiftUI views designed to get you up and running immediately. These components handle camera permissions, user guidance, and real-time visualization automatically.
+The `VitalLensUI` module provides pre-built SwiftUI components to get you up and running quickly. These views handle camera permissions, state management, user guidance, and data visualization.
 
 ## Setup
 
-Ensure you import the UI module:
+Import the UI module in your SwiftUI files:
 
 ```swift
 import VitalLensUI
 ```
 
-## `VitalLensScanView`
+---
 
-A guided wizard that handles the entire measurement flow. It instructs the user to position their face, checks lighting conditions, and performs a fixed-duration measurement (default: 30 seconds).
+## 1. VitalLensScanView
 
-**Best for:** Health check-ins, onboarding flows, spot checks.
+A guided flow that handles a full measurement cycle. It instructs the user to position their face, checks lighting conditions, performs a ~30-second scan, and displays the final results.
 
 ```swift
 VitalLensScanView(
     apiKey: "YOUR_KEY",
-    method: "vitallens"
+    method: "vitallens",
+    mode: .eco
 ) { result in
-    print("Scan complete!")
+    if let hr = result.heartRate?.value {
+        print("Final Heart Rate: \(hr) bpm")
+    }
 }
 ```
 
@@ -29,23 +32,22 @@ VitalLensScanView(
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `apiKey` | `String` | Your VitalLens API Key. |
-| `proxyURL` | `URL?` | URL to your backend proxy (Alternative to `apiKey`). |
-| `method` | `String` | Model version. Use `"vitallens-2.0"` for HRV support. |
+| `apiKey` | `String?` | Your API Key. Required if `proxyURL` is not set. |
+| `proxyURL` | `URL?` | URL to your backend proxy. |
+| `method` | `String` | Model version (e.g., `"vitallens"`, `"vitallens-2.0"`). Default is `"vitallens"`. |
+| `mode` | `VitalLensMode` | `.eco` (15 FPS, default) or `.standard` (30 FPS). |
 | `onComplete` | `(VitalLensResult) -> Void` | Callback triggered when the scan finishes successfully. |
 
 ---
 
-## `VitalLensMonitorView`
+## 2. VitalLensMonitorView
 
-A dashboard widget that visualizes live signals continuously. It renders a real-time PPG chart and displays numeric values as they update.
-
-**Best for:** Wellness dashboards, meditation apps, fitness tracking.
+A dashboard widget that visualizes live signals continuously. It renders real-time PPG and respiratory charts, displaying numeric values as they update.
 
 ```swift
 VitalLensMonitorView(
     apiKey: "YOUR_KEY",
-    showWaveforms: true // Set false to hide the graph
+    showWaveforms: true
 )
 ```
 
@@ -53,6 +55,31 @@ VitalLensMonitorView(
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `apiKey` | `String` | Your VitalLens API Key. |
+| `apiKey` | `String?` | Your API Key. Required if `proxyURL` is not set. |
 | `proxyURL` | `URL?` | URL to your backend proxy. |
-| `showWaveforms` | `Bool` | Whether to render the real-time PPG chart (default: `true`). |
+| `method` | `String` | Model version. Default is `"vitallens"`. |
+| `showWaveforms` | `Bool` | Whether to render the real-time waveform charts. Default is `true`. |
+| `initialMode` | `VitalLensMode` | Initial FPS mode `.eco` or `.standard`. Default is `.eco`. |
+| `bufferOffset` | `TimeInterval` | Delay in seconds for smooth chart rendering. Default is `0.15`. |
+| `windowSize` | `TimeInterval` | Duration of data to show in the waveform charts. Default is `8.0`. |
+| `minDisplayDuration` | `TimeInterval` | Minimum data required before displaying values. Default is `6.0`. |
+
+---
+
+## 3. VitalLensFileView
+
+A complete UI for selecting and analyzing pre-recorded videos from the user's Photo Library or Files app. It handles file selection, extraction, processing, and result visualization.
+
+```swift
+VitalLensFileView(
+    apiKey: "YOUR_KEY"
+)
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `apiKey` | `String?` | Your API Key. Required if `proxyURL` is not set. |
+| `proxyURL` | `URL?` | URL to your backend proxy. |
+| `method` | `String` | Model version. Default is `"vitallens"`. |
