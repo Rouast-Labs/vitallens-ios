@@ -94,11 +94,11 @@ public extension SessionResult {
 
 // MARK: - Sendable Conformances for UniFFI Types
 
-extension VitalLensCore.Session: @unchecked Sendable {}
-extension VitalLensCore.BufferPlanner: @unchecked Sendable {}
-extension VitalLensCore.InferenceCommand: @unchecked Sendable {}
-extension VitalLensCore.InferenceMode: @unchecked Sendable {}
-extension VitalLensCore.Rect: @unchecked Sendable {}
-extension VitalLensCore.SessionConfig: @unchecked Sendable {}
-extension VitalLensCore.SessionInput: @unchecked Sendable {}
-extension VitalLensCore.BufferConfig: @unchecked Sendable {}
+extension VitalLensCore.Session: @retroactive @unchecked Sendable {}
+extension VitalLensCore.BufferPlanner: @retroactive @unchecked Sendable {}
+extension VitalLensCore.InferenceCommand: @retroactive @unchecked Sendable {}
+extension VitalLensCore.InferenceMode: @retroactive @unchecked Sendable {}
+extension VitalLensCore.Rect: @retroactive @unchecked Sendable {}
+extension VitalLensCore.SessionConfig: @retroactive @unchecked Sendable {}
+extension VitalLensCore.SessionInput: @retroactive @unchecked Sendable {}
+extension VitalLensCore.BufferConfig: @retroactive @unchecked Sendable {}

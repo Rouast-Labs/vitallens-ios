@@ -18,38 +18,26 @@ let package = Package(
             name: "VitalLensInference",
             targets: ["VitalLensInference"]
         ),
-        .library(
-            name: "VitalLensCore",
-            targets: ["VitalLensCore"]
-        )
+    ],
+     dependencies: [
+        .package(url: "https://github.com/Rouast-Labs/vitallens-core.git", exact: "0.1.0")
     ],
     targets: [
-        // The Precompiled Rust Binary
-        .binaryTarget(
-            name: "VitalLensCoreFFI", 
-            path: "Frameworks/VitalLensCoreFFI.xcframework"
-        ),
-
-        // The Swift Wrapper for the Rust Core
-        .target(
-            name: "VitalLensCore",
-            dependencies: ["VitalLensCoreFFI"],
-            path: "Sources/VitalLensCore",
-            swiftSettings: [
-                .swiftLanguageMode(.v5) 
-            ]
-        ),
-
         // Inference: Pure Logic (Networking, State). No UI dependencies.
         .target(
             name: "VitalLensInference",
-            dependencies: ["VitalLensCore"]
+            dependencies: [
+                .product(name: "VitalLensCore", package: "vitallens-core")
+            ]
         ),
         
         // Lib: The Pipeline (Camera, Face Detection). Depends on Core.
         .target(
             name: "VitalLens",
-            dependencies: ["VitalLensInference", "VitalLensCore"]
+            dependencies: [
+                "VitalLensInference", 
+                .product(name: "VitalLensCore", package: "vitallens-core")
+            ]
         ),
         
         // UI: SwiftUI Components. Depends on Lib.
@@ -64,13 +52,20 @@ let package = Package(
         // Inference Logic Tests
         .testTarget(
             name: "VitalLensInferenceTests",
-            dependencies: ["VitalLensInference", "VitalLensCore"]
+            dependencies: [
+                "VitalLensInference", 
+                .product(name: "VitalLensCore", package: "vitallens-core")
+            ]
         ),
 
         // Integration Tests (Runs on iOS Simulator)
         .testTarget(
             name: "VitalLensTests",
-            dependencies: ["VitalLens", "VitalLensInference", "VitalLensCore"],
+            dependencies: [
+                "VitalLens", 
+                "VitalLensInference", 
+                .product(name: "VitalLensCore", package: "vitallens-core")
+            ],
             resources: [
                 .copy("Resources/sample_video_2.mp4")
             ]
