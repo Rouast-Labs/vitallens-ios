@@ -75,13 +75,16 @@ Some integration tests make real network calls to the VitalLens API. To run thes
 
 ## Release Process
 
-We rely on Git tags for Swift Package Manager versioning. To cut a new release:
+We rely on Git tags for Swift Package Manager versioning. A GitHub Action is configured to automatically create a GitHub Release and generate a changelog whenever a new semantic version tag is pushed.
 
-1. **Update Version:** Update the version number in any documentation (like `README.md`) if it is hardcoded.
-2. **Commit & Tag:**
+To cut a new release:
+
+1. **Tag the release:**
     ```bash
-    git commit -am "Release 1.0.0"
-    git tag 1.0.0
-    git push origin main --tags
+    git tag 0.1.0
     ```
-3. **Verify:** Ensure the tag is visible on GitHub. Clients using `from: "1.0.0"` in their `Package.swift` will automatically pick up the new version.
+
+2. **Push the tag:**
+    ```bash
+    git push origin 0.1.0
+    ```
