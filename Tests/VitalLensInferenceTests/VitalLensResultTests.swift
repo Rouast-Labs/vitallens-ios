@@ -3,10 +3,9 @@ import XCTest
 
 final class VitalLensResultTests: XCTestCase {
     
-    // MARK: - Standard Decoding
+    // MARK: - Decoding
     
     func testDynamicDecoding() throws {
-        // Simulates a V3 API response
         let json = """
         {
             "face": {
@@ -38,30 +37,24 @@ final class VitalLensResultTests: XCTestCase {
         
         let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
         
-        // 1. Verify Standard Fields
         XCTAssertEqual(result.fps, 30.0)
         XCTAssertEqual(result.message, "OK")
         XCTAssertEqual(result.modelUsed, "vitallens_v3_hybrid")
         XCTAssertEqual(result.sampleCount, 3)
         XCTAssertEqual(result.face.coordinates?.count, 1)
         
-        // 2. Verify Known Accessor (PPG)
         XCTAssertNotNil(result.ppg)
         XCTAssertEqual(result.ppg?.data.count, 3)
         
         let ppgFirst = Double(result.ppg?.data.first ?? 0)
         XCTAssertEqual(ppgFirst, 0.5, accuracy: 0.001)
         
-        // 3. Verify Dynamic Dictionary Access (SBP)
         XCTAssertNotNil(result.vitals["sbp"])
         XCTAssertEqual(result.vitals["sbp"]?.unit, "mmHg")
         XCTAssertEqual(result.vitals["sbp"]?.value ?? 0, 121.0, accuracy: 0.1)
     }
     
-    // MARK: - State Decoding (New & Critical)
-    
     func testStateDecoding_Polymorphic() throws {
-        // Case 1: API returns State as Base64 String (Standard Stream)
         let jsonStringState = """
         {
             "face": {}, "signals": {}, "time": [],
@@ -72,8 +65,6 @@ final class VitalLensResultTests: XCTestCase {
         let result1 = try JSONDecoder().decode(VitalLensResult.self, from: jsonStringState)
         XCTAssertEqual(result1.state?.data, "SGVsbG8=")
         
-        // Case 2: API returns State as Float Array (File/Debug Mode)
-        // [0.0, 0.0] -> 8 bytes of zeros -> Base64: "AAAAAAAAAAA="
         let jsonArrayState = """
         {
             "face": {}, "signals": {}, "time": [],
@@ -101,43 +92,17 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertNil(result.ppg)
         XCTAssertNil(result.heartRate)
     }
-    
-    func testResultConvenienceAccessors() {
-        let result = VitalLensResult(
-            face: FaceData(coordinates: nil, confidence: nil, note: nil),
-            vitals: [
-                "heart_rate": Vital(value: 72.0, confidence: 1.0, unit: "bpm"),
-                "hrv_sdnn": Vital(value: 50.0, confidence: 0.8, unit: "ms"),
-                "sbp": Vital(value: 120.0, confidence: 0.9, unit: "mmHg")
-            ],
-            waveforms: [:],
-            time: [1.0]
-        )
-        
-        XCTAssertNotNil(result.heartRate)
-        XCTAssertEqual(result.heartRate?.value, 72.0)
-        
-        XCTAssertNotNil(result.hrvSdnn)
-        XCTAssertEqual(result.hrvSdnn?.value, 50.0)
-        
-        XCTAssertNotNil(result.sbp)
-        XCTAssertEqual(result.sbp?.value, 120.0)
-        
-        XCTAssertNil(result.respiratoryRate)
-    }
 
     func testVitalCustomDecoding_Defaults() throws {
-        // Verifies that the custom Vital decoder handles missing fields gracefully
         let json = "{\"value\": 75.0}".data(using: .utf8)!
         let vital = try JSONDecoder().decode(Vital.self, from: json)
         
         XCTAssertEqual(vital.value, 75.0)
-        XCTAssertEqual(vital.confidence, 0.0, "Missing confidence should default to 0")
-        XCTAssertEqual(vital.unit, "", "Missing unit should default to empty string")
+        XCTAssertEqual(vital.confidence, 0.0)
+        XCTAssertEqual(vital.unit, "")
     }
 
     func testWaveformDecoding() throws {
-        // Verifies standard array-based decoding for the Waveform struct
         let json = """
         {
             "data": [1.0, 2.0],
@@ -149,8 +114,6 @@ final class VitalLensResultTests: XCTestCase {
         XCTAssertEqual(wave.data.count, 2)
         XCTAssertEqual(wave.unit, "unitless")
     }
-
-    // MARK: - Payload Routing
 
     func testPayloadRouting() throws {
         let json = """
@@ -172,12 +135,53 @@ final class VitalLensResultTests: XCTestCase {
         
         let result = try JSONDecoder().decode(VitalLensResult.self, from: json)
         
-        // stress_index (object) -> result.vitals
         XCTAssertNotNil(result.vitals["stress_index"])
         XCTAssertEqual(result.vitals["stress_index"]?.value, 45.0)
         
-        // resp_signal (array) -> result.waveforms
         XCTAssertNotNil(result.waveforms["resp_signal"])
         XCTAssertEqual(result.waveforms["resp_signal"]?.data.count, 2)
+    }
+
+    // MARK: - Convenience Accessors
+
+    func testResultConvenienceAccessors() {
+        let result = VitalLensResult(
+            face: FaceData(coordinates: nil, confidence: nil, note: nil),
+            vitals: [
+                "heart_rate": Vital(value: 72.0, confidence: 1.0, unit: "bpm"),
+                "hrv_sdnn": Vital(value: 50.0, confidence: 0.8, unit: "ms"),
+                "sbp": Vital(value: 120.0, confidence: 0.9, unit: "mmHg")
+            ],
+            waveforms: [:],
+            time: [1.0]
+        )
+        
+        XCTAssertNotNil(result.heartRate)
+        XCTAssertEqual(result.heartRate?.value, 72.0)
+        XCTAssertNotNil(result.hrvSdnn)
+        XCTAssertEqual(result.hrvSdnn?.value, 50.0)
+        XCTAssertNotNil(result.sbp)
+        XCTAssertEqual(result.sbp?.value, 120.0)
+        XCTAssertNil(result.respiratoryRate)
+    }
+
+    // MARK: - Encoding
+
+    func testEncodingRoundTrip() throws {
+        let original = VitalLensResult(
+            face: FaceData(coordinates: [[0,0,1,1]], confidence: [1.0], note: "test"),
+            vitals: ["heart_rate": Vital(value: 70, confidence: 1, unit: "bpm")],
+            waveforms: ["ppg_waveform": Waveform(data: [0.1], confidence: [1.0], unit: nil, note: nil)],
+            time: [1.0]
+        )
+        
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+        
+        let decoded = try JSONDecoder().decode(VitalLensResult.self, from: data)
+        
+        XCTAssertEqual(decoded.heartRate?.value, 70)
+        XCTAssertEqual(decoded.ppg?.data.first, 0.1)
+        XCTAssertEqual(decoded.face.note, "test")
     }
 }
