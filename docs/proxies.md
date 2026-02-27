@@ -30,21 +30,16 @@ For all requests, your proxy must:
 ### Endpoints to Handle
 
 1. GET `/resolve-model`
-
-- **Purpose:** Determines the optimal model config for your plan.
-- **Query Params:** Forward any query parameters (e.g., `?model=vitallens-2.0`).
-
+    - **Purpose:** Determines the optimal model config for your plan.
+    - **Query Params:** Forward any query parameters (e.g., `?model=vitallens-2.0`).
 2. POST `/stream`
-
-- **Purpose:** Processes live camera frames in real-time.
-- **Headers to Forward:** `Content-Type: application/octet-stream`, `X-Origin`, `X-Encoding`, `X-Model`, `X-State`.
-- **Body:** Forward the raw binary body exactly as received (the iOS client compresses it using gzip).
-
+    - **Purpose:** Processes live camera frames in real-time.
+    - **Headers to Forward:** `Content-Type: application/octet-stream`, `X-Origin`, `X-Encoding`, `X-Model`, `X-State`.
+    - **Body:** Forward the raw binary body exactly as received (the iOS client compresses it using gzip).
 3. POST `/file`
-
-- **Purpose:** Processes pre-recorded video files.
-- **Headers to Forward:** `Content-Type: application/json`.
-- **Body:** Forward the JSON payload exactly as received (contains Base64 encoded video and state).
+    - **Purpose:** Processes pre-recorded video files.
+    - **Headers to Forward:** `Content-Type: application/json`.
+    - **Body:** Forward the JSON payload exactly as received (contains Base64 encoded video and state).
 
 ### Example Reference
 
