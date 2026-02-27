@@ -3,11 +3,18 @@ import VitalLensInference
 
 #if canImport(UIKit)
 
+/// A collection of statistical metrics regarding a completed vital signs scan.
 public struct ScanStats {
     public let duration: Double
     public let sampleCount: Int
     public let avgFaceConf: Double
     
+    /// Initializes a new `ScanStats` instance.
+    ///
+    /// - Parameters:
+    ///   - duration: The duration of the scan in seconds.
+    ///   - sampleCount: The number of frames processed.
+    ///   - avgFaceConf: The average face detection confidence.
     public init(duration: Double, sampleCount: Int, avgFaceConf: Double) {
         self.duration = duration
         self.sampleCount = sampleCount
@@ -15,6 +22,7 @@ public struct ScanStats {
     }
 }
 
+/// A UI-ready representation of an estimated vital sign, containing pre-formatted strings and visual metadata.
 public struct ResolvedVital: Identifiable {
     public let id: String
     public let title: String
@@ -24,6 +32,16 @@ public struct ResolvedVital: Identifiable {
     public let confidence: Double?
     public let emoji: String
     
+    /// Initializes a new `ResolvedVital`.
+    ///
+    /// - Parameters:
+    ///   - id: The unique identifier.
+    ///   - title: The display title.
+    ///   - value: The estimated value.
+    ///   - unit: The unit of measurement.
+    ///   - format: The formatting string.
+    ///   - confidence: The confidence score.
+    ///   - emoji: The representative emoji.
     public init(id: String, title: String, value: Double?, unit: String, format: String, confidence: Double?, emoji: String) {
         self.id = id
         self.title = title
@@ -35,6 +53,8 @@ public struct ResolvedVital: Identifiable {
     }
 }
 
+/// A SwiftUI view that displays the final aggregated results of a vital signs scan or file processing operation.
+/// It presents primary and secondary vitals, along with optional time-series waveforms.
 public struct VitalLensResultView: View {
     let title: String
     let primaryVitals: [ResolvedVital]
@@ -46,6 +66,16 @@ public struct VitalLensResultView: View {
     
     @State private var showDetails: Bool = false
     
+    /// Initializes a new Result View.
+    ///
+    /// - Parameters:
+    ///   - title: The title displayed at the top of the view.
+    ///   - primaryVitals: An array of prominently displayed vital signs (e.g., Heart Rate, Respiration).
+    ///   - secondaryVitals: An array of secondary vital signs (e.g., HRV metrics).
+    ///   - ppgWaveform: An optional array of PPG waveform data points.
+    ///   - respWaveform: An optional array of respiratory waveform data points.
+    ///   - stats: Statistical information about the completed scan.
+    ///   - onDone: A closure executed when the user dismisses the result view.
     public init(
         title: String,
         primaryVitals: [ResolvedVital],
@@ -152,6 +182,7 @@ public struct VitalLensResultView: View {
     }
 }
 
+/// A reusable UI component that displays a single formatted vital sign in the result view.
 struct ScanResultTile: View {
     let vital: ResolvedVital
     let showDetails: Bool

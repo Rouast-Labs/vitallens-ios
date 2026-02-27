@@ -7,11 +7,15 @@ import VitalLensInference
 
 #if canImport(UIKit)
 
+/// Represents the current state of the file processing workflow.
 public enum FileState {
-    case idle, processing, completed, error
+    case idle
+    case processing
+    case completed
+    case error
 }
 
-// Helper to safely load videos from PhotosPicker
+/// A helper struct to conform video file URLs to `Transferable` for use with `PhotosPicker`.
 struct VideoFile: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
@@ -28,6 +32,8 @@ struct VideoFile: Transferable {
     }
 }
 
+/// A SwiftUI view that allows users to select a video file from their Photo Library or Files app,
+/// processes it using the VitalLens API, and displays the resulting vital signs and waveforms.
 public struct VitalLensFileView: View {
     private let apiKey: String?
     private let proxyURL: URL?
@@ -48,6 +54,12 @@ public struct VitalLensFileView: View {
 
     @State private var scanStats = ScanStats(duration: 0, sampleCount: 0, avgFaceConf: 0)
 
+    /// Initializes a new File View for batch processing video files.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Your VitalLens API Key. Defaults to `nil`.
+    ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
+    ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
     public init(apiKey: String? = nil, proxyURL: URL? = nil, method: String = "vitallens") {
         self.apiKey = apiKey
         self.proxyURL = proxyURL
@@ -182,15 +194,18 @@ public struct VitalLensFileView: View {
         .padding(.horizontal, 24)
     }
     
+    /// Processes the selected video file, managing security scopes and file cleanup.
+    ///
+    /// - Parameters:
+    ///   - url: The local URL of the video file.
+    ///   - isSecurityScoped: Whether the URL requires security-scoped access (e.g., from the Files app).
     private func process(url: URL, isSecurityScoped: Bool) {
         state = .processing
         Task {
-            // Clean up resources after the async task finishes
             defer { 
                 if isSecurityScoped { 
                     url.stopAccessingSecurityScopedResource() 
                 } else {
-                    // For Photos, we made a temp copy, so we clean it up here
                     try? FileManager.default.removeItem(at: url)
                 }
             }
@@ -213,6 +228,9 @@ public struct VitalLensFileView: View {
         }
     }
     
+    /// Parses the raw `VitalLensResult` to extract and format primary and secondary vital signs for the UI.
+    ///
+    /// - Parameter res: The raw result returned by the inference engine.
     private func parseVitals(from res: VitalLensResult) {
         let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
         let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")

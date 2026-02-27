@@ -4,12 +4,16 @@ import VitalLensCore
 
 #if canImport(UIKit)
 
-// MARK: - FFI Metadata Cache
+/// A thread-safe cache for vital sign metadata retrieved from the Core engine.
 public struct VitalMetadataCache {
     nonisolated(unsafe) private static var cache: [String: VitalDisplayMeta] = [:]
     nonisolated(unsafe) private static var queriedKeys: Set<String> = []
     private static let lock = NSLock()
     
+    /// Retrieves the display metadata for a specific vital sign identifier.
+    ///
+    /// - Parameter id: The unique string identifier of the vital sign.
+    /// - Returns: The cached `VitalDisplayMeta` if available, or `nil` if it doesn't exist.
     public static func getMeta(for id: String) -> VitalDisplayMeta? {
         lock.lock()
         defer { lock.unlock() }
@@ -24,7 +28,7 @@ public struct VitalMetadataCache {
         return cache[id]
     }
     
-    /// Dynamically fetches the brand accent color based on Respiratory Rate, falling back to default blue.
+    /// Dynamically fetches the brand accent color, falling back to default blue.
     public static var brandBlue: Color {
         if let meta = getMeta(for: "respiratory_rate"), let c = Color(hex: meta.color) {
             return c
@@ -33,8 +37,10 @@ public struct VitalMetadataCache {
     }
 }
 
-// MARK: - Color Hex Extension
 public extension Color {
+    /// Initializes a Color from a hexadecimal string representation.
+    ///
+    /// - Parameter hex: A hex string (e.g., "#FF0000" or "FF0000").
     init?(hex: String) {
         var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
@@ -48,7 +54,8 @@ public extension Color {
     }
 }
 
-// MARK: - DRY Reusable Start View
+/// A reusable SwiftUI view presented before a scanning or monitoring session begins.
+/// It displays instructional guides, timing hints, and an optional mode toggle.
 public struct VitalLensStartView: View {
     public let title: String
     public let subtitle: String
@@ -61,6 +68,18 @@ public struct VitalLensStartView: View {
         
     public let onStart: () -> Void
     
+    /// Initializes the Start View.
+    ///
+    /// - Parameters:
+    ///   - title: The main title displayed at the top.
+    ///   - subtitle: The prominently displayed descriptive text.
+    ///   - timingHintLabel: A hint indicating the expected duration of the session.
+    ///   - startButtonLabel: The text displayed on the primary action button.
+    ///   - currentMode: A binding to the selected performance mode.
+    ///   - instruction1: The first visual instruction block (icon name and text).
+    ///   - instruction2: The second visual instruction block (icon name and text).
+    ///   - showModeToggle: Whether to display the Eco/Standard mode toggle switch. Defaults to `true`.
+    ///   - onStart: The closure to execute when the user taps the start button.
     public init(
         title: String,
         subtitle: String,
@@ -192,7 +211,7 @@ public struct VitalLensStartView: View {
     }
 }
 
-// MARK: - Guide Item
+/// A visual component displaying an icon and an instructional text snippet for the pre-scan guide.
 public struct GuideItem: View {
     public let icon: String
     public let text: String

@@ -5,6 +5,7 @@ import VitalLensCore
 
 #if canImport(UIKit)
 
+/// Defines the performance and accuracy profile for the inference engine.
 public enum VitalLensMode {
     case standard
     case eco
@@ -17,6 +18,7 @@ public enum VitalLensMode {
     }
 }
 
+/// Represents the current operational state of the live monitor.
 enum MonitorState {
     case idle
     case searching
@@ -25,6 +27,8 @@ enum MonitorState {
     case issue
 }
 
+/// A SwiftUI view that provides a real-time, continuous monitoring interface for vital signs.
+/// It integrates a live camera feed and dynamically displays physiological estimates and waveforms.
 public struct VitalLensMonitorView: View {
     
     private let apiKey: String?
@@ -100,6 +104,17 @@ public struct VitalLensMonitorView: View {
     private let hrvConfThreshold = 0.7
     private let faceConfThreshold = 0.5
     
+    /// Initializes a new Monitor View for real-time vital sign estimation.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Your VitalLens API Key. Defaults to `nil`.
+    ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
+    ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
+    ///   - showWaveforms: Whether to render real-time waveforms on the UI. Defaults to `true`.
+    ///   - initialMode: The starting performance mode. Defaults to `.eco`.
+    ///   - bufferOffset: The delay in seconds applied to the waveform to ensure smooth rendering. Defaults to `0.15`.
+    ///   - windowSize: The duration of the history to retain for waveform rendering. Defaults to `8.0`.
+    ///   - minDisplayDuration: The minimum data accumulation time required before displaying results. Defaults to `6.0`.
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
@@ -333,8 +348,6 @@ public struct VitalLensMonitorView: View {
         )
     }
     
-    // MARK: - Core Operations
-    
     private func startProcessing() {
         isProcessing = true
         monitorState = .searching
@@ -517,7 +530,6 @@ public struct VitalLensMonitorView: View {
         while !Task.isCancelled {
             let now = CACurrentMediaTime()
             
-            // PPG
             var newPpgVals: [Double] = []
             var newPpgConfs: [Double] = []
             while let first = ppgQueue.first, now >= first.displayTime {
@@ -534,7 +546,6 @@ public struct VitalLensMonitorView: View {
                 }
             }
 
-            // Respiration logic (Add this)
             var newRespVals: [Double] = []
             var newRespConfs: [Double] = []
             while let first = respQueue.first, now >= first.displayTime {
@@ -555,8 +566,6 @@ public struct VitalLensMonitorView: View {
         }
     }
 }
-
-// MARK: - Subcomponents
 
 struct StatusBadge: View {
     let state: MonitorState
@@ -623,48 +632,6 @@ struct PulseEffect: ViewModifier {
     }
 }
 
-// MARK: - Dynamic UI Tiles (Evaluates Cache on Init Only)
-
-struct WaveformContainer: View {
-    let history: [Double]
-    let isReady: Bool
-    
-    let title: String
-    let chartColor: Color
-    
-    init(vitalId: String, history: [Double], isReady: Bool) {
-        self.history = history
-        self.isReady = isReady
-        
-        let meta = VitalMetadataCache.getMeta(for: vitalId)
-        self.title = meta?.displayName ?? vitalId
-        self.chartColor = meta.flatMap { Color(hex: $0.color) } ?? .red
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-            
-            ZStack {
-                if isReady && !history.isEmpty {
-                    WaveformView(samples: history, color: chartColor)
-                        .padding(.horizontal, 6)
-                        .padding(.bottom, 6)
-                } else {
-                    ProgressView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12)
-    }
-}
-
 struct GroupedMetricsTile: View {
     let primaryValue: Double?
     let isPrimaryReady: Bool
@@ -728,9 +695,7 @@ struct GroupedMetricsTile: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             
-            // 1. Primary Metric Column
             VStack(alignment: .leading, spacing: 2) {
-                // Top line: NAME UNIT
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(pTitle)
                         .font(.system(size: 10, weight: .medium))
@@ -739,11 +704,10 @@ struct GroupedMetricsTile: View {
                     if !pUnit.isEmpty {
                         Text(pUnit)
                             .font(.system(size: 8, weight: .regular))
-                            .foregroundStyle(.secondary.opacity(0.6)) // Less pronounced
+                            .foregroundStyle(.secondary.opacity(0.6))  
                     }
                 }
                 
-                // Bottom line: VALUE
                 if isPrimaryReady, let val = primaryValue {
                     Text(String(format: pFormat, val))
                         .font(.system(size: 32, weight: .bold, design: .rounded)) 
@@ -760,13 +724,11 @@ struct GroupedMetricsTile: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 12)
             
-            // 2. Secondary Metrics Column
             if hasSec1 || hasSec2 {
                 VStack(alignment: .leading, spacing: 8) { 
                     
                     if hasSec1 {
                         VStack(alignment: .leading, spacing: 2) {
-                            // Top line: NAME UNIT
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
                                 Text(s1Title)
                                     .font(.system(size: 9, weight: .medium))
@@ -779,7 +741,6 @@ struct GroupedMetricsTile: View {
                                 }
                             }
                             
-                            // Bottom line: VALUE
                             if isSecondary1Ready, let val = secondary1Value {
                                 Text(String(format: s1Format, val))
                                     .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -797,7 +758,6 @@ struct GroupedMetricsTile: View {
                     
                     if hasSec2 {
                         VStack(alignment: .leading, spacing: 2) {
-                            // Top line: NAME UNIT
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
                                 Text(s2Title)
                                     .font(.system(size: 9, weight: .medium))
@@ -810,7 +770,6 @@ struct GroupedMetricsTile: View {
                                 }
                             }
                             
-                            // Bottom line: VALUE
                             if isSecondary2Ready, let val = secondary2Value {
                                 Text(String(format: s2Format, val))
                                     .font(.system(size: 14, weight: .bold, design: .rounded))

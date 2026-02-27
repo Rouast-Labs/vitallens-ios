@@ -4,10 +4,19 @@ import VitalLensInference
 
 #if canImport(UIKit)
 
+/// Represents the various operational states of the scanning process.
 public enum ScanState {
-    case idle, searching, warmingUp, tracking, recovering, issue, completed
+    case idle
+    case searching
+    case warmingUp
+    case tracking
+    case recovering
+    case issue
+    case completed
 }
 
+/// A SwiftUI view that provides a guided, fixed-duration scanning experience.
+/// It captures video, evaluates face placement and lighting, and returns a single aggregated result upon completion.
 public struct VitalLensScanView: View {
     
     private let apiKey: String?
@@ -45,7 +54,14 @@ public struct VitalLensScanView: View {
     private let vitalConfThreshold = 0.8
     private let hrvConfThreshold = 0.7
     
-    /// Initializes the Scan View.
+    /// Initializes a new Scan View.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Your VitalLens API Key. Defaults to `nil`.
+    ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
+    ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
+    ///   - mode: The performance mode to use during the scan. Defaults to `.eco`.
+    ///   - onComplete: A closure called when the scan successfully finishes, providing the aggregated result.
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
@@ -160,8 +176,9 @@ public struct VitalLensScanView: View {
         }
         .padding(.horizontal)
         .padding(.top, 8)
-    }     
+    }    
     
+    /// Initializes internal state and begins the scanning workflow.
     private func startProcessing() {
         scanState = .searching
         statusMessage = "Position your face in the oval"
@@ -176,6 +193,7 @@ public struct VitalLensScanView: View {
         totalFramesProcessed = 0
     }
     
+    /// Resets the view back to the initial idle state.
     private func resetToIdle() {
         client?.stopStream()
         client = nil
@@ -191,6 +209,11 @@ public struct VitalLensScanView: View {
         totalFramesProcessed = 0
     }
     
+    /// Transitions the scanner to a new state, updating internal timers and messages.
+    ///
+    /// - Parameters:
+    ///   - newState: The state to transition to.
+    ///   - message: The localized message to display to the user.
     private func transition(to newState: ScanState, message: String) {
         self.scanState = newState
         self.statusMessage = message
@@ -207,6 +230,9 @@ public struct VitalLensScanView: View {
         }
     }
 
+    /// Handles transient issues during the scan, escalating to a full issue state if retries are exhausted.
+    ///
+    /// - Parameter message: The warning message to display.
     private func handleIssue(message: String) {
         strikeCount += 1
         if strikeCount >= 3 {
@@ -225,6 +251,10 @@ public struct VitalLensScanView: View {
         }
     }
     
+    /// Validates whether the detected face is adequately positioned within the frame.
+    ///
+    /// - Parameter result: The latest inference result containing face coordinates.
+    /// - Returns: `true` if the face is centered and large enough; otherwise `false`.
     private func isFaceGood(_ result: VitalLensResult) -> Bool {
         guard let box = result.face.boundingBoxes.last else { return false }
         let midX = box.midX
@@ -232,6 +262,9 @@ public struct VitalLensScanView: View {
         return midX > 0.3 && midX < 0.7 && midY > 0.3 && midY < 0.7 && box.width > 0.15
     }
     
+    /// Initializes the stream processor and links it to the camera preview.
+    ///
+    /// - Parameter view: The `UIView` where the camera preview will be rendered.
     private func startSession(in view: UIView) {
         guard client == nil else { return }
         
@@ -275,11 +308,9 @@ public struct VitalLensScanView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
-        // 1. Accumulate total frames for API usage
         let framesInThisUpdate = result.sampleCount ?? result.time.count
         self.totalFramesProcessed += framesInThisUpdate
         
-        // 2. Append to Global Histories (Do not trim, we need all for the final stats)
         if let newFaceConfs = result.face.confidence {
             faceConfHistory.append(contentsOf: newFaceConfs)
         }
@@ -290,10 +321,8 @@ public struct VitalLensScanView: View {
             respConfHistory.append(contentsOf: newRespConfs.map { Double($0) })
         }
 
-        // 3. Guard against inactive states
         guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
 
-        // 4. Calculate Rolling Averages for the last 1 second
         let fps = currentModeState.fps
         let samplesInOneSecond = Int(fps)        
         
@@ -303,14 +332,12 @@ public struct VitalLensScanView: View {
         let lastSecPpgConf = ppgConfHistory.suffix(samplesInOneSecond)
         let avgPpgConfLastSec = lastSecPpgConf.isEmpty ? 0.0 : lastSecPpgConf.reduce(0, +) / Double(lastSecPpgConf.count)
 
-        // 5. Evaluate current real-time conditions
         let isLowSignal = avgPpgConfLastSec < 0.5 || avgFaceConfLastSec < 0.5
         let goodFace = isFaceGood(result)
         
         let now = Date()
         let elapsedInState = stateStartTime.map { now.timeIntervalSince($0) } ?? 0
         
-        // 6. Process Progress and Completion
         if scanState == .tracking || scanState == .recovering {
             if let last = lastFrameTime {
                 accumulatedScanTime += now.timeIntervalSince(last)
@@ -356,13 +383,12 @@ public struct VitalLensScanView: View {
                 finalResult = result
                 scanState = .completed
                 onComplete(result)
-                return // Required so the state machine below isn't triggered
+                return  
             }
         } else {
             lastFrameTime = nil
         }
         
-        // 7. State Machine
         switch scanState {
         case .searching:
             if goodFace {
@@ -399,6 +425,7 @@ public struct VitalLensScanView: View {
     }
 }
 
+/// A lightweight visual component displaying the current state of the scan.
 struct ScanStatusBadge: View {
     let state: ScanState
     
@@ -442,6 +469,7 @@ struct ScanStatusBadge: View {
     }
 }
 
+/// An overlay providing a visual guide (an oval cutout) for user face placement.
 struct CutoutOverlay: View {
     var body: some View {
         ZStack {
