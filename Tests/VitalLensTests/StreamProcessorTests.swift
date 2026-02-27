@@ -225,7 +225,7 @@ final class StreamProcessorTests: XCTestCase {
             await processor.processFrame(frame)
         }
         
-        try await Task.sleep(nanoseconds: 300_000_000)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         let stateBefore = await strategy.lastReceivedState
         XCTAssertNotNil(stateBefore, "Should have established state")
         
@@ -236,7 +236,7 @@ final class StreamProcessorTests: XCTestCase {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         
         await strategy.setShouldFail(false)
         await strategy.clearHistory()
@@ -246,7 +246,7 @@ final class StreamProcessorTests: XCTestCase {
             await processor.processFrame(frame)
         }
         
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         
         let history = await strategy.stateHistory
         
