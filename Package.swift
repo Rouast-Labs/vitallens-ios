@@ -37,6 +37,9 @@ let package = Package(
             dependencies: [
                 "VitalLensInference", 
                 .product(name: "VitalLensCore", package: "vitallens-core")
+            ],
+            resources: [
+                .copy("PrivacyInfo.xcprivacy")
             ]
         ),
         
