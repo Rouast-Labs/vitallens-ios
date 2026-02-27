@@ -49,9 +49,19 @@ swift test
 
 Tests involving `CameraSource` or `VitalLensUI` components **must** be run inside an iOS Simulator via Xcode.
 
+In Xcode:
+
 1. Select the **vitallens-ios** scheme.
 2. Select an iOS Simulator (e.g., iPhone 15 Pro).
 3. Press **Cmd + U**.
+
+Or you can run:
+
+```
+xcodebuild test \
+    -scheme vitallens-ios-Package \
+    -destination "platform=iOS Simulator,name=iPhone Air,OS=latest"
+```
 
 ### API Integration Tests
 
