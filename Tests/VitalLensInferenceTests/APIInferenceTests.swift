@@ -1,11 +1,14 @@
 import XCTest
 import zlib
+import CoreVideo
 @testable import VitalLensInference
 
 final class APIInferenceTests: XCTestCase {
     
     var apiInference: APIInference!
     var session: URLSession!
+    
+    // MARK: - Setup & Teardown
     
     override func setUp() {
         super.setUp()
@@ -19,21 +22,14 @@ final class APIInferenceTests: XCTestCase {
         super.tearDown()
     }
     
-    func makeWindow(size: Int) -> [(InferenceUnit, InferenceContext)] {
-        let dummyData = Data(repeating: 0xAB, count: size)
-        let unit = InferenceUnit.rgbData(dummyData)
-        let ctx = InferenceContext(timestamp: 0)
-        return [(unit, ctx)]
-    }
-
-    // MARK: - Configuration & Auth Tests
+    // MARK: - Initialization & Auth
 
     func testAPIKeyHeaderIsSet_DirectCall() async throws {
         apiInference = APIInference(apiKey: "test_key_123", proxyURL: nil, session: session)
         
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "test_key_123")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
@@ -46,7 +42,7 @@ final class APIInferenceTests: XCTestCase {
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "dev.example.com")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "key")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
@@ -58,7 +54,7 @@ final class APIInferenceTests: XCTestCase {
         
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "env_secret_key")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
@@ -70,7 +66,7 @@ final class APIInferenceTests: XCTestCase {
         
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "explicit_key")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
@@ -85,13 +81,11 @@ final class APIInferenceTests: XCTestCase {
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "my-proxy.com")
             XCTAssertNil(request.value(forHTTPHeaderField: "X-Api-Key"))
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
     }
-    
-    // MARK: - Proxy & Dev Environment Specifics
 
     func testExplicitProxy_Overrides_EnvironmentBaseURL() async throws {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
@@ -102,7 +96,7 @@ final class APIInferenceTests: XCTestCase {
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "my-proxy.com")
             XCTAssertNil(request.value(forHTTPHeaderField: "X-Api-Key"))
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
@@ -110,58 +104,19 @@ final class APIInferenceTests: XCTestCase {
     
     func testDevEnvironment_SendsAuthHeader() async throws {
         let mockEnv = ["VITALLENS_BASE_URL": "http://dev.example.com"]
-        
         apiInference = APIInference(apiKey: "secret", proxyURL: nil, session: session, environment: mockEnv)
         
         APIMockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.host, "dev.example.com")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "secret")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.emptySuccessResponse)
+            return self.makeMockResponse(for: request, data: self.emptySuccessResponse)
         }
         
         _ = try await apiInference.resolveModel(requestedModel: nil)
     }
-    
-    // MARK: - Error Handling Tests
-    
-    func testQuotaExceededError() async {
-        apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
-        
-        APIMockURLProtocol.requestHandler = { request in
-            return (HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: nil)!, nil)
-        }
-        
-        do {
-            _ = try await apiInference.resolveModel(requestedModel: nil)
-            XCTFail("Should have thrown error")
-        } catch let error as VitalLensError {
-            XCTAssertEqual(error, VitalLensError.quotaExceeded)
-        } catch {
-            XCTFail("Wrong error type: \(error)")
-        }
-    }
-    
-    func testServerError() async {
-        apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
-        
-        APIMockURLProtocol.requestHandler = { request in
-            return (HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!, nil)
-        }
-        
-        do {
-            _ = try await apiInference.resolveModel(requestedModel: nil)
-            XCTFail("Should have thrown error")
-        } catch {
-            if let vlError = error as? VitalLensError, case .serverError(let code, _) = vlError {
-                XCTAssertEqual(code, 500)
-            } else {
-                XCTFail("Wrong error type: \(error)")
-            }
-        }
-    }
-    
-    // MARK: - Logic: Resolve Model & Conformance
-    
+
+    // MARK: - Resolve Model
+
     func testResolveModelQueryParam() async throws {
         apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
@@ -169,7 +124,7 @@ final class APIInferenceTests: XCTestCase {
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             let modelItem = components?.queryItems?.first(where: { $0.name == "model" })
             XCTAssertEqual(modelItem?.value, "vitallens-2.0")
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.resolveResponse)
+            return self.makeMockResponse(for: request, data: self.resolveResponse)
         }
         
         let response = try await apiInference.resolveModel(requestedModel: "vitallens-2.0")
@@ -181,7 +136,7 @@ final class APIInferenceTests: XCTestCase {
         let strategy: any InferenceStrategy = APIInference(apiKey: "test", proxyURL: nil, session: session)
         
         APIMockURLProtocol.requestHandler = { request in
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.resolveResponse)
+            return self.makeMockResponse(for: request, data: self.resolveResponse)
         }
         
         let config = try await strategy.resolveConfig()
@@ -191,9 +146,9 @@ final class APIInferenceTests: XCTestCase {
         let bufConfig = try await strategy.bufferConfig
         XCTAssertGreaterThan(bufConfig.streamMax, 0)
     }
-    
-    // MARK: - Logic: Streaming (Compression & Headers)
-    
+
+    // MARK: - Inference Execution
+
     func testStreamBatchRequestConstruction() async throws {
         apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
@@ -212,7 +167,7 @@ final class APIInferenceTests: XCTestCase {
             guard let stateHeader = request.value(forHTTPHeaderField: "X-State"),
                   let decodedData = Data(base64Encoded: stateHeader) else {
                 XCTFail("X-State header missing or invalid Base64")
-                return (HTTPURLResponse(), nil)
+                return self.makeMockResponse(for: request, data: nil)
             }
             let floats = decodedData.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
             XCTAssertEqual(floats.count, 2)
@@ -221,7 +176,6 @@ final class APIInferenceTests: XCTestCase {
             let bodyData = request.httpBodyStreamData() ?? request.httpBody ?? Data()
             
             XCTAssertGreaterThan(bodyData.count, 2)
-            // GZIP Magic Bytes (1f 8b)
             XCTAssertEqual(bodyData[0], 0x1f)
             XCTAssertEqual(bodyData[1], 0x8b)
             
@@ -231,14 +185,12 @@ final class APIInferenceTests: XCTestCase {
                 XCTFail("Failed to decompress body")
             }
             
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
+            return self.makeMockResponse(for: request, data: self.validStreamResponse)
         }
         
         _ = try await apiInference.infer(window: window, state: dummyState, mode: .stream, model: "vitallens-2.0")
     }
-    
-    // MARK: - Logic: File Upload (JSON & Body State)
-    
+
     func testFileEndpointRequestConstruction() async throws {
         apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
         
@@ -256,7 +208,7 @@ final class APIInferenceTests: XCTestCase {
             let bodyData = request.httpBodyStreamData() ?? request.httpBody ?? Data()
             guard let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] else {
                 XCTFail("Body was not valid JSON")
-                return (HTTPURLResponse(), nil)
+                return self.makeMockResponse(for: request, data: nil)
             }
             
             XCTAssertEqual(json["origin"] as? String, "vitallens-ios")
@@ -268,14 +220,116 @@ final class APIInferenceTests: XCTestCase {
             let stateB64 = json["state"] as? String
             XCTAssertNotNil(stateB64)
             
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, self.validStreamResponse)
+            return self.makeMockResponse(for: request, data: self.validStreamResponse)
         }
         
         _ = try await apiInference.infer(window: window, state: dummyState, mode: .file, model: "test-model")
     }
-
-    // MARK: - Helpers
     
+    func testInfer_ThrowsOnPixelBufferInput() async {
+        apiInference = APIInference(apiKey: "test", session: session)
+        
+        var cvBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 10, 10, kCVPixelFormatType_32BGRA, nil, &cvBuffer)
+        let window = [(InferenceUnit.pixelBuffer(SendablePixelBuffer(cvBuffer!)), InferenceContext(timestamp: 0))]
+        
+        do {
+            _ = try await apiInference.infer(window: window, state: nil, mode: .stream, model: nil)
+            XCTFail("Should have thrown processingError")
+        } catch let error as VitalLensError {
+            if case .processingError(let msg) = error {
+                XCTAssertTrue(msg.contains("APIInference received raw PixelBuffer"))
+            } else {
+                XCTFail("Wrong error type: \(error)")
+            }
+        } catch {
+            XCTFail("Wrong error: \(error)")
+        }
+    }
+    
+    func testInfer_ParsesReturnedState() async throws {
+        apiInference = APIInference(apiKey: "key", session: session)
+        let window = makeWindow(size: 10)
+        
+        APIMockURLProtocol.requestHandler = { request in
+            return self.makeMockResponse(for: request, data: self.responseWithState)
+        }
+        
+        let (_, newState) = try await apiInference.infer(window: window, state: nil, mode: .stream, model: nil)
+        
+        let apiState = try XCTUnwrap(newState as? APIState)
+        XCTAssertEqual(apiState.data.count, 2)
+    }
+
+    // MARK: - Error Handling
+
+    func testAuthError() async {
+        apiInference = APIInference(apiKey: "bad_key", session: session)
+        
+        APIMockURLProtocol.requestHandler = { request in
+            return self.makeMockResponse(for: request, statusCode: 401, data: nil)
+        }
+        
+        do {
+            _ = try await apiInference.resolveModel(requestedModel: nil)
+            XCTFail("Should have thrown error")
+        } catch let error as VitalLensError {
+            XCTAssertEqual(error, VitalLensError.invalidAPIKey)
+        } catch {
+            XCTFail("Wrong error type: \(error)")
+        }
+    }
+
+    func testQuotaExceededError() async {
+        apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
+        
+        APIMockURLProtocol.requestHandler = { request in
+            return self.makeMockResponse(for: request, statusCode: 429, data: nil)
+        }
+        
+        do {
+            _ = try await apiInference.resolveModel(requestedModel: nil)
+            XCTFail("Should have thrown error")
+        } catch let error as VitalLensError {
+            XCTAssertEqual(error, VitalLensError.quotaExceeded)
+        } catch {
+            XCTFail("Wrong error type: \(error)")
+        }
+    }
+    
+    func testServerError() async {
+        apiInference = APIInference(apiKey: "key", proxyURL: nil, session: session)
+        
+        APIMockURLProtocol.requestHandler = { request in
+            return self.makeMockResponse(for: request, statusCode: 500, data: nil)
+        }
+        
+        do {
+            _ = try await apiInference.resolveModel(requestedModel: nil)
+            XCTFail("Should have thrown error")
+        } catch {
+            if let vlError = error as? VitalLensError, case .serverError(let code, _) = vlError {
+                XCTAssertEqual(code, 500)
+            } else {
+                XCTFail("Wrong error type: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Mocks & Helpers
+    
+    private func makeMockResponse(for request: URLRequest, statusCode: Int = 200, data: Data?) -> (HTTPURLResponse, Data?) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
+        return (response, data)
+    }
+    
+    private func makeWindow(size: Int) -> [(InferenceUnit, InferenceContext)] {
+        let dummyData = Data(repeating: 0xAB, count: size)
+        let unit = InferenceUnit.rgbData(dummyData)
+        let ctx = InferenceContext(timestamp: 0)
+        return [(unit, ctx)]
+    }
+
     private var emptySuccessResponse: Data {
         """
         { "resolved_model": "test", "config": { "n_inputs": 0, "input_size": 0, "fps_target": 0, "roi_method": "", "supported_vitals": [] } }
@@ -310,9 +364,19 @@ final class APIInferenceTests: XCTestCase {
         }
         """.data(using: .utf8)!
     }
+    
+    private var responseWithState: Data {
+        // [0.1, 0.2] as Float32 Array encoded to Base64 is "zcxMPc3MTD4="
+        """
+        {
+            "face": { "coordinates": [], "confidence": [], "note": "" },
+            "vital_signs": {},
+            "time": [1.0],
+            "state": { "data": "zcxMPc3MTD4=" }
+        }
+        """.data(using: .utf8)!
+    }
 }
-
-// MARK: - Mock Protocol
 
 class APIMockURLProtocol: URLProtocol {
     nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data?))?
@@ -368,7 +432,6 @@ extension Data {
         var stream = z_stream()
         var status: Int32
         
-        // 15 + 32 = Automatic detection of GZIP/ZLIB headers
         status = inflateInit2_(&stream, 15 + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
         guard status == Z_OK else { return nil }
         
