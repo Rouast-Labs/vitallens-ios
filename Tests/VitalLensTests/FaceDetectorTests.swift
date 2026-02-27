@@ -22,13 +22,11 @@ final class FaceDetectorTests: XCTestCase {
     // MARK: - Integration Tests
     
     func testDetectFace_InRealVideoFrame_ReturnsResult() async throws {
-        // 1. Get the bundled video resource
         guard let url = Bundle.module.url(forResource: "sample_video_2", withExtension: "mp4") else {
             print("⚠️ Skipping testDetectFace_InRealVideoFrame: sample_video_2.mp4 not found in bundle.")
             return 
         }
         
-        // 2. Extract the first frame safely
         let pixelBuffer: CVPixelBuffer
         
         do {
@@ -51,18 +49,15 @@ final class FaceDetectorTests: XCTestCase {
         } catch {
             let nsError = error as NSError
             if nsError.domain == AVFoundationErrorDomain {
-                // Code -11800 is a generic "Operation could not be completed" which often wraps the underlying -17913
                 throw XCTSkip("⚠️ Hardware video decoding unavailable in this environment. Skipping integration test.")
             }
-            throw error // Rethrow legitimate failures (e.g. file not found)
+            throw error
         }
         
         let sendableBuffer = SendablePixelBuffer(pixelBuffer)
         
-        // 3. Run Detection
         let result = try await detector.detectFace(in: sendableBuffer, orientation: .up)
         
-        // 4. Verify
         XCTAssertNotNil(result, "Should detect a face in the sample video")
         
         if let rect = result {
@@ -79,19 +74,15 @@ final class FaceDetectorTests: XCTestCase {
     }
     
     func testDetectFace_InBlankImage_ReturnsNil() async throws {
-        // 1. Create a black frame (100x100)
         let buffer = try createSolidPixelBuffer(width: 100, height: 100, color: 0)
         let sendable = SendablePixelBuffer(buffer)
         
-        // 2. Run Detection
         let result = try await detector.detectFace(in: sendable, orientation: .up)
         
-        // 3. Verify
         XCTAssertNil(result, "Should not detect face in black noise")
     }
 
     func testDetectFace_Mirroring_FlipsXAxis() async throws {
-        // 1. Setup resource
         guard let url = Bundle.module.url(forResource: "sample_video_2", withExtension: "mp4") else { return }
         let asset = AVAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
@@ -107,15 +98,12 @@ final class FaceDetectorTests: XCTestCase {
         let buffer = try buffer(from: cgImage)
         let sendable = SendablePixelBuffer(buffer)
         
-        // 2. Run Detection twice (Normal and Mirrored)
         let unmirroredRect = try await detector.detectFace(in: sendable, orientation: .up, isMirrored: false)
         let mirroredRect = try await detector.detectFace(in: sendable, orientation: .up, isMirrored: true)
         
         XCTAssertNotNil(unmirroredRect)
         XCTAssertNotNil(mirroredRect)
         
-        // 3. Verify the horizontal flip math
-        // If unmirrored X is 0.1 and width is 0.2, mirrored X must be 0.7 (1.0 - 0.1 - 0.2)
         let expectedMirroredX = 1.0 - unmirroredRect!.origin.x - unmirroredRect!.width
         
         XCTAssertEqual(mirroredRect!.origin.x, expectedMirroredX, accuracy: 0.0001)

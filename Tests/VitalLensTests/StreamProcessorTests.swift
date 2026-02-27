@@ -65,7 +65,7 @@ actor MockInferenceStrategy: InferenceStrategy {
     ) async throws -> (result: VitalLensResult, newState: (any InferenceState)?) {
         
         self.lastReceivedState = state
-        self.stateHistory.append(state) // 2. Record it
+        self.stateHistory.append(state)
         self.inferCallCount += 1
         
         if shouldFail {
@@ -124,11 +124,9 @@ final class StreamProcessorTests: XCTestCase {
             camera: camera
         )
         
-        // Create a reusable dummy buffer
         var cvBuffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, 100, 100, kCVPixelFormatType_32BGRA, nil, &cvBuffer)
         
-        // Fill buffer to be safe
         CVPixelBufferLockBaseAddress(cvBuffer!, [])
         if let base = CVPixelBufferGetBaseAddress(cvBuffer!) {
             memset(base, 255, CVPixelBufferGetDataSize(cvBuffer!))
@@ -137,7 +135,6 @@ final class StreamProcessorTests: XCTestCase {
         
         baseBuffer = SendablePixelBuffer(cvBuffer!)
         
-        // Start processor
         _ = try await processor.start()
     }
     
@@ -148,7 +145,6 @@ final class StreamProcessorTests: XCTestCase {
         processor = nil
     }
     
-    // Helper to create frames with explicit timestamps
     private func makeFrame(at time: Double) -> InputFrame {
         InputFrame(
             buffer: baseBuffer,
@@ -191,7 +187,6 @@ final class StreamProcessorTests: XCTestCase {
     func testResilience_BackoffAndRecovery() async throws {
         await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
         
-        // 1. Initial Success
         for i in 0..<5 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
@@ -200,7 +195,6 @@ final class StreamProcessorTests: XCTestCase {
         let initialCount = await strategy.inferCallCount
         XCTAssertGreaterThan(initialCount, 0)
         
-        // 2. Trigger Failure
         await strategy.setShouldFail(true)
         
         for i in 10..<20 {
@@ -208,10 +202,8 @@ final class StreamProcessorTests: XCTestCase {
             await processor.processFrame(frame)
         }
         
-        // Wait for backoff
         try await Task.sleep(nanoseconds: 300_000_000)
         
-        // 3. Recovery
         await strategy.setShouldFail(false)
         
         for i in 20..<30 {
@@ -228,7 +220,6 @@ final class StreamProcessorTests: XCTestCase {
     func testResilience_MaxRetries_ResetsState() async throws {
         await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
         
-        // 1. Establish initial state
         for i in 0..<6 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
@@ -238,7 +229,6 @@ final class StreamProcessorTests: XCTestCase {
         let stateBefore = await strategy.lastReceivedState
         XCTAssertNotNil(stateBefore, "Should have established state")
         
-        // 2. Trigger failures
         await strategy.setShouldFail(true)
         for i in 10..<60 {
             let frame = makeFrame(at: Double(i) * 0.033)
@@ -246,14 +236,11 @@ final class StreamProcessorTests: XCTestCase {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         
-        // Wait for the final error to propagate and trigger the internal reset
         try await Task.sleep(nanoseconds: 200_000_000)
         
-        // 3. Recover and clear history so we only record new inferences
         await strategy.setShouldFail(false)
         await strategy.clearHistory()
         
-        // 4. Send new valid frames
         for i in 100..<110 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
@@ -263,7 +250,6 @@ final class StreamProcessorTests: XCTestCase {
         
         let history = await strategy.stateHistory
         
-        // Assert the FIRST inference after the reset had a nil state
         XCTAssertFalse(history.isEmpty, "Should have performed at least one successful inference after recovery")
         if !history.isEmpty {
             XCTAssertNil(history[0], "The FIRST inference after max retries MUST have a nil state due to the internal reset.")
@@ -275,7 +261,6 @@ final class StreamProcessorTests: XCTestCase {
     func testPauseResume_ControlsFrameFlow() async throws {
         await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
         
-        // 1. Pause
         await processor.pause()
         
         for i in 0..<10 {
@@ -288,7 +273,6 @@ final class StreamProcessorTests: XCTestCase {
         let countPaused = await strategy.inferCallCount
         XCTAssertEqual(countPaused, 0, "Strategy should NOT be called while paused")
         
-        // 2. Resume
         try await processor.resume()
         
         for i in 10..<20 {
@@ -343,11 +327,8 @@ final class StreamProcessorTests: XCTestCase {
     func testStateFlow_ContinuityBetweenInferences() async throws {
         await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.1))
         
-        // Push frames to trigger TWO separate inference calls
-        // Buffer overlap is 1, min frames with state is 2.
         for i in 0..<15 {
             await processor.processFrame(makeFrame(at: Double(i) * 0.033))
-            // Small pause to let the actor process the first batch and update state
             if i == 5 { try await Task.sleep(nanoseconds: 100_000_000) } 
         }
         
@@ -368,27 +349,19 @@ final class StreamProcessorTests: XCTestCase {
         _ = try await processor.start()
         await strategy.clearHistory()
         
-        // 1. Detect a face at T=1.0 to create an active buffer
         await roiStrategy.setROI(CGRect(x: 0.1, y: 0.1, width: 0.1, height: 0.1))
         await processor.processFrame(makeFrame(at: 1.0))
         
-        // 2. Lose the face
-        await roiStrategy.setROI(nil)
-        
-        // 3. Send a frame at T=7.0 (exceeding the 5.0s timeout)
+        await roiStrategy.setROI(nil)        
         await processor.processFrame(makeFrame(at: 7.0))
         
-        // 4. Wait for the actor's background loop to catch up and prune
         try await Task.sleep(nanoseconds: 300_000_000)
         
-        // If pruning worked, the buffer was dropped during the poll at T=7.0
-        // so no inference should have been triggered.
         let count = await strategy.inferCallCount
         XCTAssertEqual(count, 0, "Stale buffers must be pruned before inference can be triggered")
     }
 
     func testProcessFrame_FaceStateCallback_And_BufferReset() async throws {
-        // Setup an expectation for the callback
         actor CallbackTracker {
             var changes: [Bool] = []
             func append(_ val: Bool) { changes.append(val) }
@@ -400,17 +373,14 @@ final class StreamProcessorTests: XCTestCase {
             Task { await tracker.append(isPresent) }
         }
         
-        // 1. Face appears
         await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.1, height: 0.1))
         await processor.processFrame(makeFrame(at: 1.0))
         
-        // Let async callback process
         try await Task.sleep(nanoseconds: 10_000_000) 
         var states = await tracker.get()
         XCTAssertEqual(states.count, 1)
         XCTAssertTrue(states.last == true, "Callback should fire with true when face appears")
         
-        // 2. Process a few more frames (face still there)
         await processor.processFrame(makeFrame(at: 1.1))
         await processor.processFrame(makeFrame(at: 1.2))
         
@@ -418,7 +388,6 @@ final class StreamProcessorTests: XCTestCase {
         states = await tracker.get()
         XCTAssertEqual(states.count, 1, "Callback should NOT fire again if state hasn't changed")
         
-        // 3. Face disappears
         await roiStrategy.setROI(nil)
         await processor.processFrame(makeFrame(at: 1.3))
         
@@ -427,7 +396,6 @@ final class StreamProcessorTests: XCTestCase {
         XCTAssertEqual(states.count, 2)
         XCTAssertFalse(states.last == true, "Callback should fire with false when face is lost")
         
-        // 4. Verify buffers were reset (ensure no inference is triggered)
         try await Task.sleep(nanoseconds: 100_000_000)
         let count = await strategy.inferCallCount
         XCTAssertEqual(count, 0, "API calls should not have been made because the buffer was purged on face loss")

@@ -9,15 +9,12 @@ import UIKit
 final class CameraSourceTests: XCTestCase {
     
     func testSimulatorStreaming() async throws {
-        // This test runs on background threads to verify async streaming logic
         #if targetEnvironment(simulator)
         
         let source = CameraSource()
         
-        // 1. Start
         try await source.start()
         
-        // 2. Consume a few frames
         var frameCount = 0
         var receivedSize: CGSize = .zero
         
@@ -35,15 +32,12 @@ final class CameraSourceTests: XCTestCase {
             if frameCount >= 5 { break }
         }
         
-        // 3. Verify
         XCTAssertEqual(frameCount, 5, "Should have received 5 frames")
         XCTAssertEqual(receivedSize.width, 480, "Simulator default width")
         XCTAssertEqual(receivedSize.height, 640, "Simulator default height")
         
-        // 4. Stop
         source.stop()
         
-        // 5. Verify Stream Termination
         var extraFrames = 0
         for await _ in source.stream {
             extraFrames += 1
@@ -55,10 +49,8 @@ final class CameraSourceTests: XCTestCase {
         #endif
     }
     
-    // FIX: Mark as @MainActor to allow UIView initialization
     @MainActor
     func testPreviewLayerAttachment() async {
-        // Basic smoke test to ensure UI code doesn't crash
         let source = CameraSource()
         let view = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         
@@ -67,7 +59,6 @@ final class CameraSourceTests: XCTestCase {
         #if targetEnvironment(simulator)
         XCTAssertEqual(view.backgroundColor, .darkGray)
         #else
-        // On device, check layer insertion
         let previewLayer = view.layer.sublayers?.first as? AVCaptureVideoPreviewLayer
         XCTAssertNotNil(previewLayer)
         XCTAssertEqual(previewLayer?.frame, view.bounds)

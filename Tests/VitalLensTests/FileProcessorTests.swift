@@ -11,7 +11,6 @@ final class FileProcessorTests: XCTestCase {
     
     override func setUp() async throws {
         try await super.setUp()
-        // Generate a 1-second video (30 frames)
         tempURL = try await createTemporaryVideoFile(frameCount: 30)
     }
     
@@ -25,7 +24,6 @@ final class FileProcessorTests: XCTestCase {
     // MARK: - Integration Tests
     
     func testProcess_SuccessfulPipeline() async throws {
-        // 1. Setup Mocks
         let mockDetector = MockFaceDetector(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2))
         let mockStrategy = MockStrategy()
         
@@ -33,27 +31,22 @@ final class FileProcessorTests: XCTestCase {
         
         print("[Test] Starting Process...")
         
-        // 2. Run Process
         let result = try await processor.process(strategy: mockStrategy)
         
         print("[Test] Finished Process. Result samples: \(result.sampleCount ?? -1)")
         
-        // 3. Verify
         XCTAssertTrue(mockStrategy.resolveConfigCalled, "Should have resolved config")
         
         let calls = mockStrategy.inferCallCount
         XCTAssertGreaterThan(calls, 0, "Inference should have been called (Count: \(calls))")
         
-        // FPS comes from the file source (30)
         XCTAssertEqual(result.fps ?? 0.0, 30.0, accuracy: 1.0, "FPS should match source video")
         
-        // We expect roughly 27 samples (30 frames - nInputs overlap + flushing)
         let samples = result.sampleCount ?? 0
         XCTAssertGreaterThan(samples, 5, "Should have produced multiple stitched samples")
         
         XCTAssertEqual(result.time.count, samples, "Time array should match sample count")
         
-        // Verify time is increasing
         if let lastTime = result.time.last {
             XCTAssertGreaterThan(lastTime, 0.5, "Result duration should be roughly the video length")
         }
@@ -145,7 +138,6 @@ final class FileProcessorTests: XCTestCase {
                 return t
             }
             
-            // Map the number of output samples to the size of the input window
             for i in 0..<count {
                 times.append(startT + Double(i) / 30.0)
                 datas.append(72.0)

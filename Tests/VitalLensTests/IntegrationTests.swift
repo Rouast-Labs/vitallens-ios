@@ -98,10 +98,8 @@ final class IntegrationTests: XCTestCase {
             return
         }
         
-        // 1. Setup the custom source
         let passiveSource = PassiveSource()
         
-        // 2. Initialize VitalLens with the custom source
         let client = VitalLens(
             apiKey: apiKey,
             method: "vitallens-2.0",
@@ -111,7 +109,6 @@ final class IntegrationTests: XCTestCase {
         let nominalFPS = fileSource.nominalFrameRate
         let frameDuration = 1.0 / Double(nominalFPS)
         
-        // 3. Start the stream and set up an expectation
         let stream = try await client.startStream()
         let expectation = XCTestExpectation(description: "Receive valid heart rate from streaming API")
         
@@ -123,7 +120,6 @@ final class IntegrationTests: XCTestCase {
         }
         let collector = ResultCollector()
         
-        // 4. Start listening to the stream
         let streamTask = Task {
             var validHeartRatesReceived = 0
             
@@ -151,11 +147,9 @@ final class IntegrationTests: XCTestCase {
             }
         }
         
-        // 5. Inject frames to simulate the real-time camera feed
         let injectTask = Task {
             var frameCount = 0
             for await frame in fileSource.frames() {
-                // Keep injecting until the streamTask completes and we cancel this task
                 if Task.isCancelled { break }
                 
                 passiveSource.inject(
@@ -166,20 +160,16 @@ final class IntegrationTests: XCTestCase {
                 )
                 frameCount += 1
                 
-                // Sleep to simulate camera pace (divided by 2.0 to run test at 2x speed)
                 try await Task.sleep(nanoseconds: UInt64(frameDuration * 1_000_000_000 / 2.0))
             }
         }
         
-        // 6. Wait for the background task to collect the results
         await fulfillment(of: [expectation], timeout: 45.0)
         
-        // Cleanup
         streamTask.cancel()
         injectTask.cancel()
         client.stopStream()
         
-        // 7. Assertions
         let finalCount = await collector.count()
         XCTAssertGreaterThan(finalCount, 0, "Should have received streaming results.")
         
