@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     name: Run Tests
-    runs-on: macos-14 # Provides Xcode 15+
+    runs-on: macos-14
 
     env:
       VITALLENS_API_KEY: ${{ secrets.VITALLENS_API_KEY }}
@@ -23,11 +23,11 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Run macOS Logic Tests
-        run: swift test --target VitalLensInferenceTests
+        run: swift test --filter VitalLensInferenceTests
 
       - name: Run iOS Simulator Tests
         run: |
           xcodebuild test \
-            -scheme vitallens-ios \
-            -destination "platform=iOS Simulator,name=iPhone Air,OS=latest" \
+            -scheme vitallens-ios-Package \
+            -destination "platform=iOS Simulator,name=iPhone 15 Pro,OS=latest" \
             -skip-testing:VitalLensInferenceTests
