@@ -220,17 +220,17 @@ final class StreamProcessorTests: XCTestCase {
     func testResilience_MaxRetries_ResetsState() async throws {
         await roiStrategy.setROI(CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
         
-        for i in 0..<6 {
+        for i in 0..<15 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
         }
         
         try await Task.sleep(nanoseconds: 1_000_000_000)
-        let stateBefore = await strategy.lastReceivedState
-        XCTAssertNotNil(stateBefore, "Should have established state")
+        let historyBefore = await strategy.stateHistory
+        XCTAssertGreaterThan(historyBefore.count, 1, "Should have established state over multiple inferences")
         
         await strategy.setShouldFail(true)
-        for i in 10..<60 {
+        for i in 15..<65 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
             try await Task.sleep(nanoseconds: 25_000_000)
@@ -241,7 +241,7 @@ final class StreamProcessorTests: XCTestCase {
         await strategy.setShouldFail(false)
         await strategy.clearHistory()
         
-        for i in 100..<110 {
+        for i in 100..<115 {
             let frame = makeFrame(at: Double(i) * 0.033)
             await processor.processFrame(frame)
         }
