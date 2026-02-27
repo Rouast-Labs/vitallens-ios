@@ -3,6 +3,9 @@ import CoreGraphics
 import VitalLensCore
 
 public extension ModelConfig {
+    /// Converts the `ModelConfig` into a `SessionConfig` required by the Core engine.
+    ///
+    /// - Returns: A `VitalLensCore.SessionConfig` populated with this model's parameters.
     func toSessionConfig() -> VitalLensCore.SessionConfig {
         return VitalLensCore.SessionConfig(
             modelName: self.modelName,
@@ -17,12 +20,18 @@ public extension ModelConfig {
 }
 
 public extension CGRect {
+    /// Converts the `CGRect` into a `VitalLensCore.Rect`.
+    ///
+    /// - Returns: A `Rect` struct compatible with the Rust core logic.
     func toRustRect() -> VitalLensCore.Rect {
         return VitalLensCore.Rect(x: Float(minX), y: Float(minY), width: Float(width), height: Float(height))
     }
 }
 
 public extension VitalLensResult {
+    /// Converts the `VitalLensResult` into a `SessionInput` to be fed into the Core engine for post-processing.
+    ///
+    /// - Returns: A `VitalLensCore.SessionInput` containing the raw signals, face data, and timestamps.
     func toSessionInput() -> VitalLensCore.SessionInput {
         var signalsMap: [String: SignalInput] = [:]
         
@@ -47,6 +56,13 @@ public extension VitalLensResult {
 }
 
 public extension SessionResult {
+    /// Converts the processed `SessionResult` from the Core engine back into a high-level `VitalLensResult`.
+    ///
+    /// - Parameters:
+    ///   - originalState: The opaque state data to attach to the final result.
+    ///   - message: An optional message overriding the default session message.
+    ///   - modelUsed: The identifier of the model used to generate this data.
+    /// - Returns: A comprehensive `VitalLensResult` populated with refined vitals and waveforms.
     func toVitalLensResult(originalState: StateData?, message: String?, modelUsed: String?) -> VitalLensResult {
         
         var finalWaveforms: [String: Waveform] = [:]
@@ -92,7 +108,7 @@ public extension SessionResult {
     }
 }
 
-// MARK: - Sendable Conformances for UniFFI Types
+// MARK: - Sendable Conformances
 
 extension VitalLensCore.Session: @retroactive @unchecked Sendable {}
 extension VitalLensCore.BufferPlanner: @retroactive @unchecked Sendable {}

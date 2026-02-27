@@ -3,27 +3,42 @@ import Foundation
 /// Errors specific to the VitalLens SDK and API interactions.
 public enum VitalLensError: LocalizedError, Sendable, Equatable {
     
-    /// The API Key provided is missing or invalid.
+    /// Indicates that the provided API key is missing or invalid.
     case invalidAPIKey
     
-    /// The API rejected the request due to quota limits (HTTP 429).
+    /// Indicates that the API rejected the request due to quota limits (e.g., HTTP 429).
     case quotaExceeded
     
-    /// The API returned a server error (5xx).
+    /// Indicates that the API returned a server-side error (HTTP 5xx).
+    ///
+    /// - Parameters:
+    ///   - statusCode: The HTTP status code returned by the server.
+    ///   - message: An optional error message provided by the server.
     case serverError(statusCode: Int, message: String?)
     
-    /// The API returned a client error (4xx) other than auth/quota.
+    /// Indicates that the API returned a client-side error (HTTP 4xx) other than authentication or quota issues.
+    ///
+    /// - Parameters:
+    ///   - statusCode: The HTTP status code returned by the server.
+    ///   - message: An optional error message provided by the server.
     case clientError(statusCode: Int, message: String?)
     
-    /// The response from the API could not be decoded.
+    /// Indicates that the response from the API could not be successfully decoded.
+    ///
+    /// - Parameter Error: The underlying decoding error.
     case decodingError(Error)
     
-    /// A general network error (e.g., offline).
+    /// Indicates a general network failure, such as being offline or a connection timeout.
+    ///
+    /// - Parameter Error: The underlying network error.
     case networkError(Error)
     
-    /// Internal SDK error (e.g., invalid image buffer).
+    /// Indicates an internal SDK error occurred during frame processing or inference setup.
+    ///
+    /// - Parameter String: A descriptive message detailing the processing failure.
     case processingError(String)
 
+    /// Evaluates if two `VitalLensError` instances are equal.
     public static func == (lhs: VitalLensError, rhs: VitalLensError) -> Bool {
         switch (lhs, rhs) {
         case (.invalidAPIKey, .invalidAPIKey): return true
@@ -39,6 +54,7 @@ public enum VitalLensError: LocalizedError, Sendable, Equatable {
         }
     }
     
+    /// A localized message describing what error occurred.
     public var errorDescription: String? {
         switch self {
         case .invalidAPIKey:
