@@ -13,13 +13,15 @@ final class VitalLensResultTests: XCTestCase {
                 "confidence": [0.99],
                 "note": "Face found"
             },
-            "vital_signs": {
+            "waveforms": {
                 "ppg_waveform": {
                     "data": [0.5, 0.6, 0.7],
                     "confidence": [1.0, 1.0, 1.0],
                     "unit": "unitless",
                     "note": ""
-                },
+                }
+            },
+            "vitals": {
                 "sbp": {
                     "value": 121.0,
                     "confidence": 0.8,
@@ -80,7 +82,8 @@ final class VitalLensResultTests: XCTestCase {
         let json = """
         {
             "face": { "coordinates": [], "confidence": [], "note": "" },
-            "vital_signs": {},
+            "vitals": {},
+            "waveforms": {},
             "time": [1.0]
         }
         """.data(using: .utf8)!
@@ -119,12 +122,14 @@ final class VitalLensResultTests: XCTestCase {
         let json = """
         {
             "face": {}, "time": [],
-            "vital_signs": {
+            "vitals": {
                 "stress_index": {
                     "value": 45.0,
                     "confidence": 0.8,
                     "unit": "pts"
-                },
+                }
+            },
+            "waveforms": {
                 "resp_signal": {
                     "data": [0.1, 0.2],
                     "confidence": [1.0, 1.0]

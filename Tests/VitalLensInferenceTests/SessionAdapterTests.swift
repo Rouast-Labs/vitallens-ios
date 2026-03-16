@@ -70,6 +70,7 @@ final class SessionAdapterTests: XCTestCase {
             face: rustFace,
             waveforms: ["ppg_waveform": rustWave],
             vitals: ["heart_rate": rustVital],
+            rollingVitals: nil,
             fps: 30.0,
             message: "rust_msg"
         )
@@ -86,8 +87,8 @@ final class SessionAdapterTests: XCTestCase {
     }
     
     func testSessionResultToVitalLensResult_Fallbacks() {
-        let sessionResult = SessionResult(timestamp: [10.0], face: nil, waveforms: [:], vitals: [:], fps: 30.0, message: "msg")
-        let vlResult = sessionResult.toVitalLensResult(originalState: nil, message: nil, modelUsed: nil)
+        let sessionResult = SessionResult(timestamp: [10.0], face: nil, waveforms: [:], vitals: [:], rollingVitals: nil, fps: 30.0, message: "msg")
+        let vlResult = sessionResult.toVitalLensResult(originalState: nil as StateData?, message: nil as String?, modelUsed: nil as String?)
         
         XCTAssertEqual(vlResult.message, "msg")
         XCTAssertNil(vlResult.face.coordinates)

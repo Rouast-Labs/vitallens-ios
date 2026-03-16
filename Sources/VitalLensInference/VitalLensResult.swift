@@ -37,7 +37,10 @@ public struct VitalLensResult: Codable, Sendable {
     public let sampleCount: Int?
 
     /// Optional auxiliary data attached by the host application.
-    public var auxiliary: (any ResultAuxiliaryData)? 
+    public var auxiliary: (any ResultAuxiliaryData)?
+
+    /// A dictionary of time-series rolling vital sign estimates.
+    public let rollingVitals: [String: Waveform]?
 
     /// Convenience accessors
     public var ppg: Waveform? { waveforms["ppg_waveform"] }
@@ -63,6 +66,7 @@ public struct VitalLensResult: Codable, Sendable {
     ///   - message: An optional status message.
     ///   - sampleCount: The number of frames processed.
     ///   - auxiliary: Optional app-specific auxiliary data.
+    ///   - rollingVitals: Optional dict of rolling vitals.
     public init(
         face: FaceData,
         vitals: [String: Vital],
@@ -73,7 +77,8 @@ public struct VitalLensResult: Codable, Sendable {
         state: StateData? = nil,
         message: String? = nil,
         sampleCount: Int? = nil,
-        auxiliary: (any ResultAuxiliaryData)? = nil
+        auxiliary: (any ResultAuxiliaryData)? = nil,
+        rollingVitals: [String: Waveform]? = nil
     ) {
         self.face = face
         self.vitals = vitals
@@ -85,6 +90,7 @@ public struct VitalLensResult: Codable, Sendable {
         self.message = message
         self.sampleCount = sampleCount
         self.auxiliary = auxiliary
+        self.rollingVitals = rollingVitals
     }
     
     struct DynamicKey: CodingKey {
@@ -95,8 +101,8 @@ public struct VitalLensResult: Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case face, signals, time, fps, modelUsed, state, message, sampleCount
-        case vital_signs = "vital_signs"  
+        case face, waveforms, vitals, time, fps, modelUsed, state, message, sampleCount
+        case rollingVitals = "rolling_vitals"
     }
     
     public init(from decoder: Decoder) throws {
@@ -112,20 +118,11 @@ public struct VitalLensResult: Codable, Sendable {
         self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
-        
+        self.rollingVitals = try container.decodeIfPresent([String: Waveform].self, forKey: DynamicKey(stringValue: "rolling_vitals")!)
+
         var tempWaveforms = [String: Waveform]()
         var tempVitals = [String: Vital]()
 
-        if let vitalsContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!) {
-            for key in vitalsContainer.allKeys {
-                if let wave = try? vitalsContainer.decode(Waveform.self, forKey: key) {
-                    tempWaveforms[key.stringValue] = wave
-                } else if let vital = try? vitalsContainer.decode(Vital.self, forKey: key) {
-                    tempVitals[key.stringValue] = vital
-                }
-            }
-        }
-        
         if let waveContainer = try? container.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "waveforms")!) {
             for key in waveContainer.allKeys {
                 if let wave = try? waveContainer.decode(Waveform.self, forKey: key) {
@@ -155,16 +152,9 @@ public struct VitalLensResult: Codable, Sendable {
         try container.encodeIfPresent(state, forKey: .state)
         try container.encodeIfPresent(message, forKey: .message)
         try container.encodeIfPresent(sampleCount, forKey: .sampleCount)
-        
-        var dynamicContainer = encoder.container(keyedBy: DynamicKey.self)
-        var vitalsContainer = dynamicContainer.nestedContainer(keyedBy: DynamicKey.self, forKey: DynamicKey(stringValue: "vital_signs")!)
-        
-        for (key, value) in waveforms {
-            try vitalsContainer.encode(value, forKey: DynamicKey(stringValue: key)!)
-        }
-        for (key, value) in vitals {
-            try vitalsContainer.encode(value, forKey: DynamicKey(stringValue: key)!)
-        }
+        try container.encode(waveforms, forKey: .waveforms)
+        try container.encode(vitals, forKey: .vitals)
+        try container.encodeIfPresent(rollingVitals, forKey: .rollingVitals)
     }
 }
 

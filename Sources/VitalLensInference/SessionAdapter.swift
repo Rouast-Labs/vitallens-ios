@@ -14,7 +14,8 @@ public extension ModelConfig {
             fpsTarget: Float(self.fpsTarget),
             inputSize: UInt64(self.inputSize),
             nInputs: UInt64(self.nInputs),
-            roiMethod: self.roiMethod
+            roiMethod: self.roiMethod,
+            estimateRollingVitals: nil
         )
     }
 }
@@ -62,7 +63,7 @@ public extension SessionResult {
     ///   - originalState: The opaque state data to attach to the final result.
     ///   - message: An optional message overriding the default session message.
     ///   - modelUsed: The identifier of the model used to generate this data.
-    /// - Returns: A comprehensive `VitalLensResult` populated with refined vitals and waveforms.
+    /// - Returns: A comprehensive `VitalLensResult` populated with refined vitals, waveforms, and rolling estimates.
     func toVitalLensResult(originalState: StateData?, message: String?, modelUsed: String?) -> VitalLensResult {
         
         var finalWaveforms: [String: Waveform] = [:]
@@ -73,6 +74,20 @@ public extension SessionResult {
                 unit: wave.unit,
                 note: wave.note
             )
+        }
+        
+        var finalRollingVitals: [String: Waveform]? = nil
+        if let rolling = self.rollingVitals, !rolling.isEmpty {
+            var rollingDict: [String: Waveform] = [:]
+            for (key, wave) in rolling {
+                rollingDict[key] = Waveform(
+                    data: wave.data,
+                    confidence: wave.confidence,
+                    unit: wave.unit,
+                    note: wave.note
+                )
+            }
+            finalRollingVitals = rollingDict
         }
         
         var finalVitals: [String: Vital] = [:]
@@ -103,7 +118,8 @@ public extension SessionResult {
             modelUsed: modelUsed,
             state: originalState,
             message: message ?? self.message,
-            sampleCount: self.timestamp.count
+            sampleCount: self.timestamp.count,
+            rollingVitals: finalRollingVitals
         )
     }
 }

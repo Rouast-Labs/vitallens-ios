@@ -19,8 +19,8 @@ let package = Package(
             targets: ["VitalLensInference"]
         ),
     ],
-     dependencies: [
-        .package(url: "https://github.com/Rouast-Labs/vitallens-core.git", exact: "0.1.0")
+    dependencies: [
+        .package(url: "https://github.com/Rouast-Labs/vitallens-core.git", exact: "0.2.3")
     ],
     targets: [
         // Inference: Pure Logic (Networking, State). No UI dependencies.

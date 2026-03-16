@@ -73,13 +73,7 @@ struct ContentView: View {
 
 ## Documentation
 
-For full API reference, advanced configuration, proxy usage, and custom camera loops, visit the documentation at **[docs.rouast.com/ios](https://docs.rouast.com/ios/)** or check the source files:
-
-* [SwiftUI Views](./docs/views.md)
-* [Usage Examples](./examples/README.md)
-* [Proxies & Security](./docs/proxies.md)
-* [Core & Advanced](./docs/core.md)
-* [API Reference](./docs/ref.md)
+For full API reference, advanced configuration, proxy usage, and custom camera loops, visit the documentation at **[docs.rouast.com/ios](https://docs.rouast.com/ios/)**.
 
 <!-- mkdocs-bottom-start -->
 ## Requirements

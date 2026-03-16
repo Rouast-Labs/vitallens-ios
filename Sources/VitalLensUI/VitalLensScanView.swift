@@ -4,6 +4,8 @@ import VitalLensInference
 
 #if canImport(UIKit)
 
+// TODO: Adopt centralised state management for scan and monitor views from js
+
 /// Represents the various operational states of the scanning process.
 public enum ScanState {
     case idle
@@ -459,10 +461,10 @@ struct ScanStatusBadge: View {
     var text: String {
         switch state {
         case .idle: return "Idle"
-        case .searching: return "Searching..."
-        case .warmingUp: return "Calibrating..."
+        case .searching: return "Searching"
+        case .warmingUp: return "Calibrating"
         case .tracking: return "Scanning"
-        case .recovering: return "Adjust Position"
+        case .recovering: return "Recovering"
         case .issue: return "Issue"
         case .completed: return "Done"
         }

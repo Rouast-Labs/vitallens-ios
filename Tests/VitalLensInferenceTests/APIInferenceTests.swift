@@ -355,9 +355,10 @@ final class APIInferenceTests: XCTestCase {
         """
         {
             "face": { "coordinates": [], "confidence": [], "note": "" },
-            "vital_signs": {
+            "vitals": {
                 "heart_rate": { "value": 72.0, "confidence": 0.9, "unit": "bpm", "note": "" }
             },
+            "waveforms": {},
             "time": [1.0],
             "fps": 30.0,
             "message": "OK"
@@ -366,11 +367,11 @@ final class APIInferenceTests: XCTestCase {
     }
     
     private var responseWithState: Data {
-        // [0.1, 0.2] as Float32 Array encoded to Base64 is "zcxMPc3MTD4="
         """
         {
             "face": { "coordinates": [], "confidence": [], "note": "" },
-            "vital_signs": {},
+            "vitals": {},
+            "waveforms": {},
             "time": [1.0],
             "state": { "data": "zcxMPc3MTD4=" }
         }
