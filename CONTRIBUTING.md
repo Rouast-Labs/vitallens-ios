@@ -81,10 +81,10 @@ To cut a new release:
 
 1. **Tag the release:**
     ```bash
-    git tag 0.1.0
+    git tag v0.1.0
     ```
 
 2. **Push the tag:**
     ```bash
-    git push origin 0.1.0
+    git push origin v0.1.0
     ```
