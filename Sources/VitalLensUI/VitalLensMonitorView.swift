@@ -589,7 +589,7 @@ struct StatusBadge: View {
     var color: Color {
         switch state {
         case .idle: return .gray
-        case .searching: return VitalMetadataCache.brandBlue
+        case .searching: return VitalInfoCache.brandBlue
         case .warmingUp: return .purple
         case .tracking: return .green
         case .issue: return .orange
@@ -673,20 +673,20 @@ struct GroupedMetricsTile: View {
         self.s1Format = format(for: secondary1Id)
         self.s2Format = format(for: secondary2Id)
 
-        let pMeta = VitalMetadataCache.getMeta(for: primaryId)
-        self.pTitle = pMeta?.shortName ?? primaryId
-        self.pUnit = pMeta?.unit.uppercased() ?? ""
+        let pInfo = VitalInfoCache.getInfo(for: primaryId)
+        self.pTitle = pInfo?.shortName ?? primaryId
+        self.pUnit = pInfo?.unit.uppercased() ?? ""
         
         self.hasSec1 = secondary1Id != nil
         if let s1 = secondary1Id {
-            let m = VitalMetadataCache.getMeta(for: s1)
+            let m = VitalInfoCache.getInfo(for: s1)
             self.s1Title = m?.shortName ?? s1
             self.s1Unit = m?.unit.uppercased() ?? ""
         } else { self.s1Title = ""; self.s1Unit = "" }
         
         self.hasSec2 = secondary2Id != nil
         if let s2 = secondary2Id {
-            let m = VitalMetadataCache.getMeta(for: s2)
+            let m = VitalInfoCache.getInfo(for: s2)
             self.s2Title = m?.shortName ?? s2
             self.s2Unit = m?.unit.uppercased() ?? ""
         } else { self.s2Title = ""; self.s2Unit = "" }

@@ -4,24 +4,24 @@ import VitalLensCore
 
 #if canImport(UIKit)
 
-/// A thread-safe cache for vital sign metadata retrieved from the Core engine.
-public struct VitalMetadataCache {
-    nonisolated(unsafe) private static var cache: [String: VitalDisplayMeta] = [:]
+/// A thread-safe cache for vital sign info retrieved from the Core engine.
+public struct VitalInfoCache {
+    nonisolated(unsafe) private static var cache: [String: VitalInfo] = [:]
     nonisolated(unsafe) private static var queriedKeys: Set<String> = []
     private static let lock = NSLock()
     
-    /// Retrieves the display metadata for a specific vital sign identifier.
+    /// Retrieves the display info for a specific vital sign identifier.
     ///
     /// - Parameter id: The unique string identifier of the vital sign.
-    /// - Returns: The cached `VitalDisplayMeta` if available, or `nil` if it doesn't exist.
-    public static func getMeta(for id: String) -> VitalDisplayMeta? {
+    /// - Returns: The cached `VitalInfo` if available, or `nil` if it doesn't exist.
+    public static func getInfo(for id: String) -> VitalInfo? {
         lock.lock()
         defer { lock.unlock() }
         
         if queriedKeys.contains(id) { return cache[id] }
         
-        if let meta = VitalLensCore.getVitalInfo(vitalId: id) {
-            cache[id] = meta
+        if let info = VitalLensCore.getVitalInfo(vitalId: id) {
+            cache[id] = info
         }
         queriedKeys.insert(id)
         
@@ -30,7 +30,7 @@ public struct VitalMetadataCache {
     
     /// Dynamically fetches the brand accent color, falling back to default blue.
     public static var brandBlue: Color {
-        if let meta = getMeta(for: "respiratory_rate"), let c = Color(hex: meta.color) {
+        if let info = getInfo(for: "respiratory_rate"), let c = Color(hex: info.color) {
             return c
         }
         return Color(red: 0/255, green: 163/255, blue: 252/255)
@@ -154,7 +154,7 @@ public struct VitalLensStartView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
-                        .background(VitalMetadataCache.brandBlue)
+                        .background(VitalInfoCache.brandBlue)
                         .cornerRadius(16)
                 }
                 
@@ -165,7 +165,7 @@ public struct VitalLensStartView: View {
                         HStack(spacing: 16) {
                             HStack(spacing: 0) {
                                 ZStack {
-                                    Circle().fill(currentMode == .eco ? VitalMetadataCache.brandBlue : Color.clear)
+                                    Circle().fill(currentMode == .eco ? VitalInfoCache.brandBlue : Color.clear)
                                     Image(systemName: "leaf.fill")
                                         .foregroundColor(currentMode == .eco ? .white : .gray)
                                         .font(.system(size: 14))
@@ -173,7 +173,7 @@ public struct VitalLensStartView: View {
                                 .frame(width: 36, height: 36)
                                 
                                 ZStack {
-                                    Circle().fill(currentMode == .standard ? VitalMetadataCache.brandBlue : Color.clear)
+                                    Circle().fill(currentMode == .standard ? VitalInfoCache.brandBlue : Color.clear)
                                     Image(systemName: "bolt.fill")
                                         .foregroundColor(currentMode == .standard ? .white : .gray)
                                         .font(.system(size: 14))
@@ -220,7 +220,7 @@ public struct GuideItem: View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 24))
-                .foregroundColor(VitalMetadataCache.brandBlue)
+                .foregroundColor(VitalInfoCache.brandBlue)
             Text(text)
                 .font(.caption2)
                 .multilineTextAlignment(.center)

@@ -158,7 +158,7 @@ public struct VitalLensFileView: View {
                 Text("Scan Complete").font(.headline).foregroundColor(.white)
                 Spacer()
                 Button("Done") { state = .idle }
-                    .foregroundColor(VitalMetadataCache.brandBlue)
+                    .foregroundColor(VitalInfoCache.brandBlue)
             }.padding(.top, 8)
             
             ScrollView {
@@ -232,16 +232,16 @@ public struct VitalLensFileView: View {
     ///
     /// - Parameter res: The raw result returned by the inference engine.
     private func parseVitals(from res: VitalLensResult) {
-        let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
-        let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")
+        let hrInfo = VitalInfoCache.getInfo(for: "heart_rate")
+        let rrInfo = VitalInfoCache.getInfo(for: "respiratory_rate")
         
         self.primaryVitals = [
-            ResolvedVital(id: "hr", title: hrMeta?.displayName ?? "Heart Rate", 
-                          value: res.heartRate?.value, unit: hrMeta?.unit.uppercased() ?? "BPM", 
-                          format: "%.0f", confidence: res.heartRate?.confidence, emoji: hrMeta?.emoji ?? "❤️"),
-            ResolvedVital(id: "rr", title: rrMeta?.displayName ?? "Respiration", 
-                          value: res.respiratoryRate?.value, unit: rrMeta?.unit.uppercased() ?? "RPM", 
-                          format: "%.0f", confidence: res.respiratoryRate?.confidence, emoji: rrMeta?.emoji ?? "🫁")
+            ResolvedVital(id: "hr", title: hrInfo?.displayName ?? "Heart Rate", 
+                          value: res.heartRate?.value, unit: hrInfo?.unit.uppercased() ?? "BPM", 
+                          format: "%.0f", confidence: res.heartRate?.confidence, emoji: hrInfo?.emoji ?? "❤️"),
+            ResolvedVital(id: "rr", title: rrInfo?.displayName ?? "Respiration", 
+                          value: res.respiratoryRate?.value, unit: rrInfo?.unit.uppercased() ?? "RPM", 
+                          format: "%.0f", confidence: res.respiratoryRate?.confidence, emoji: rrInfo?.emoji ?? "🫁")
         ].filter { $0.value != nil }
         
         self.secondaryVitals = [
@@ -249,7 +249,7 @@ public struct VitalLensFileView: View {
             ("hrv_rmssd", res.hrvRmssd?.value, res.hrvRmssd?.confidence),
             ("ie_ratio", res.vitals["ie_ratio"]?.value, res.vitals["ie_ratio"]?.confidence)
         ].compactMap { id, val, conf in
-            guard let v = val, let m = VitalMetadataCache.getMeta(for: id) else { return nil }
+            guard let v = val, let m = VitalInfoCache.getInfo(for: id) else { return nil }
             return ResolvedVital(id: id, title: m.shortName, value: v, unit: m.unit.uppercased(), 
                                  format: (id == "ie_ratio" ? "%.2f" : "%.0f"), confidence: conf, emoji: m.emoji)
         }

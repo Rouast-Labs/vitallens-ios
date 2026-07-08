@@ -137,7 +137,7 @@ public struct VitalLensScanView: View {
                     ZStack {
                         Ellipse()
                             .trim(from: 0.0, to: CGFloat(progress))
-                            .stroke(VitalMetadataCache.brandBlue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                            .stroke(VitalInfoCache.brandBlue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                             .frame(width: 450, height: 320)
                             .rotationEffect(.degrees(-90))
                             .animation(.linear(duration: 0.2), value: progress)
@@ -351,8 +351,8 @@ public struct VitalLensScanView: View {
                 client?.stopStream()
                 
                 let res = result
-                let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
-                let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")
+                let hrMeta = VitalInfoCache.getInfo(for: "heart_rate")
+                let rrMeta = VitalInfoCache.getInfo(for: "respiratory_rate")
                 
                 self.primaryVitals = [
                     ResolvedVital(id: "hr", title: hrMeta?.displayName ?? "Heart Rate", 
@@ -370,7 +370,7 @@ public struct VitalLensScanView: View {
                     ("hrv_rmssd", res.hrvRmssd?.value, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
                     ("ie_ratio", res.vitals["ie_ratio"]?.value, res.vitals["ie_ratio"]?.confidence ?? 0, vitalConfThreshold)
                 ].compactMap { id, val, conf, thresh in
-                    guard conf >= thresh, let v = val, let m = VitalMetadataCache.getMeta(for: id) else { return nil }
+                    guard conf >= thresh, let v = val, let m = VitalInfoCache.getInfo(for: id) else { return nil }
                     return ResolvedVital(id: id, title: m.shortName, value: v, unit: m.unit.uppercased(), 
                                         format: (id == "ie_ratio" ? "%.2f" : "%.0f"), confidence: conf, emoji: m.emoji)
                 }
@@ -450,7 +450,7 @@ struct ScanStatusBadge: View {
     var color: Color {
         switch state {
         case .idle, .completed: return .gray
-        case .searching: return VitalMetadataCache.brandBlue
+        case .searching: return VitalInfoCache.brandBlue
         case .warmingUp: return .purple
         case .tracking: return .green
         case .recovering: return .orange

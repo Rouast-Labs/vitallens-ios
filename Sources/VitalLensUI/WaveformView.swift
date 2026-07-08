@@ -21,7 +21,7 @@ public struct WaveformContainer: View {
         self.history = history
         self.isReady = isReady
         
-        let meta = VitalMetadataCache.getMeta(for: vitalId)
+        let meta = VitalInfoCache.getInfo(for: vitalId)
         self.title = meta?.displayName ?? vitalId
         self.chartColor = meta.flatMap { Color(hex: $0.color) } ?? .red
     }
