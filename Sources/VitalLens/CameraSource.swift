@@ -148,7 +148,17 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
             throw VitalLensError.processingError("Could not add camera input")
         }
         session.addInput(input)
-        
+        // TODO: Camera control for rPPG stability (auto AE/AWB shifts are global brightness/colour
+        //   changes far larger than the pulse signal, and also trigger false light_quality dips).
+        //   Make it an option (e.g. cameraControl: .auto | .off), default on:
+        //   - device.lockForConfiguration(); set exposurePointOfInterest to the face; fix frame rate via
+        //     activeVideoMinFrameDuration == activeVideoMaxFrameDuration (30 fps, or 15 for eco mode).
+        //   - After ~1-2 s of convergence with a face in view, lock: exposureMode = .locked,
+        //     whiteBalanceMode = .locked, focusMode = .locked.
+        //   - If ROI brightness drifts beyond a threshold, unlock, re-converge, re-lock.
+        //   - Never derive exposure/gains from skin-tone colour statistics (patent EP4353143A1).
+        //   Validate first with an A/B test (locked vs auto) in the VitalLens app.
+
         if session.canAddOutput(output) {
             session.addOutput(output)
             output.alwaysDiscardsLateVideoFrames = true
