@@ -405,9 +405,9 @@ public struct VitalLensScanView: View {
             
         case .tracking:
             if !goodFace {
-                transition(to: .recovering, message: "Adjust position...")
+                transition(to: .recovering, message: "Adjust your position.")
             } else if isLowSignal {
-                transition(to: .recovering, message: "Improve lighting...")
+                transition(to: .recovering, message: "Low confidence. Use steady light, move closer, and hold still.")
             }
             
         case .recovering:
@@ -416,7 +416,7 @@ public struct VitalLensScanView: View {
             } else if elapsedInState >= recoveryTimeout {
                 handleIssue(message: "Could not recover conditions.")
             } else {
-                let currentIssueMessage = !goodFace ? "Adjust position..." : "Improve lighting..."
+                let currentIssueMessage = !goodFace ? "Adjust your position." : "Low confidence. Use steady light, move closer, and hold still."
                 if statusMessage != currentIssueMessage {
                     statusMessage = currentIssueMessage
                 }

@@ -351,7 +351,7 @@ public struct VitalLensMonitorView: View {
     private func startProcessing() {
         isProcessing = true
         monitorState = .searching
-        feedbackMessage = "Face the camera, ensure good lighting and hold still."
+        feedbackMessage = "Face the camera and hold still."
     }
     
     private func stopProcessing() {
@@ -461,7 +461,7 @@ public struct VitalLensMonitorView: View {
         
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
-            feedbackMessage = "Low confidence. Ensure you are well lit and hold still."
+            feedbackMessage = "Low confidence. Use steady light, move closer, and hold still."
         } else if showWaveforms && !hasEnoughData {
             monitorState = .warmingUp
             feedbackMessage = "" 

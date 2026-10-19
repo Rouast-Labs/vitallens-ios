@@ -86,7 +86,7 @@ public struct VitalLensStartView: View {
         timingHintLabel: String,
         startButtonLabel: String,
         currentMode: Binding<VitalLensMode>,
-        instruction1: (icon: String, text: String) = ("person.crop.circle.fill", "Center your face\nin the oval."),
+        instruction1: (icon: String, text: String) = ("person.crop.circle.fill", "Sit close, face\nin the oval."),
         instruction2: (icon: String, text: String) = ("pause.circle.fill", "Hold yourself and\ncamera still."),
         showModeToggle: Bool = true,
         onStart: @escaping () -> Void
