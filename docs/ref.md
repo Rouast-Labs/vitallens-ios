@@ -96,6 +96,18 @@ client.onFaceStateChanged = { isPresent in
 }
 ```
 
+### `onSlowConnection`
+
+A closure triggered once when the connection is too slow for the current frame rate, so that requests queue up. It is only reported when running above 15 FPS. To react, stop the stream and start a new client with a lower `overrideFps`. The built-in views do this automatically.
+
+```swift
+client.onSlowConnection = {
+    // Restart with a lower frame rate
+    client.stopStream()
+    client = VitalLens(apiKey: "YOUR_KEY", overrideFps: 15)
+}
+```
+
 ---
 
 ## Methods

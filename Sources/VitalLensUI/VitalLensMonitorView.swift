@@ -39,13 +39,17 @@ public struct VitalLensMonitorView: View {
     private let windowSize: TimeInterval
     private let minDisplayDuration: TimeInterval
     
-    @State private var currentMode: VitalLensMode = .eco
+    @State private var currentMode: VitalLensMode = .standard
     private let initialMode: VitalLensMode
 
     @State private var client: VitalLens?
     @State private var isProcessing = false
     @State private var monitorState: MonitorState = .idle
     @State private var feedbackMessage: String = ""
+    @State private var previewView: UIView?
+    @State private var sessionToken = UUID()
+    @State private var autoFallbackDone = false
+    @State private var noticeUntil: Date = .distantPast
     
     @State private var isFaceCurrentlyDetected = false
     
@@ -111,7 +115,7 @@ public struct VitalLensMonitorView: View {
     ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
     ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
     ///   - showWaveforms: Whether to render real-time waveforms on the UI. Defaults to `true`.
-    ///   - initialMode: The starting performance mode. Defaults to `.eco`.
+    ///   - initialMode: The starting performance mode. Defaults to `.standard`. On a connection that is too slow for it, the monitor falls back to `.eco`.
     ///   - bufferOffset: The delay in seconds applied to the waveform to ensure smooth rendering. Defaults to `0.15`.
     ///   - windowSize: The duration of the history to retain for waveform rendering. Defaults to `8.0`.
     ///   - minDisplayDuration: The minimum data accumulation time required before displaying results. Defaults to `6.0`.
@@ -120,7 +124,7 @@ public struct VitalLensMonitorView: View {
         proxyURL: URL? = nil,
         method: String = "vitallens",
         showWaveforms: Bool = true,
-        initialMode: VitalLensMode = .eco,
+        initialMode: VitalLensMode = .standard,
         bufferOffset: TimeInterval = 0.15,
         windowSize: TimeInterval = 8.0,
         minDisplayDuration: TimeInterval = 6.0 
@@ -349,6 +353,7 @@ public struct VitalLensMonitorView: View {
     }
     
     private func startProcessing() {
+        autoFallbackDone = false
         isProcessing = true
         monitorState = .searching
         feedbackMessage = "Face the camera and hold still."
@@ -384,8 +389,41 @@ public struct VitalLensMonitorView: View {
         isFaceCurrentlyDetected = false
     }
     
+    /// Sets the feedback message, unless a notice is being shown.
+    private func setFeedback(_ message: String) {
+        if Date() >= noticeUntil { feedbackMessage = message }
+    }
+    
+    /// Falls back to eco mode because the connection is too slow for standard mode.
+    /// Measurements start over, as frame rates cannot be mixed.
+    @MainActor
+    private func fallBackToEco() {
+        guard !autoFallbackDone, currentMode == .standard, isProcessing, let view = previewView else { return }
+        autoFallbackDone = true
+        currentMode = .eco
+        
+        client?.stopStream()
+        client = nil
+        playbackTask?.cancel()
+        clearMeasurements()
+        isFaceCurrentlyDetected = false
+        
+        monitorState = .searching
+        feedbackMessage = "Slow connection. Switched to Eco mode."
+        noticeUntil = Date().addingTimeInterval(5)
+        
+        // Remove the preview layer of the stopped camera session
+        view.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        Task { @MainActor in
+            // Give the stopped camera session time to shut down
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            startSession(in: view)
+        }
+    }
+    
     private func startSession(in view: UIView) {
         guard client == nil, isProcessing else { return }
+        previewView = view
         
         let newClient = VitalLens(
             apiKey: apiKey,
@@ -403,13 +441,23 @@ public struct VitalLensMonitorView: View {
                 self.isFaceCurrentlyDetected = isPresent
                 if !isPresent {
                     self.monitorState = .issue
-                    self.feedbackMessage = "Check Position: Face the camera and hold still."
+                    self.setFeedback("Check Position: Face the camera and hold still.")
                     self.client?.resetStream()
                     self.clearMeasurements()
                 } else if self.monitorState == .issue || self.monitorState == .idle {
                     self.monitorState = .searching
-                    self.feedbackMessage = "Face detected, analyzing..."
+                    self.setFeedback("Face detected, analyzing...")
                 }
+            }
+        }
+        
+        let token = UUID()
+        sessionToken = token
+        
+        newClient.onSlowConnection = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.fallBackToEco()
             }
         }
         
@@ -420,6 +468,8 @@ public struct VitalLensMonitorView: View {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 for await result in stream {
+                    // Ignore results of a session that was replaced by a restart
+                    guard token == sessionToken else { break }
                     updateUI(with: result)
                 }
             } catch {
@@ -443,7 +493,7 @@ public struct VitalLensMonitorView: View {
         
         if currentFaceConf < faceConfThreshold {
             monitorState = .issue
-            feedbackMessage = "Face not clear. Hold still."
+            setFeedback("Face not clear. Hold still.")
             return
         }
         
@@ -461,13 +511,13 @@ public struct VitalLensMonitorView: View {
         
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
-            feedbackMessage = "Low confidence. Use steady light, move closer, and hold still."
+            setFeedback("Low confidence.\nUse steady light, move closer, and hold still.")
         } else if showWaveforms && !hasEnoughData {
             monitorState = .warmingUp
-            feedbackMessage = "" 
+            setFeedback("")
         } else {
             monitorState = .tracking
-            feedbackMessage = "Tracking vitals"
+            setFeedback("Tracking vitals")
         }
         
         if !ppgConfHistory.isEmpty {
