@@ -59,7 +59,7 @@ public struct VitalLensScanView: View {
     private let recoveryTimeout: TimeInterval = 10.0
     
     private let vitalConfThreshold = 0.8
-    private let hrvConfThreshold = 0.7
+    private let hrvConfThreshold = 0.8
     
     /// Initializes a new Scan View.
     ///
@@ -460,9 +460,11 @@ public struct VitalLensScanView: View {
                                 confidence: res.respiratoryRate?.confidence, emoji: rrMeta?.emoji ?? "🫁")
                 ]
                 
+                // HRV is only shown together with a confident heart rate
+                let hrShown = (res.heartRate?.confidence ?? 0) >= vitalConfThreshold
                 self.secondaryVitals = [
-                    ("hrv_sdnn", res.hrvSdnn?.value, res.hrvSdnn?.confidence ?? 0, hrvConfThreshold),
-                    ("hrv_rmssd", res.hrvRmssd?.value, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
+                    ("hrv_sdnn", hrShown ? res.hrvSdnn?.value : nil, res.hrvSdnn?.confidence ?? 0, hrvConfThreshold),
+                    ("hrv_rmssd", hrShown ? res.hrvRmssd?.value : nil, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
                     ("ie_ratio", res.vitals["ie_ratio"]?.value, res.vitals["ie_ratio"]?.confidence ?? 0, vitalConfThreshold)
                 ].compactMap { id, val, conf, thresh in
                     guard conf >= thresh, let v = val, let m = VitalInfoCache.getInfo(for: id) else { return nil }

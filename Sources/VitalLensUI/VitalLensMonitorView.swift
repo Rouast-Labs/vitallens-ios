@@ -106,7 +106,7 @@ public struct VitalLensMonitorView: View {
     @State private var playbackTask: Task<Void, Never>? = nil
     
     private let vitalConfThreshold = 0.8
-    private let hrvConfThreshold = 0.7
+    private let hrvConfThreshold = 0.8
     private let faceConfThreshold = 0.5
     
     /// Initializes a new Monitor View for real-time vital sign estimation.
@@ -144,8 +144,8 @@ public struct VitalLensMonitorView: View {
     
     private var isHrReady: Bool { hrValue != nil && hrConf >= vitalConfThreshold }
     private var isRrReady: Bool { rrValue != nil && rrConf >= vitalConfThreshold }
-    private var isSdnnReady: Bool { sdnnValue != nil && sdnnConf >= hrvConfThreshold }
-    private var isRmssdReady: Bool { rmssdValue != nil && rmssdConf >= hrvConfThreshold }
+    private var isSdnnReady: Bool { sdnnValue != nil && isHrvShown(hrvConf: sdnnConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold) }
+    private var isRmssdReady: Bool { rmssdValue != nil && isHrvShown(hrvConf: rmssdConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold) }
     private var isIeReady: Bool { ieRatioValue != nil && ieRatioConf >= vitalConfThreshold }
     private var isPpgReady: Bool { 
         let avgConf = ppgConfHistory.isEmpty ? 0.0 : ppgConfHistory.reduce(0, +) / Double(ppgConfHistory.count)
@@ -553,7 +553,8 @@ public struct VitalLensMonitorView: View {
         
         let hasConfidentHr = hrConf >= vitalConfThreshold
         let hasConfidentRr = rrConf >= vitalConfThreshold
-        let hasConfidentHrv = sdnnConf >= hrvConfThreshold || rmssdConf >= hrvConfThreshold
+        let hasConfidentHrv = isHrvShown(hrvConf: sdnnConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold)
+            || isHrvShown(hrvConf: rmssdConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold)
         
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
