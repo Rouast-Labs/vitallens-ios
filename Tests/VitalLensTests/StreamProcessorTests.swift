@@ -34,6 +34,7 @@ actor MockInferenceStrategy: InferenceStrategy {
     var lastReceivedState: (any InferenceState)?
     var stateHistory: [(any InferenceState)?] = []
     private var shouldFail = false
+    private var inferDelay: TimeInterval = 0
     
     func resolveConfig() async throws -> ModelConfig {
         return ModelConfig(
@@ -53,6 +54,10 @@ actor MockInferenceStrategy: InferenceStrategy {
         self.shouldFail = fail
     }
     
+    func setInferDelay(_ delay: TimeInterval) {
+        self.inferDelay = delay
+    }
+    
     func clearHistory() {
         self.stateHistory.removeAll()
     }
@@ -67,6 +72,10 @@ actor MockInferenceStrategy: InferenceStrategy {
         self.lastReceivedState = state
         self.stateHistory.append(state)
         self.inferCallCount += 1
+        
+        if inferDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(inferDelay * 1_000_000_000))
+        }
         
         if shouldFail {
             throw VitalLensError.serverError(statusCode: 500, message: "Mock Failure")
@@ -102,6 +111,13 @@ class MockCamera: CameraStreaming, @unchecked Sendable {
     #if canImport(UIKit)
     func showPreview(on view: UIView) {}
     #endif
+}
+
+final class SlowCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.lock(); count += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
 }
 
 // MARK: - Tests
@@ -170,6 +186,33 @@ final class StreamProcessorTests: XCTestCase {
         XCTAssertGreaterThan(count, 0, "Strategy should be called when buffer fills")
     }
     
+    func testSlowRequest_ReportsSlowConnectionOnce() async throws {
+        await strategy.setInferDelay(2.2)
+        let counter = SlowCounter()
+        await processor.setSlowConnectionCallback { counter.increment() }
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<10 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 2_800_000_000)
+        
+        XCTAssertEqual(counter.value, 1, "A request over 2 s at 30 fps should report a slow connection once")
+    }
+    
+    func testFastRequests_DoNotReportSlowConnection() async throws {
+        let counter = SlowCounter()
+        await processor.setSlowConnectionCallback { counter.increment() }
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<10 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        
+        XCTAssertEqual(counter.value, 0)
+    }
+
     func testProcessFrame_NoROI_DoesNotCallStrategy() async throws {
         await roiStrategy.setROI(nil)
         

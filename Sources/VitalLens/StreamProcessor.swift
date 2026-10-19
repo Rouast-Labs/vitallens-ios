@@ -39,6 +39,8 @@ actor StreamProcessor {
 
     private var lastFacePresence: Bool = false
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
+    private var onSlowConnection: (@Sendable () -> Void)?
+    private var connectionMonitor = ConnectionMonitor()
     
     private var lastProcessedTime: TimeInterval = -1.0
     private var streamGeneration: Int = 0
@@ -110,6 +112,7 @@ actor StreamProcessor {
         self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
         
         self.isPaused = false
+        self.connectionMonitor.reset()
         
         let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
         self.frameSignal = signalContinuation
@@ -191,6 +194,15 @@ actor StreamProcessor {
     /// - Parameter callback: A closure that receives `true` when a face enters the frame, and `false` when lost.
     func setFaceStateCallback(_ callback: (@Sendable (Bool) -> Void)?) {
         self.onFaceStateChanged = callback
+    }
+    
+    /// Sets a callback to be triggered once when the connection is too slow for the current frame rate.
+    ///
+    /// Only reported above the eco frame rate. The caller is expected to restart the stream at a lower frame rate.
+    ///
+    /// - Parameter callback: A closure called at most once per started stream.
+    func setSlowConnectionCallback(_ callback: (@Sendable () -> Void)?) {
+        self.onSlowConnection = callback
     }
     
     /// Processes an incoming video frame. Handles framerate targeting, ROI determination, and buffer insertion.
@@ -280,6 +292,7 @@ actor StreamProcessor {
                 guard let window = await bufferManager.execute(command: command) else { break }
                 let currentState = await bufferManager.getState()
                 let currentGeneration = self.streamGeneration
+                let requestStart = Date()
                 
                 do {
                     let (rawResult, newState) = try await strategy.infer(
@@ -294,6 +307,13 @@ actor StreamProcessor {
                     }
                     
                     consecutiveErrors = 0
+                    
+                    if let fps = self.config?.fpsTarget, fps > ConnectionThresholds.ecoFps {
+                        let elapsedMs = Date().timeIntervalSince(requestStart) * 1000
+                        if connectionMonitor.record(ms: elapsedMs, frames: window.count) != nil {
+                            onSlowConnection?()
+                        }
+                    }
                     
                     await bufferManager.updateState(newState)
                     
