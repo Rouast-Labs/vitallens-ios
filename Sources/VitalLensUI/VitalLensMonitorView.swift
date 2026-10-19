@@ -436,6 +436,9 @@ public struct VitalLensMonitorView: View {
         
         client?.stopStream()
         client = nil
+        // Invalidate callbacks of the stopped session
+        let restartToken = UUID()
+        sessionToken = restartToken
         playbackTask?.cancel()
         clearMeasurements()
         isFaceCurrentlyDetected = false
@@ -449,7 +452,8 @@ public struct VitalLensMonitorView: View {
         Task { @MainActor in
             // Give the stopped camera session time to shut down
             try? await Task.sleep(nanoseconds: 300_000_000)
-            startSession(in: view)
+            // Not if the monitor was stopped in the meantime
+            if restartToken == self.sessionToken && self.isProcessing { startSession(in: view) }
         }
     }
     

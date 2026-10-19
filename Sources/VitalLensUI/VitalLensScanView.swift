@@ -309,6 +309,9 @@ public struct VitalLensScanView: View {
         
         client?.stopStream()
         client = nil
+        // Invalidate callbacks of the stopped session
+        let restartToken = UUID()
+        sessionToken = restartToken
         
         progress = 0.0
         accumulatedScanTime = 0.0
@@ -329,7 +332,8 @@ public struct VitalLensScanView: View {
         Task { @MainActor in
             // Give the stopped camera session time to shut down
             try? await Task.sleep(nanoseconds: 300_000_000)
-            startSession(in: view)
+            // Not if the scan was cancelled or stopped in the meantime
+            if restartToken == self.sessionToken && self.scanState == .searching { startSession(in: view) }
         }
     }
     
