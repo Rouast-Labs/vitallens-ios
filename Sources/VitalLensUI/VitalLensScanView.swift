@@ -37,6 +37,7 @@ public struct VitalLensScanView: View {
     @State private var sessionToken = UUID()
     @State private var autoFallbackDone = false
     @State private var noticeUntil: Date = .distantPast
+    @State private var messageHold: MessageHold?
     @State private var lastResultAt = Date()
     @State private var finalResult: VitalLensResult? = nil
     @State private var showDetails: Bool = false
@@ -120,6 +121,7 @@ public struct VitalLensScanView: View {
             
             Text(statusMessage)
                 .font(.subheadline)
+                .multilineTextAlignment(.center)
                 .fontWeight(.medium)
                 .foregroundColor(.white)
                 .padding(.horizontal, 16)
@@ -189,6 +191,7 @@ public struct VitalLensScanView: View {
     private func startProcessing() {
         autoFallbackDone = false
         scanState = .searching
+        messageHold?.release()
         statusMessage = "Position your face in the oval"
         progress = 0.0
         accumulatedScanTime = 0.0
@@ -224,7 +227,7 @@ public struct VitalLensScanView: View {
     ///   - message: The localized message to display to the user.
     private func transition(to newState: ScanState, message: String) {
         self.scanState = newState
-        setStatus(message, force: newState == .issue)
+        setStatus(message, force: newState == .issue, state: newState)
         self.stateStartTime = Date()
         
         if newState == .issue {
@@ -247,7 +250,7 @@ public struct VitalLensScanView: View {
             transition(to: .issue, message: message)
         } else {
             scanState = .searching
-            setStatus("\(message) Retrying...")
+            setStatus("\(message) Retrying...", state: .searching)
             progress = 0.0
             accumulatedScanTime = 0.0
             stateStartTime = Date()
@@ -271,8 +274,25 @@ public struct VitalLensScanView: View {
     }
     
     /// Sets the status message, unless a notice is being shown. Issues always show.
-    private func setStatus(_ message: String, force: Bool = false) {
-        if force || Date() >= noticeUntil { statusMessage = message }
+    ///
+    /// Problem hints (the recovering state) stay up for at least 3 s, so they can be read even if the
+    /// problem is gone; messages arriving meanwhile wait and only the latest is shown afterwards.
+    private func setStatus(_ message: String, force: Bool = false, state: ScanState? = nil) {
+        let hold: MessageHold
+        if let existing = messageHold {
+            hold = existing
+        } else {
+            hold = MessageHold { text, forced in
+                if forced || Date() >= self.noticeUntil { self.statusMessage = text }
+            }
+            messageHold = hold
+        }
+        hold.show(
+            message,
+            hold: state == .recovering,
+            immediate: state == .idle || state == .issue || state == .completed,
+            force: force
+        )
     }
     
     /// Stops the scan because the connection is too unstable to continue.
@@ -324,6 +344,7 @@ public struct VitalLensScanView: View {
         
         scanState = .searching
         stateStartTime = Date()
+        messageHold?.release()
         statusMessage = "Slow connection. Switched to Eco mode."
         noticeUntil = Date().addingTimeInterval(5)
         
@@ -515,7 +536,7 @@ public struct VitalLensScanView: View {
             } else {
                 let currentIssueMessage = !goodFace ? "Adjust your position." : "Low confidence.\nUse steady light, move closer, and hold still."
                 if statusMessage != currentIssueMessage {
-                    setStatus(currentIssueMessage)
+                    setStatus(currentIssueMessage, state: .recovering)
                 }
             }
             

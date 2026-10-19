@@ -50,6 +50,7 @@ public struct VitalLensMonitorView: View {
     @State private var sessionToken = UUID()
     @State private var autoFallbackDone = false
     @State private var noticeUntil: Date = .distantPast
+    @State private var messageHold: MessageHold?
     @State private var lastResultAt = Date()
     
     @State private var isFaceCurrentlyDetected = false
@@ -357,12 +358,14 @@ public struct VitalLensMonitorView: View {
         autoFallbackDone = false
         isProcessing = true
         monitorState = .searching
+        messageHold?.release()
         feedbackMessage = "Face the camera and hold still."
     }
     
     private func stopProcessing() {
         isProcessing = false
         monitorState = .idle
+        messageHold?.release()
         feedbackMessage = ""
         client?.stopStream()
         playbackTask?.cancel()
@@ -391,8 +394,20 @@ public struct VitalLensMonitorView: View {
     }
     
     /// Sets the feedback message, unless a notice is being shown.
-    private func setFeedback(_ message: String) {
-        if Date() >= noticeUntil { feedbackMessage = message }
+    ///
+    /// Problem hints (`hold`) stay up for at least 3 s, so they can be read even if the problem is
+    /// gone; messages arriving meanwhile wait and only the latest is shown afterwards.
+    private func setFeedback(_ message: String, hold: Bool = false) {
+        let messageHold: MessageHold
+        if let existing = self.messageHold {
+            messageHold = existing
+        } else {
+            messageHold = MessageHold { text, _ in
+                if Date() >= self.noticeUntil { self.feedbackMessage = text }
+            }
+            self.messageHold = messageHold
+        }
+        messageHold.show(message, hold: hold)
     }
     
     /// Stops the monitor because the connection is too unstable to continue.
@@ -401,6 +416,7 @@ public struct VitalLensMonitorView: View {
         guard isProcessing, monitorState != .idle else { return }
         client?.stopStream()
         monitorState = .issue
+        messageHold?.release()
         feedbackMessage = ConnectionThresholds.unstableMessage
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -444,6 +460,7 @@ public struct VitalLensMonitorView: View {
         isFaceCurrentlyDetected = false
         
         monitorState = .searching
+        messageHold?.release()
         feedbackMessage = "Slow connection. Switched to Eco mode."
         noticeUntil = Date().addingTimeInterval(5)
         
@@ -539,7 +556,7 @@ public struct VitalLensMonitorView: View {
         
         if currentFaceConf < faceConfThreshold {
             monitorState = .issue
-            setFeedback("Face not clear. Hold still.")
+            setFeedback("Face not clear. Hold still.", hold: true)
             return
         }
         
@@ -558,7 +575,7 @@ public struct VitalLensMonitorView: View {
         
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
-            setFeedback("Low confidence.\nUse steady light, move closer, and hold still.")
+            setFeedback("Low confidence.\nUse steady light, move closer, and hold still.", hold: true)
         } else if showWaveforms && !hasEnoughData {
             monitorState = .warmingUp
             setFeedback("")
