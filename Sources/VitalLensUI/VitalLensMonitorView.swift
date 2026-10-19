@@ -91,9 +91,11 @@ public struct VitalLensMonitorView: View {
         !receivedVitals.isDisjoint(with: ["hrv_sdnn", "hrv_rmssd", "ie_ratio"])
     }
 
+    /// The metrics are plain text next to the chart, so the column only needs to be as wide as its
+    /// content (the JS Monitor uses a fixed 85 pt plus padding), and the chart gets the rest.
     private var dynamicTileWidth: CGFloat? {
         guard showWaveforms else { return nil }
-        return hasSecondaryVitals ? 170 : 110
+        return 100
     }
 
     struct BufferedPoint {
@@ -846,6 +848,7 @@ struct GroupedMetricsTile: View {
                 .padding(.top, 2)
             }
         }
+        .padding(.leading, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
     
