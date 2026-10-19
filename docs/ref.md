@@ -108,6 +108,17 @@ client.onSlowConnection = {
 }
 ```
 
+### `onConnectionUnstable`
+
+A closure triggered once when the connection is too unstable for the stream to continue, even at 15 FPS: too many frames queue up behind slow requests, or requests keep failing or time out. Inference stops, so stop the stream and ask the user to try again on a better connection. The built-in views stop and show a message.
+
+```swift
+client.onConnectionUnstable = {
+    client.stopStream()
+    print("Connection unstable. Please try again on a better connection.")
+}
+```
+
 ---
 
 ## Methods

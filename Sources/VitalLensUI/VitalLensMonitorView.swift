@@ -50,6 +50,7 @@ public struct VitalLensMonitorView: View {
     @State private var sessionToken = UUID()
     @State private var autoFallbackDone = false
     @State private var noticeUntil: Date = .distantPast
+    @State private var lastResultAt = Date()
     
     @State private var isFaceCurrentlyDetected = false
     
@@ -394,6 +395,37 @@ public struct VitalLensMonitorView: View {
         if Date() >= noticeUntil { feedbackMessage = message }
     }
     
+    /// Stops the monitor because the connection is too unstable to continue.
+    @MainActor
+    private func handleConnectionUnstable() {
+        guard isProcessing, monitorState != .idle else { return }
+        client?.stopStream()
+        monitorState = .issue
+        feedbackMessage = ConnectionThresholds.unstableMessage
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if self.isProcessing && self.monitorState == .issue && self.feedbackMessage == ConnectionThresholds.unstableMessage {
+                self.stopProcessing()
+            }
+        }
+    }
+    
+    /// Stops the monitor when results stop arriving while a face is in view, which happens on connections that are far too slow.
+    @MainActor
+    private func watchForStall(token: UUID) {
+        Task { @MainActor in
+            while token == self.sessionToken {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard token == self.sessionToken else { return }
+                if self.isFaceCurrentlyDetected && self.monitorState != .issue
+                    && Date().timeIntervalSince(self.lastResultAt) > ConnectionThresholds.stallTimeout {
+                    self.handleConnectionUnstable()
+                    return
+                }
+            }
+        }
+    }
+    
     /// Falls back to eco mode because the connection is too slow for standard mode.
     /// Measurements start over, as frame rates cannot be mixed.
     @MainActor
@@ -439,6 +471,7 @@ public struct VitalLensMonitorView: View {
                 guard self.isProcessing else { return } 
                 
                 self.isFaceCurrentlyDetected = isPresent
+                if isPresent { self.lastResultAt = Date() }
                 if !isPresent {
                     self.monitorState = .issue
                     self.setFeedback("Check Position: Face the camera and hold still.")
@@ -453,11 +486,19 @@ public struct VitalLensMonitorView: View {
         
         let token = UUID()
         sessionToken = token
+        lastResultAt = Date()
+        watchForStall(token: token)
         
         newClient.onSlowConnection = { @Sendable in
             Task { @MainActor in
                 guard token == self.sessionToken else { return }
                 self.fallBackToEco()
+            }
+        }
+        newClient.onConnectionUnstable = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.handleConnectionUnstable()
             }
         }
         
@@ -480,6 +521,7 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
+        lastResultAt = Date()
         guard isProcessing, isFaceCurrentlyDetected else { return }
 
         self.debugROI = result.face.boundingBoxes.last

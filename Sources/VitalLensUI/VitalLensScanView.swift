@@ -37,6 +37,7 @@ public struct VitalLensScanView: View {
     @State private var sessionToken = UUID()
     @State private var autoFallbackDone = false
     @State private var noticeUntil: Date = .distantPast
+    @State private var lastResultAt = Date()
     @State private var finalResult: VitalLensResult? = nil
     @State private var showDetails: Bool = false
     
@@ -274,6 +275,29 @@ public struct VitalLensScanView: View {
         if force || Date() >= noticeUntil { statusMessage = message }
     }
     
+    /// Stops the scan because the connection is too unstable to continue.
+    @MainActor
+    private func handleConnectionUnstable() {
+        guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
+        transition(to: .issue, message: ConnectionThresholds.unstableMessage)
+    }
+    
+    /// Stops the scan when results stop arriving, which happens on connections that are far too slow.
+    @MainActor
+    private func watchForStall(token: UUID) {
+        Task { @MainActor in
+            while token == self.sessionToken {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard token == self.sessionToken else { return }
+                let waitingForResults = self.scanState == .warmingUp || self.scanState == .tracking || self.scanState == .recovering
+                if waitingForResults && Date().timeIntervalSince(self.lastResultAt) > ConnectionThresholds.stallTimeout {
+                    self.handleConnectionUnstable()
+                    return
+                }
+            }
+        }
+    }
+    
     /// Falls back to eco mode because the connection is too slow for standard mode.
     /// The scan starts over, as frame rates cannot be mixed.
     @MainActor
@@ -340,11 +364,19 @@ public struct VitalLensScanView: View {
         
         let token = UUID()
         sessionToken = token
+        lastResultAt = Date()
+        watchForStall(token: token)
         
         newClient.onSlowConnection = { @Sendable in
             Task { @MainActor in
                 guard token == self.sessionToken else { return }
                 self.fallBackToEco()
+            }
+        }
+        newClient.onConnectionUnstable = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.handleConnectionUnstable()
             }
         }
         
@@ -368,6 +400,7 @@ public struct VitalLensScanView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
+        lastResultAt = Date()
         let framesInThisUpdate = result.sampleCount ?? result.time.count
         self.totalFramesProcessed += framesInThisUpdate
         
