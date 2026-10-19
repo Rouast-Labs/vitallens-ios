@@ -105,6 +105,31 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
         }
     }
 
+    /// Keeps the camera's current exposure and white balance, or returns to automatic.
+    ///
+    /// Only what the device supports is changed; anything else is left alone. Values are never
+    /// derived from the image content: the camera keeps the ones it converged on.
+    ///
+    /// - Parameter locked: `true` to lock, `false` to return to continuous automatic modes.
+    func setSettingsLocked(_ locked: Bool) {
+        queue.async { [weak self] in
+            guard let self = self,
+                  let device = (self.session.inputs.first as? AVCaptureDeviceInput)?.device else { return }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                
+                let exposureMode: AVCaptureDevice.ExposureMode = locked ? .locked : .continuousAutoExposure
+                if device.isExposureModeSupported(exposureMode) { device.exposureMode = exposureMode }
+                
+                let whiteBalanceMode: AVCaptureDevice.WhiteBalanceMode = locked ? .locked : .continuousAutoWhiteBalance
+                if device.isWhiteBalanceModeSupported(whiteBalanceMode) { device.whiteBalanceMode = whiteBalanceMode }
+            } catch {
+                // The camera is busy or cannot be configured: leave its settings as they are
+            }
+        }
+    }
+    
     /// Attaches the live camera preview to the provided view.
     ///
     /// - Parameter view: The `UIView` to which the camera preview layer will be added.
@@ -148,13 +173,11 @@ class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, Came
             throw VitalLensError.processingError("Could not add camera input")
         }
         session.addInput(input)
-        // TODO: Camera control for rPPG stability (auto AE/AWB shifts are global brightness/colour
-        //   changes far larger than the pulse signal, and also trigger false light_quality dips).
-        //   Make it an option (e.g. cameraControl: .auto | .off), default on:
-        //   - device.lockForConfiguration(); set exposurePointOfInterest to the face; fix frame rate via
-        //     activeVideoMinFrameDuration == activeVideoMaxFrameDuration (30 fps, or 15 for eco mode).
-        //   - After ~1-2 s of convergence with a face in view, lock: exposureMode = .locked,
-        //     whiteBalanceMode = .locked, focusMode = .locked.
+        // TODO: Camera control for rPPG stability, remaining parts (auto AE/AWB shifts are global
+        //   brightness/colour changes far larger than the pulse signal). Exposure and white balance
+        //   are locked once a face is in view (see setSettingsLocked and StreamProcessor). Still open:
+        //   - set exposurePointOfInterest to the face; fix frame rate via activeVideoMinFrameDuration ==
+        //     activeVideoMaxFrameDuration (30 fps, or 15 for eco mode); lock focus (focusMode = .locked).
         //   - If ROI brightness drifts beyond a threshold, unlock, re-converge, re-lock.
         //   - Never derive exposure/gains from skin-tone colour statistics (patent EP4353143A1).
         //   Validate first with an A/B test (locked vs auto) in the VitalLens app.

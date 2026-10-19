@@ -39,6 +39,12 @@ actor StreamProcessor {
 
     private var lastFacePresence: Bool = false
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
+    /// The camera whose settings are locked. Also available where the default camera is not (non-UIKit).
+    private let lockableCamera: (any CameraStreaming)?
+    private var cameraLocked = false
+    private var cameraLockTask: Task<Void, Never>?
+    /// How long a face must be in view before the camera's exposure and white balance are locked.
+    private var cameraLockDelay: TimeInterval = 1.5
     private var onSlowConnection: (@Sendable () -> Void)?
     private var onConnectionUnstable: (@Sendable () -> Void)?
     private var connectionMonitor = ConnectionMonitor()
@@ -75,7 +81,11 @@ actor StreamProcessor {
         debugMode: Bool = false
     ) {
         #if canImport(UIKit)
-        self.camera = camera ?? CameraSource()
+        let resolvedCamera = camera ?? CameraSource()
+        self.camera = resolvedCamera
+        self.lockableCamera = resolvedCamera
+        #else
+        self.lockableCamera = camera
         #endif
 
         self.strategy = strategy
@@ -116,6 +126,8 @@ actor StreamProcessor {
         self.session = VitalLensCore.Session(config: self.config!.toSessionConfig())
         
         self.isPaused = false
+        // A restarted stream starts without a face, so the face callback and the camera lock begin afresh
+        self.lastFacePresence = false
         self.connectionMonitor.reset()
         self.unstableReported = false
         
@@ -152,6 +164,7 @@ actor StreamProcessor {
     /// Pauses the camera stream and prevents new frames from being processed.
     func pause() async {
         self.isPaused = true
+        releaseCameraLock()
         #if canImport(UIKit)
         camera.stop()
         #endif
@@ -177,6 +190,7 @@ actor StreamProcessor {
     /// Stops the camera stream, cancels background tasks, and cleans up all resources.
     func stop() {
         self.isPaused = true
+        releaseCameraLock()
         #if canImport(UIKit)
         camera.stop()
         #endif
@@ -220,6 +234,43 @@ actor StreamProcessor {
         self.onConnectionUnstable = callback
     }
     
+    /// Overrides how long a face must be in view before the camera settings are locked. For tests.
+    func setCameraLockDelay(_ delay: TimeInterval) {
+        self.cameraLockDelay = delay
+    }
+    
+    /// Locks the camera's exposure and white balance once a face has been in view for the delay,
+    /// and releases them when the face is lost so the camera can adapt before the next lock.
+    private func updateCameraLock(facePresent: Bool) {
+        if facePresent {
+            guard !cameraLocked, cameraLockTask == nil else { return }
+            let delay = cameraLockDelay
+            cameraLockTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await self?.lockCameraNow()
+            }
+        } else {
+            releaseCameraLock()
+        }
+    }
+    
+    private func lockCameraNow() {
+        cameraLockTask = nil
+        guard !cameraLocked else { return }
+        cameraLocked = true
+        lockableCamera?.setSettingsLocked(true)
+    }
+    
+    /// Cancels a pending lock and releases a held one.
+    private func releaseCameraLock() {
+        cameraLockTask?.cancel()
+        cameraLockTask = nil
+        guard cameraLocked else { return }
+        cameraLocked = false
+        lockableCamera?.setSettingsLocked(false)
+    }
+    
     /// Overrides the queue length that counts as unstable. For tests.
     func setStreamResetFrames(_ frames: Int) {
         self.streamResetFrames = frames
@@ -259,6 +310,7 @@ actor StreamProcessor {
         let isFacePresent = (target != nil)
         if isFacePresent != lastFacePresence {
             lastFacePresence = isFacePresent
+            updateCameraLock(facePresent: isFacePresent)
             onFaceStateChanged?(isFacePresent)
         }
 

@@ -67,12 +67,25 @@ public protocol CameraStreaming: Sendable {
     /// Stops the video stream.
     func stop()
     
+    /// Fixes (or releases) the camera's automatic exposure and white balance.
+    ///
+    /// Automatic adjustments change the brightness and colour of the whole image, which the pulse
+    /// estimation reads as signal. The default implementation does nothing, as most sources do not
+    /// control a camera.
+    ///
+    /// - Parameter locked: `true` to keep the current exposure and white balance, `false` to return to automatic.
+    func setSettingsLocked(_ locked: Bool)
+    
     #if canImport(UIKit)
     /// Attaches a live preview of the video stream to the specified view.
     ///
     /// - Parameter view: The `UIView` to render the preview on.
     @MainActor func showPreview(on view: UIView)
     #endif
+}
+
+public extension CameraStreaming {
+    func setSettingsLocked(_ locked: Bool) {}
 }
 
 public extension CGRect {

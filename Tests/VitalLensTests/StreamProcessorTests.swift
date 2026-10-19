@@ -112,9 +112,15 @@ struct MockState: InferenceState {
 }
 
 class MockCamera: CameraStreaming, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _lockCalls: [Bool] = []
+    /// The values passed to `setSettingsLocked`, in order.
+    var lockCalls: [Bool] { lock.withLock { _lockCalls } }
+    
     var stream: AsyncStream<InputFrame> { AsyncStream { _ in } }
     func start() async throws {}
     func stop() {}
+    func setSettingsLocked(_ locked: Bool) { lock.withLock { _lockCalls.append(locked) } }
     #if canImport(UIKit)
     func showPreview(on view: UIView) {}
     #endif
@@ -139,7 +145,7 @@ final class StreamProcessorTests: XCTestCase {
     override func setUp() async throws {
         strategy = MockInferenceStrategy()
         roiStrategy = MockROIStrategy()
-        let camera = MockCamera()
+        camera = MockCamera()
         
         processor = StreamProcessor(
             strategy: strategy,
@@ -167,6 +173,8 @@ final class StreamProcessorTests: XCTestCase {
         roiStrategy = nil
         processor = nil
     }
+    
+    private var camera: MockCamera!
     
     private func makeFrame(at time: Double) -> InputFrame {
         InputFrame(
@@ -262,6 +270,63 @@ final class StreamProcessorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 1_000_000_000)
         
         XCTAssertEqual(counter.value, 0)
+    }
+
+    // MARK: - Camera settings lock
+    
+    func testCameraSettingsAreLockedOnceAFaceHasBeenInViewForTheDelay() async throws {
+        await processor.setCameraLockDelay(0.2)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(camera.lockCalls, [], "Not before the delay")
+        
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true])
+    }
+    
+    func testCameraSettingsAreNotLockedIfTheFaceIsLostBeforeTheDelay() async throws {
+        await processor.setCameraLockDelay(0.3)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await roiStrategy.setROI(nil)
+        await processor.processFrame(makeFrame(at: 0.1))
+        try await Task.sleep(nanoseconds: 500_000_000)
+        
+        XCTAssertFalse(camera.lockCalls.contains(true))
+    }
+    
+    func testCameraSettingsAreReleasedWhenTheFaceIsLostAndLockedAgainWhenItReturns() async throws {
+        await processor.setCameraLockDelay(0.1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true])
+        
+        await roiStrategy.setROI(nil)
+        await processor.processFrame(makeFrame(at: 1))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(camera.lockCalls, [true, false])
+        
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 2))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true, false, true])
+    }
+    
+    func testCameraSettingsAreReleasedWhenTheStreamStops() async throws {
+        await processor.setCameraLockDelay(0.1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        
+        await processor.stop()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        XCTAssertEqual(camera.lockCalls, [true, false])
     }
 
     func testProcessFrame_NoROI_DoesNotCallStrategy() async throws {
