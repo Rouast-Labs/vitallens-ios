@@ -15,6 +15,15 @@ public enum ConnectionThresholds {
     public static let minSamples: Int = 3
     /// Frame rate of eco mode. Slow connections are only reported above it.
     public static let ecoFps: Double = 15
+    /// Frames queued in a single stream request above which the connection counts as unstable
+    /// and the stream is reset. Even eco mode cannot recover from this.
+    public static let streamResetFrames: Int = 100
+    /// Time (s) after which a stream request is given up.
+    public static let streamTimeout: TimeInterval = 10
+    /// Time (s) without any result after which a running scan or monitor is stopped as too slow.
+    public static let stallTimeout: TimeInterval = 8
+    /// Message shown when the connection is too unstable to continue. Keep in sync with the other SDKs.
+    public static let unstableMessage = "Connection unstable. Stream is resetting."
 }
 
 /// Details of a connection that was found to be too slow.

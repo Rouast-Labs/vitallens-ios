@@ -34,6 +34,7 @@ actor MockInferenceStrategy: InferenceStrategy {
     var lastReceivedState: (any InferenceState)?
     var stateHistory: [(any InferenceState)?] = []
     private var shouldFail = false
+    private var failWithNetworkError = false
     private var inferDelay: TimeInterval = 0
     
     func resolveConfig() async throws -> ModelConfig {
@@ -52,6 +53,11 @@ actor MockInferenceStrategy: InferenceStrategy {
     
     func setShouldFail(_ fail: Bool) {
         self.shouldFail = fail
+    }
+    
+    func setFailWithNetworkError(_ fail: Bool) {
+        self.shouldFail = fail
+        self.failWithNetworkError = fail
     }
     
     func setInferDelay(_ delay: TimeInterval) {
@@ -78,6 +84,7 @@ actor MockInferenceStrategy: InferenceStrategy {
         }
         
         if shouldFail {
+            if failWithNetworkError { throw VitalLensError.networkError(URLError(.timedOut)) }
             throw VitalLensError.serverError(statusCode: 500, message: "Mock Failure")
         }
         
@@ -209,6 +216,50 @@ final class StreamProcessorTests: XCTestCase {
             await processor.processFrame(makeFrame(at: Double(i) * 0.033))
         }
         try await Task.sleep(nanoseconds: 300_000_000)
+        
+        XCTAssertEqual(counter.value, 0)
+    }
+
+    func testTooManyQueuedFrames_ReportsUnstableConnectionOnce() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await processor.setStreamResetFrames(1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<15 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        
+        XCTAssertEqual(counter.value, 1)
+        let calls = await strategy.inferCallCount
+        XCTAssertEqual(calls, 0, "No request should be sent once the queue is too long")
+    }
+    
+    func testRepeatedNetworkErrors_ReportUnstableConnectionOnce() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await strategy.setFailWithNetworkError(true)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<30 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        XCTAssertEqual(counter.value, 1)
+    }
+    
+    func testServerErrors_DoNotReportUnstableConnection() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await strategy.setShouldFail(true)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<30 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         
         XCTAssertEqual(counter.value, 0)
     }

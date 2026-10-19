@@ -40,7 +40,11 @@ actor StreamProcessor {
     private var lastFacePresence: Bool = false
     private var onFaceStateChanged: (@Sendable (Bool) -> Void)?
     private var onSlowConnection: (@Sendable () -> Void)?
+    private var onConnectionUnstable: (@Sendable () -> Void)?
     private var connectionMonitor = ConnectionMonitor()
+    private var unstableReported = false
+    /// Frames in a single request above which the stream is reset as unstable.
+    private var streamResetFrames = ConnectionThresholds.streamResetFrames
     
     private var lastProcessedTime: TimeInterval = -1.0
     private var streamGeneration: Int = 0
@@ -113,6 +117,7 @@ actor StreamProcessor {
         
         self.isPaused = false
         self.connectionMonitor.reset()
+        self.unstableReported = false
         
         let (signalStream, signalContinuation) = AsyncStream.makeStream(of: Void.self)
         self.frameSignal = signalContinuation
@@ -205,6 +210,29 @@ actor StreamProcessor {
         self.onSlowConnection = callback
     }
     
+    /// Sets a callback to be triggered once when the connection is so unstable that the stream cannot continue.
+    ///
+    /// This happens when too many frames queue up behind slow requests, or when requests keep failing.
+    /// Inference stops until the stream is restarted.
+    ///
+    /// - Parameter callback: A closure called at most once per started stream.
+    func setConnectionUnstableCallback(_ callback: (@Sendable () -> Void)?) {
+        self.onConnectionUnstable = callback
+    }
+    
+    /// Overrides the queue length that counts as unstable. For tests.
+    func setStreamResetFrames(_ frames: Int) {
+        self.streamResetFrames = frames
+    }
+    
+    /// Stops inference after reporting an unstable connection, once.
+    private func reportUnstableConnection() async {
+        guard !unstableReported else { return }
+        unstableReported = true
+        await bufferManager.reset()
+        onConnectionUnstable?()
+    }
+    
     /// Processes an incoming video frame. Handles framerate targeting, ROI determination, and buffer insertion.
     ///
     /// - Parameter frame: The input video frame and its metadata.
@@ -280,6 +308,7 @@ actor StreamProcessor {
         
         for await _ in source {
             if Task.isCancelled { break }
+            if unstableReported { continue }
             
             while let command = await bufferManager.poll(mode: .stream) {
                 if Task.isCancelled { break }
@@ -290,6 +319,10 @@ actor StreamProcessor {
                 }
                 
                 guard let window = await bufferManager.execute(command: command) else { break }
+                if window.count > streamResetFrames {
+                    await reportUnstableConnection()
+                    break
+                }
                 let currentState = await bufferManager.getState()
                 let currentGeneration = self.streamGeneration
                 let requestStart = Date()
@@ -330,6 +363,12 @@ actor StreamProcessor {
                     
                 } catch {
                     consecutiveErrors += 1
+                    
+                    // Requests that keep failing or timing out mean the connection is unusable
+                    if consecutiveErrors >= 2, case VitalLensError.networkError = error {
+                        await reportUnstableConnection()
+                        break
+                    }
                     
                     if consecutiveErrors >= 3 {
                         await bufferManager.reset()
