@@ -34,6 +34,8 @@ actor MockInferenceStrategy: InferenceStrategy {
     var lastReceivedState: (any InferenceState)?
     var stateHistory: [(any InferenceState)?] = []
     private var shouldFail = false
+    private var failWithNetworkError = false
+    private var inferDelay: TimeInterval = 0
     
     func resolveConfig() async throws -> ModelConfig {
         return ModelConfig(
@@ -53,6 +55,15 @@ actor MockInferenceStrategy: InferenceStrategy {
         self.shouldFail = fail
     }
     
+    func setFailWithNetworkError(_ fail: Bool) {
+        self.shouldFail = fail
+        self.failWithNetworkError = fail
+    }
+    
+    func setInferDelay(_ delay: TimeInterval) {
+        self.inferDelay = delay
+    }
+    
     func clearHistory() {
         self.stateHistory.removeAll()
     }
@@ -68,7 +79,12 @@ actor MockInferenceStrategy: InferenceStrategy {
         self.stateHistory.append(state)
         self.inferCallCount += 1
         
+        if inferDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(inferDelay * 1_000_000_000))
+        }
+        
         if shouldFail {
+            if failWithNetworkError { throw VitalLensError.networkError(URLError(.timedOut)) }
             throw VitalLensError.serverError(statusCode: 500, message: "Mock Failure")
         }
         
@@ -96,12 +112,25 @@ struct MockState: InferenceState {
 }
 
 class MockCamera: CameraStreaming, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _lockCalls: [Bool] = []
+    /// The values passed to `setSettingsLocked`, in order.
+    var lockCalls: [Bool] { lock.withLock { _lockCalls } }
+    
     var stream: AsyncStream<InputFrame> { AsyncStream { _ in } }
     func start() async throws {}
     func stop() {}
+    func setSettingsLocked(_ locked: Bool) { lock.withLock { _lockCalls.append(locked) } }
     #if canImport(UIKit)
     func showPreview(on view: UIView) {}
     #endif
+}
+
+final class SlowCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.lock(); count += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
 }
 
 // MARK: - Tests
@@ -116,7 +145,7 @@ final class StreamProcessorTests: XCTestCase {
     override func setUp() async throws {
         strategy = MockInferenceStrategy()
         roiStrategy = MockROIStrategy()
-        let camera = MockCamera()
+        camera = MockCamera()
         
         processor = StreamProcessor(
             strategy: strategy,
@@ -145,6 +174,8 @@ final class StreamProcessorTests: XCTestCase {
         processor = nil
     }
     
+    private var camera: MockCamera!
+    
     private func makeFrame(at time: Double) -> InputFrame {
         InputFrame(
             buffer: baseBuffer,
@@ -170,6 +201,134 @@ final class StreamProcessorTests: XCTestCase {
         XCTAssertGreaterThan(count, 0, "Strategy should be called when buffer fills")
     }
     
+    func testSlowRequest_ReportsSlowConnectionOnce() async throws {
+        await strategy.setInferDelay(2.2)
+        let counter = SlowCounter()
+        await processor.setSlowConnectionCallback { counter.increment() }
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<10 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 2_800_000_000)
+        
+        XCTAssertEqual(counter.value, 1, "A request over 2 s at 30 fps should report a slow connection once")
+    }
+    
+    func testFastRequests_DoNotReportSlowConnection() async throws {
+        let counter = SlowCounter()
+        await processor.setSlowConnectionCallback { counter.increment() }
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<10 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        
+        XCTAssertEqual(counter.value, 0)
+    }
+
+    func testTooManyQueuedFrames_ReportsUnstableConnectionOnce() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await processor.setStreamResetFrames(1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<15 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        
+        XCTAssertEqual(counter.value, 1)
+        let calls = await strategy.inferCallCount
+        XCTAssertEqual(calls, 0, "No request should be sent once the queue is too long")
+    }
+    
+    func testRepeatedNetworkErrors_ReportUnstableConnectionOnce() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await strategy.setFailWithNetworkError(true)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<30 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        XCTAssertEqual(counter.value, 1)
+    }
+    
+    func testServerErrors_DoNotReportUnstableConnection() async throws {
+        let counter = SlowCounter()
+        await processor.setConnectionUnstableCallback { counter.increment() }
+        await strategy.setShouldFail(true)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        for i in 0..<30 {
+            await processor.processFrame(makeFrame(at: Double(i) * 0.033))
+        }
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        
+        XCTAssertEqual(counter.value, 0)
+    }
+
+    // MARK: - Camera settings lock
+    
+    func testCameraSettingsAreLockedOnceAFaceHasBeenInViewForTheDelay() async throws {
+        await processor.setCameraLockDelay(0.2)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(camera.lockCalls, [], "Not before the delay")
+        
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true])
+    }
+    
+    func testCameraSettingsAreNotLockedIfTheFaceIsLostBeforeTheDelay() async throws {
+        await processor.setCameraLockDelay(0.3)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await roiStrategy.setROI(nil)
+        await processor.processFrame(makeFrame(at: 0.1))
+        try await Task.sleep(nanoseconds: 500_000_000)
+        
+        XCTAssertFalse(camera.lockCalls.contains(true))
+    }
+    
+    func testCameraSettingsAreReleasedWhenTheFaceIsLostAndLockedAgainWhenItReturns() async throws {
+        await processor.setCameraLockDelay(0.1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true])
+        
+        await roiStrategy.setROI(nil)
+        await processor.processFrame(makeFrame(at: 1))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(camera.lockCalls, [true, false])
+        
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 2))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(camera.lockCalls, [true, false, true])
+    }
+    
+    func testCameraSettingsAreReleasedWhenTheStreamStops() async throws {
+        await processor.setCameraLockDelay(0.1)
+        await roiStrategy.setROI(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        await processor.processFrame(makeFrame(at: 0))
+        try await Task.sleep(nanoseconds: 250_000_000)
+        
+        await processor.stop()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        XCTAssertEqual(camera.lockCalls, [true, false])
+    }
+
     func testProcessFrame_NoROI_DoesNotCallStrategy() async throws {
         await roiStrategy.setROI(nil)
         

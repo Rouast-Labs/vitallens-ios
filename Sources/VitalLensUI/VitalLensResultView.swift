@@ -115,7 +115,7 @@ public struct VitalLensResultView: View {
                     
                     Button("Done", action: onDone)
                         .font(.headline)
-                        .foregroundColor(VitalMetadataCache.brandBlue)
+                        .foregroundColor(VitalInfoCache.brandBlue)
                 }
                 .padding(.top, 8)
 

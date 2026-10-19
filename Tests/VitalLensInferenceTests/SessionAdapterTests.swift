@@ -18,6 +18,13 @@ final class SessionAdapterTests: XCTestCase {
         XCTAssertEqual(rustConfig.supportedVitals, ["heart_rate", "sbp"])
     }
     
+    func testSessionConfigSkipsTheStartOfASessionForHrv() {
+        let config = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "face", supportedVitals: ["heart_rate", "hrv_sdnn"])
+        
+        // The model's output is unsettled at the start of a session. Internal setting.
+        XCTAssertEqual(config.toSessionConfig().hrvSkipSeconds, 3)
+    }
+    
     // MARK: - Geometry Mapping
     
     func testCGRectToRustRect() {

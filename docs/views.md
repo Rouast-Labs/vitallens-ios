@@ -20,7 +20,7 @@ A guided flow that handles a full measurement cycle. It instructs the user to po
 VitalLensScanView(
     apiKey: "YOUR_KEY",
     method: "vitallens",
-    mode: .eco
+    mode: .standard
 ) { result in
     if let hr = result.heartRate?.value {
         print("Final Heart Rate: \(hr) bpm")
@@ -35,7 +35,7 @@ VitalLensScanView(
 | `apiKey` | `String?` | Your API Key. Required if `proxyURL` is not set. |
 | `proxyURL` | `URL?` | URL to your backend proxy. |
 | `method` | `String` | Model version (e.g., `"vitallens"`, `"vitallens-2.0"`). Default is `"vitallens"`. |
-| `mode` | `VitalLensMode` | `.eco` (15 FPS, default) or `.standard` (30 FPS). |
+| `mode` | `VitalLensMode` | `.standard` (30 FPS, default) or `.eco` (15 FPS). Falls back to `.eco` once if the connection is too slow for `.standard`. |
 | `onComplete` | `(VitalLensResult) -> Void` | Callback triggered when the scan finishes successfully. |
 
 ---
@@ -59,7 +59,7 @@ VitalLensMonitorView(
 | `proxyURL` | `URL?` | URL to your backend proxy. |
 | `method` | `String` | Model version. Default is `"vitallens"`. |
 | `showWaveforms` | `Bool` | Whether to render the real-time waveform charts. Default is `true`. |
-| `initialMode` | `VitalLensMode` | Initial FPS mode `.eco` or `.standard`. Default is `.eco`. |
+| `initialMode` | `VitalLensMode` | Initial FPS mode `.standard` or `.eco`. Default is `.standard`. Falls back to `.eco` once if the connection is too slow for `.standard`. |
 | `bufferOffset` | `TimeInterval` | Delay in seconds for smooth chart rendering. Default is `0.15`. |
 | `windowSize` | `TimeInterval` | Duration of data to show in the waveform charts. Default is `8.0`. |
 | `minDisplayDuration` | `TimeInterval` | Minimum data required before displaying values. Default is `6.0`. |

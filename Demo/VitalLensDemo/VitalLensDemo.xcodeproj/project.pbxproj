@@ -205,7 +205,7 @@
 			mainGroup = FF819C912F4A660C009D915E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				FFF2A3142F4A82AF00BE3F5C /* XCLocalSwiftPackageReference "../../../vitallens-ios" */,
+				FFC2575F2FFDE52F0045CAD7 /* XCLocalSwiftPackageReference "../../../vitallens-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = FF819C9B2F4A660C009D915E /* Products */;
@@ -596,7 +596,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		FFF2A3142F4A82AF00BE3F5C /* XCLocalSwiftPackageReference "../../../vitallens-ios" */ = {
+		FFC2575F2FFDE52F0045CAD7 /* XCLocalSwiftPackageReference "../../../vitallens-ios" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../../vitallens-ios";
 		};

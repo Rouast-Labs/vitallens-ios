@@ -39,13 +39,19 @@ public struct VitalLensMonitorView: View {
     private let windowSize: TimeInterval
     private let minDisplayDuration: TimeInterval
     
-    @State private var currentMode: VitalLensMode = .eco
+    @State private var currentMode: VitalLensMode = .standard
     private let initialMode: VitalLensMode
 
     @State private var client: VitalLens?
     @State private var isProcessing = false
     @State private var monitorState: MonitorState = .idle
     @State private var feedbackMessage: String = ""
+    @State private var previewView: UIView?
+    @State private var sessionToken = UUID()
+    @State private var autoFallbackDone = false
+    @State private var noticeUntil: Date = .distantPast
+    @State private var messageHold: MessageHold?
+    @State private var lastResultAt = Date()
     
     @State private var isFaceCurrentlyDetected = false
     
@@ -85,9 +91,11 @@ public struct VitalLensMonitorView: View {
         !receivedVitals.isDisjoint(with: ["hrv_sdnn", "hrv_rmssd", "ie_ratio"])
     }
 
+    /// The metrics are plain text next to the chart, so the column only needs to be as wide as its
+    /// content (the JS Monitor uses a fixed 85 pt plus padding), and the chart gets the rest.
     private var dynamicTileWidth: CGFloat? {
         guard showWaveforms else { return nil }
-        return hasSecondaryVitals ? 170 : 110
+        return 100
     }
 
     struct BufferedPoint {
@@ -101,7 +109,7 @@ public struct VitalLensMonitorView: View {
     @State private var playbackTask: Task<Void, Never>? = nil
     
     private let vitalConfThreshold = 0.8
-    private let hrvConfThreshold = 0.7
+    private let hrvConfThreshold = 0.8
     private let faceConfThreshold = 0.5
     
     /// Initializes a new Monitor View for real-time vital sign estimation.
@@ -111,7 +119,7 @@ public struct VitalLensMonitorView: View {
     ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
     ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
     ///   - showWaveforms: Whether to render real-time waveforms on the UI. Defaults to `true`.
-    ///   - initialMode: The starting performance mode. Defaults to `.eco`.
+    ///   - initialMode: The starting performance mode. Defaults to `.standard`. On a connection that is too slow for it, the monitor falls back to `.eco`.
     ///   - bufferOffset: The delay in seconds applied to the waveform to ensure smooth rendering. Defaults to `0.15`.
     ///   - windowSize: The duration of the history to retain for waveform rendering. Defaults to `8.0`.
     ///   - minDisplayDuration: The minimum data accumulation time required before displaying results. Defaults to `6.0`.
@@ -120,7 +128,7 @@ public struct VitalLensMonitorView: View {
         proxyURL: URL? = nil,
         method: String = "vitallens",
         showWaveforms: Bool = true,
-        initialMode: VitalLensMode = .eco,
+        initialMode: VitalLensMode = .standard,
         bufferOffset: TimeInterval = 0.15,
         windowSize: TimeInterval = 8.0,
         minDisplayDuration: TimeInterval = 6.0 
@@ -139,8 +147,8 @@ public struct VitalLensMonitorView: View {
     
     private var isHrReady: Bool { hrValue != nil && hrConf >= vitalConfThreshold }
     private var isRrReady: Bool { rrValue != nil && rrConf >= vitalConfThreshold }
-    private var isSdnnReady: Bool { sdnnValue != nil && sdnnConf >= hrvConfThreshold }
-    private var isRmssdReady: Bool { rmssdValue != nil && rmssdConf >= hrvConfThreshold }
+    private var isSdnnReady: Bool { sdnnValue != nil && isHrvShown(hrvConf: sdnnConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold) }
+    private var isRmssdReady: Bool { rmssdValue != nil && isHrvShown(hrvConf: rmssdConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold) }
     private var isIeReady: Bool { ieRatioValue != nil && ieRatioConf >= vitalConfThreshold }
     private var isPpgReady: Bool { 
         let avgConf = ppgConfHistory.isEmpty ? 0.0 : ppgConfHistory.reduce(0, +) / Double(ppgConfHistory.count)
@@ -297,7 +305,7 @@ public struct VitalLensMonitorView: View {
             
             HStack(spacing: 12) {
                 if showWaveforms {
-                    WaveformContainer(vitalId: "ppg_waveform", history: ppgHistory, isReady: isPpgReady)
+                    WaveformContainer(vitalId: "ppg_waveform", history: ppgHistory, isReady: isPpgReady, useShortTitle: true)
                 }
                 
                 GroupedMetricsTile(
@@ -313,7 +321,7 @@ public struct VitalLensMonitorView: View {
             
             HStack(spacing: 12) {
                 if showWaveforms {
-                    WaveformContainer(vitalId: "respiratory_waveform", history: respHistory, isReady: isRespReady)
+                    WaveformContainer(vitalId: "respiratory_waveform", history: respHistory, isReady: isRespReady, useShortTitle: true)
                 }
                 
                 GroupedMetricsTile(
@@ -349,14 +357,17 @@ public struct VitalLensMonitorView: View {
     }
     
     private func startProcessing() {
+        autoFallbackDone = false
         isProcessing = true
         monitorState = .searching
-        feedbackMessage = "Face the camera, ensure good lighting and hold still."
+        messageHold?.release()
+        feedbackMessage = "Face the camera and hold still."
     }
     
     private func stopProcessing() {
         isProcessing = false
         monitorState = .idle
+        messageHold?.release()
         feedbackMessage = ""
         client?.stopStream()
         playbackTask?.cancel()
@@ -384,8 +395,90 @@ public struct VitalLensMonitorView: View {
         isFaceCurrentlyDetected = false
     }
     
+    /// Sets the feedback message, unless a notice is being shown.
+    ///
+    /// Problem hints (`hold`) stay up for at least 3 s, so they can be read even if the problem is
+    /// gone; messages arriving meanwhile wait and only the latest is shown afterwards.
+    private func setFeedback(_ message: String, hold: Bool = false) {
+        let messageHold: MessageHold
+        if let existing = self.messageHold {
+            messageHold = existing
+        } else {
+            messageHold = MessageHold { text, _ in
+                if Date() >= self.noticeUntil { self.feedbackMessage = text }
+            }
+            self.messageHold = messageHold
+        }
+        messageHold.show(message, hold: hold)
+    }
+    
+    /// Stops the monitor because the connection is too unstable to continue.
+    @MainActor
+    private func handleConnectionUnstable() {
+        guard isProcessing, monitorState != .idle else { return }
+        client?.stopStream()
+        monitorState = .issue
+        messageHold?.release()
+        feedbackMessage = ConnectionThresholds.unstableMessage
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if self.isProcessing && self.monitorState == .issue && self.feedbackMessage == ConnectionThresholds.unstableMessage {
+                self.stopProcessing()
+            }
+        }
+    }
+    
+    /// Stops the monitor when results stop arriving while a face is in view, which happens on connections that are far too slow.
+    @MainActor
+    private func watchForStall(token: UUID) {
+        Task { @MainActor in
+            while token == self.sessionToken {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard token == self.sessionToken else { return }
+                if self.isFaceCurrentlyDetected && self.monitorState != .issue
+                    && Date().timeIntervalSince(self.lastResultAt) > ConnectionThresholds.stallTimeout {
+                    self.handleConnectionUnstable()
+                    return
+                }
+            }
+        }
+    }
+    
+    /// Falls back to eco mode because the connection is too slow for standard mode.
+    /// Measurements start over, as frame rates cannot be mixed.
+    @MainActor
+    private func fallBackToEco() {
+        guard !autoFallbackDone, currentMode == .standard, isProcessing, let view = previewView else { return }
+        autoFallbackDone = true
+        currentMode = .eco
+        
+        client?.stopStream()
+        client = nil
+        // Invalidate callbacks of the stopped session
+        let restartToken = UUID()
+        sessionToken = restartToken
+        playbackTask?.cancel()
+        clearMeasurements()
+        isFaceCurrentlyDetected = false
+        
+        monitorState = .searching
+        messageHold?.release()
+        feedbackMessage = "Slow connection. Switched to Eco mode."
+        noticeUntil = Date().addingTimeInterval(5)
+        
+        // Remove the preview layer of the stopped camera session
+        view.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        Task { @MainActor in
+            // Give the stopped camera session time to shut down
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            // Not if the monitor was stopped in the meantime
+            if restartToken == self.sessionToken && self.isProcessing { startSession(in: view) }
+        }
+    }
+    
     private func startSession(in view: UIView) {
         guard client == nil, isProcessing else { return }
+        previewView = view
         
         let newClient = VitalLens(
             apiKey: apiKey,
@@ -401,15 +494,34 @@ public struct VitalLensMonitorView: View {
                 guard self.isProcessing else { return } 
                 
                 self.isFaceCurrentlyDetected = isPresent
+                if isPresent { self.lastResultAt = Date() }
                 if !isPresent {
                     self.monitorState = .issue
-                    self.feedbackMessage = "Check Position: Face the camera and hold still."
+                    self.setFeedback("Check Position: Face the camera and hold still.")
                     self.client?.resetStream()
                     self.clearMeasurements()
                 } else if self.monitorState == .issue || self.monitorState == .idle {
                     self.monitorState = .searching
-                    self.feedbackMessage = "Face detected, analyzing..."
+                    self.setFeedback("Face detected, analyzing...")
                 }
+            }
+        }
+        
+        let token = UUID()
+        sessionToken = token
+        lastResultAt = Date()
+        watchForStall(token: token)
+        
+        newClient.onSlowConnection = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.fallBackToEco()
+            }
+        }
+        newClient.onConnectionUnstable = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.handleConnectionUnstable()
             }
         }
         
@@ -420,6 +532,8 @@ public struct VitalLensMonitorView: View {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 for await result in stream {
+                    // Ignore results of a session that was replaced by a restart
+                    guard token == sessionToken else { break }
                     updateUI(with: result)
                 }
             } catch {
@@ -430,6 +544,7 @@ public struct VitalLensMonitorView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
+        lastResultAt = Date()
         guard isProcessing, isFaceCurrentlyDetected else { return }
 
         self.debugROI = result.face.boundingBoxes.last
@@ -443,7 +558,7 @@ public struct VitalLensMonitorView: View {
         
         if currentFaceConf < faceConfThreshold {
             monitorState = .issue
-            feedbackMessage = "Face not clear. Hold still."
+            setFeedback("Face not clear. Hold still.", hold: true)
             return
         }
         
@@ -457,17 +572,18 @@ public struct VitalLensMonitorView: View {
         
         let hasConfidentHr = hrConf >= vitalConfThreshold
         let hasConfidentRr = rrConf >= vitalConfThreshold
-        let hasConfidentHrv = sdnnConf >= hrvConfThreshold || rmssdConf >= hrvConfThreshold
+        let hasConfidentHrv = isHrvShown(hrvConf: sdnnConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold)
+            || isHrvShown(hrvConf: rmssdConf, hrConf: hrConf, hrvThreshold: hrvConfThreshold, hrThreshold: vitalConfThreshold)
         
         if !(hasConfidentHr || hasConfidentRr || hasConfidentHrv) {
             monitorState = .issue
-            feedbackMessage = "Low confidence. Ensure you are well lit and hold still."
+            setFeedback("Low confidence.\nUse steady light, move closer, and hold still.", hold: true)
         } else if showWaveforms && !hasEnoughData {
             monitorState = .warmingUp
-            feedbackMessage = "" 
+            setFeedback("")
         } else {
             monitorState = .tracking
-            feedbackMessage = "Tracking vitals"
+            setFeedback("Tracking vitals")
         }
         
         if !ppgConfHistory.isEmpty {
@@ -589,7 +705,7 @@ struct StatusBadge: View {
     var color: Color {
         switch state {
         case .idle: return .gray
-        case .searching: return VitalMetadataCache.brandBlue
+        case .searching: return VitalInfoCache.brandBlue
         case .warmingUp: return .purple
         case .tracking: return .green
         case .issue: return .orange
@@ -673,126 +789,94 @@ struct GroupedMetricsTile: View {
         self.s1Format = format(for: secondary1Id)
         self.s2Format = format(for: secondary2Id)
 
-        let pMeta = VitalMetadataCache.getMeta(for: primaryId)
-        self.pTitle = pMeta?.shortName ?? primaryId
-        self.pUnit = pMeta?.unit.uppercased() ?? ""
+        let pInfo = VitalInfoCache.getInfo(for: primaryId)
+        self.pTitle = pInfo?.shortName ?? primaryId
+        self.pUnit = pInfo?.unit.uppercased() ?? ""
         
         self.hasSec1 = secondary1Id != nil
         if let s1 = secondary1Id {
-            let m = VitalMetadataCache.getMeta(for: s1)
+            let m = VitalInfoCache.getInfo(for: s1)
             self.s1Title = m?.shortName ?? s1
             self.s1Unit = m?.unit.uppercased() ?? ""
         } else { self.s1Title = ""; self.s1Unit = "" }
         
         self.hasSec2 = secondary2Id != nil
         if let s2 = secondary2Id {
-            let m = VitalMetadataCache.getMeta(for: s2)
+            let m = VitalInfoCache.getInfo(for: s2)
             self.s2Title = m?.shortName ?? s2
             self.s2Unit = m?.unit.uppercased() ?? ""
         } else { self.s2Title = ""; self.s2Unit = "" }
     }
     
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        // Plain text on the panel, like the JS Monitor: title, value with its unit, then the
+        // secondary metrics as label-and-value rows underneath.
+        VStack(alignment: .leading, spacing: 2) {
+            Text(pTitle)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
             
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(pTitle)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    
-                    if !pUnit.isEmpty {
-                        Text(pUnit)
-                            .font(.system(size: 8, weight: .regular))
-                            .foregroundStyle(.secondary.opacity(0.6))  
-                    }
-                }
-                
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if isPrimaryReady, let val = primaryValue {
                     Text(String(format: pFormat, val))
-                        .font(.system(size: 32, weight: .bold, design: .rounded)) 
-                        .monospacedDigit()
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.4)
                 } else {
                     Text("--")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.3))
                 }
+                
+                if !pUnit.isEmpty {
+                    Text(pUnit)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 12)
             
             if hasSec1 || hasSec2 {
-                VStack(alignment: .leading, spacing: 8) { 
-                    
+                VStack(alignment: .leading, spacing: 2) {
                     if hasSec1 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(s1Title)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                
-                                if !s1Unit.isEmpty {
-                                    Text(s1Unit)
-                                        .font(.system(size: 7, weight: .regular))
-                                        .foregroundStyle(.secondary.opacity(0.6))
-                                }
-                            }
-                            
-                            if isSecondary1Ready, let val = secondary1Value {
-                                Text(String(format: s1Format, val))
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.6)
-                            } else {
-                                Text("--")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(.secondary.opacity(0.3))
-                            }
-                        }
+                        secondaryRow(title: s1Title, unit: s1Unit, value: secondary1Value, isReady: isSecondary1Ready, format: s1Format)
                     }
-                    
                     if hasSec2 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(s2Title)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                
-                                if !s2Unit.isEmpty {
-                                    Text(s2Unit)
-                                        .font(.system(size: 7, weight: .regular))
-                                        .foregroundStyle(.secondary.opacity(0.6))
-                                }
-                            }
-                            
-                            if isSecondary2Ready, let val = secondary2Value {
-                                Text(String(format: s2Format, val))
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.6)
-                            } else {
-                                Text("--")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(.secondary.opacity(0.3))
-                            }
-                        }
+                        secondaryRow(title: s2Title, unit: s2Unit, value: secondary2Value, isReady: isSecondary2Ready, format: s2Format)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, 8)
+                .padding(.top, 2)
             }
         }
-        .padding(.vertical, 12)
-        .frame(maxHeight: .infinity)
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12) 
+        .padding(.leading, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+    
+    /// A secondary metric: its label, then the value and a small unit.
+    private func secondaryRow(title: String, unit: String, value: Double?, isReady: Bool, format: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.secondary)
+            
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                if isReady, let val = value {
+                    Text(String(format: format, val))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.primary)
+                } else {
+                    Text("--")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.3))
+                }
+                
+                if !unit.isEmpty {
+                    Text(unit.lowercased())
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 

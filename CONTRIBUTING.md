@@ -88,3 +88,8 @@ To cut a new release:
     ```bash
     git push origin v0.1.0
     ```
+
+
+## User-facing wording
+
+The on-screen feedback messages (Start screen guide, status and issue messages in the Scan and Monitor views) are kept mostly consistent across the JS, iOS and Android SDKs, and match the guidance on the [Accuracy & Guidelines](https://docs.rouast.com/guides/accuracy/) page. When you change any of them, update the other SDKs too (and their tests), or at least keep the wording close.

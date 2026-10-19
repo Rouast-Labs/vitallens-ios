@@ -28,11 +28,17 @@ public struct VitalLensScanView: View {
     
     @State private var client: VitalLens?
     @State private var scanState: ScanState = .idle
-    @State private var currentModeState: VitalLensMode = .eco
+    @State private var currentModeState: VitalLensMode = .standard
     private let initialMode: VitalLensMode
     
     @State private var progress: Double = 0.0
     @State private var statusMessage: String = "Position your face in the oval"
+    @State private var previewView: UIView?
+    @State private var sessionToken = UUID()
+    @State private var autoFallbackDone = false
+    @State private var noticeUntil: Date = .distantPast
+    @State private var messageHold: MessageHold?
+    @State private var lastResultAt = Date()
     @State private var finalResult: VitalLensResult? = nil
     @State private var showDetails: Bool = false
     
@@ -54,7 +60,7 @@ public struct VitalLensScanView: View {
     private let recoveryTimeout: TimeInterval = 10.0
     
     private let vitalConfThreshold = 0.8
-    private let hrvConfThreshold = 0.7
+    private let hrvConfThreshold = 0.8
     
     /// Initializes a new Scan View.
     ///
@@ -62,13 +68,13 @@ public struct VitalLensScanView: View {
     ///   - apiKey: Your VitalLens API Key. Defaults to `nil`.
     ///   - proxyURL: An optional URL to a custom backend proxy. Defaults to `nil`.
     ///   - method: The specific model or method to use for inference. Defaults to `"vitallens"`.
-    ///   - mode: The performance mode to use during the scan. Defaults to `.eco`.
+    ///   - mode: The performance mode to use during the scan. Defaults to `.standard`. On a connection that is too slow for it, the scan falls back to `.eco`.
     ///   - onComplete: A closure called when the scan successfully finishes, providing the aggregated result.
     public init(
         apiKey: String? = nil,
         proxyURL: URL? = nil,
         method: String = "vitallens",
-        mode: VitalLensMode = .eco,
+        mode: VitalLensMode = .standard,
         onComplete: @escaping (VitalLensResult) -> Void
     ) {
         self.apiKey = apiKey
@@ -115,6 +121,7 @@ public struct VitalLensScanView: View {
             
             Text(statusMessage)
                 .font(.subheadline)
+                .multilineTextAlignment(.center)
                 .fontWeight(.medium)
                 .foregroundColor(.white)
                 .padding(.horizontal, 16)
@@ -137,7 +144,7 @@ public struct VitalLensScanView: View {
                     ZStack {
                         Ellipse()
                             .trim(from: 0.0, to: CGFloat(progress))
-                            .stroke(VitalMetadataCache.brandBlue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                            .stroke(VitalInfoCache.brandBlue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                             .frame(width: 450, height: 320)
                             .rotationEffect(.degrees(-90))
                             .animation(.linear(duration: 0.2), value: progress)
@@ -182,7 +189,9 @@ public struct VitalLensScanView: View {
     
     /// Initializes internal state and begins the scanning workflow.
     private func startProcessing() {
+        autoFallbackDone = false
         scanState = .searching
+        messageHold?.release()
         statusMessage = "Position your face in the oval"
         progress = 0.0
         accumulatedScanTime = 0.0
@@ -218,7 +227,7 @@ public struct VitalLensScanView: View {
     ///   - message: The localized message to display to the user.
     private func transition(to newState: ScanState, message: String) {
         self.scanState = newState
-        self.statusMessage = message
+        setStatus(message, force: newState == .issue, state: newState)
         self.stateStartTime = Date()
         
         if newState == .issue {
@@ -241,7 +250,7 @@ public struct VitalLensScanView: View {
             transition(to: .issue, message: message)
         } else {
             scanState = .searching
-            statusMessage = "\(message) Retrying..."
+            setStatus("\(message) Retrying...", state: .searching)
             progress = 0.0
             accumulatedScanTime = 0.0
             stateStartTime = Date()
@@ -264,11 +273,97 @@ public struct VitalLensScanView: View {
         return midX > 0.3 && midX < 0.7 && midY > 0.3 && midY < 0.7 && box.width > 0.15
     }
     
+    /// Sets the status message, unless a notice is being shown. Issues always show.
+    ///
+    /// Problem hints (the recovering state) stay up for at least 3 s, so they can be read even if the
+    /// problem is gone; messages arriving meanwhile wait and only the latest is shown afterwards.
+    private func setStatus(_ message: String, force: Bool = false, state: ScanState? = nil) {
+        let hold: MessageHold
+        if let existing = messageHold {
+            hold = existing
+        } else {
+            hold = MessageHold { text, forced in
+                if forced || Date() >= self.noticeUntil { self.statusMessage = text }
+            }
+            messageHold = hold
+        }
+        hold.show(
+            message,
+            hold: state == .recovering,
+            immediate: state == .idle || state == .issue || state == .completed,
+            force: force
+        )
+    }
+    
+    /// Stops the scan because the connection is too unstable to continue.
+    @MainActor
+    private func handleConnectionUnstable() {
+        guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
+        transition(to: .issue, message: ConnectionThresholds.unstableMessage)
+    }
+    
+    /// Stops the scan when results stop arriving, which happens on connections that are far too slow.
+    @MainActor
+    private func watchForStall(token: UUID) {
+        Task { @MainActor in
+            while token == self.sessionToken {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard token == self.sessionToken else { return }
+                let waitingForResults = self.scanState == .warmingUp || self.scanState == .tracking || self.scanState == .recovering
+                if waitingForResults && Date().timeIntervalSince(self.lastResultAt) > ConnectionThresholds.stallTimeout {
+                    self.handleConnectionUnstable()
+                    return
+                }
+            }
+        }
+    }
+    
+    /// Falls back to eco mode because the connection is too slow for standard mode.
+    /// The scan starts over, as frame rates cannot be mixed.
+    @MainActor
+    private func fallBackToEco() {
+        guard !autoFallbackDone, currentModeState == .standard, let view = previewView else { return }
+        guard scanState != .idle && scanState != .completed && scanState != .issue else { return }
+        autoFallbackDone = true
+        currentModeState = .eco
+        
+        client?.stopStream()
+        client = nil
+        // Invalidate callbacks of the stopped session
+        let restartToken = UUID()
+        sessionToken = restartToken
+        
+        progress = 0.0
+        accumulatedScanTime = 0.0
+        lastFrameTime = nil
+        strikeCount = 0
+        ppgConfHistory.removeAll()
+        respConfHistory.removeAll()
+        faceConfHistory.removeAll()
+        totalFramesProcessed = 0
+        
+        scanState = .searching
+        stateStartTime = Date()
+        messageHold?.release()
+        statusMessage = "Slow connection. Switched to Eco mode."
+        noticeUntil = Date().addingTimeInterval(5)
+        
+        // Remove the preview layer of the stopped camera session
+        view.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        Task { @MainActor in
+            // Give the stopped camera session time to shut down
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            // Not if the scan was cancelled or stopped in the meantime
+            if restartToken == self.sessionToken && self.scanState == .searching { startSession(in: view) }
+        }
+    }
+    
     /// Initializes the stream processor and links it to the camera preview.
     ///
     /// - Parameter view: The `UIView` where the camera preview will be rendered.
     private func startSession(in view: UIView) {
         guard client == nil else { return }
+        previewView = view
         
         if apiKey == nil && proxyURL == nil {
             transition(to: .issue, message: "Error: Missing API Key or Proxy URL")
@@ -292,12 +387,32 @@ public struct VitalLensScanView: View {
             }
         }
         
+        let token = UUID()
+        sessionToken = token
+        lastResultAt = Date()
+        watchForStall(token: token)
+        
+        newClient.onSlowConnection = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.fallBackToEco()
+            }
+        }
+        newClient.onConnectionUnstable = { @Sendable in
+            Task { @MainActor in
+                guard token == self.sessionToken else { return }
+                self.handleConnectionUnstable()
+            }
+        }
+        
         self.client = newClient
         
         Task {
             do {
                 let stream = try await newClient.startStream(preview: view)
                 for await result in stream {
+                    // Ignore results of a session that was replaced by a restart
+                    guard token == sessionToken else { break }
                     updateUI(with: result)
                 }
             } catch {
@@ -310,6 +425,7 @@ public struct VitalLensScanView: View {
     
     @MainActor
     private func updateUI(with result: VitalLensResult) {
+        lastResultAt = Date()
         let framesInThisUpdate = result.sampleCount ?? result.time.count
         self.totalFramesProcessed += framesInThisUpdate
         
@@ -351,8 +467,8 @@ public struct VitalLensScanView: View {
                 client?.stopStream()
                 
                 let res = result
-                let hrMeta = VitalMetadataCache.getMeta(for: "heart_rate")
-                let rrMeta = VitalMetadataCache.getMeta(for: "respiratory_rate")
+                let hrMeta = VitalInfoCache.getInfo(for: "heart_rate")
+                let rrMeta = VitalInfoCache.getInfo(for: "respiratory_rate")
                 
                 self.primaryVitals = [
                     ResolvedVital(id: "hr", title: hrMeta?.displayName ?? "Heart Rate", 
@@ -365,12 +481,14 @@ public struct VitalLensScanView: View {
                                 confidence: res.respiratoryRate?.confidence, emoji: rrMeta?.emoji ?? "🫁")
                 ]
                 
+                // HRV is only shown together with a confident heart rate
+                let hrShown = (res.heartRate?.confidence ?? 0) >= vitalConfThreshold
                 self.secondaryVitals = [
-                    ("hrv_sdnn", res.hrvSdnn?.value, res.hrvSdnn?.confidence ?? 0, hrvConfThreshold),
-                    ("hrv_rmssd", res.hrvRmssd?.value, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
+                    ("hrv_sdnn", hrShown ? res.hrvSdnn?.value : nil, res.hrvSdnn?.confidence ?? 0, hrvConfThreshold),
+                    ("hrv_rmssd", hrShown ? res.hrvRmssd?.value : nil, res.hrvRmssd?.confidence ?? 0, hrvConfThreshold),
                     ("ie_ratio", res.vitals["ie_ratio"]?.value, res.vitals["ie_ratio"]?.confidence ?? 0, vitalConfThreshold)
                 ].compactMap { id, val, conf, thresh in
-                    guard conf >= thresh, let v = val, let m = VitalMetadataCache.getMeta(for: id) else { return nil }
+                    guard conf >= thresh, let v = val, let m = VitalInfoCache.getInfo(for: id) else { return nil }
                     return ResolvedVital(id: id, title: m.shortName, value: v, unit: m.unit.uppercased(), 
                                         format: (id == "ie_ratio" ? "%.2f" : "%.0f"), confidence: conf, emoji: m.emoji)
                 }
@@ -405,9 +523,9 @@ public struct VitalLensScanView: View {
             
         case .tracking:
             if !goodFace {
-                transition(to: .recovering, message: "Adjust position...")
+                transition(to: .recovering, message: "Adjust your position.")
             } else if isLowSignal {
-                transition(to: .recovering, message: "Improve lighting...")
+                transition(to: .recovering, message: "Low confidence.\nUse steady light, move closer, and hold still.")
             }
             
         case .recovering:
@@ -416,9 +534,9 @@ public struct VitalLensScanView: View {
             } else if elapsedInState >= recoveryTimeout {
                 handleIssue(message: "Could not recover conditions.")
             } else {
-                let currentIssueMessage = !goodFace ? "Adjust position..." : "Improve lighting..."
+                let currentIssueMessage = !goodFace ? "Adjust your position." : "Low confidence.\nUse steady light, move closer, and hold still."
                 if statusMessage != currentIssueMessage {
-                    statusMessage = currentIssueMessage
+                    setStatus(currentIssueMessage, state: .recovering)
                 }
             }
             
@@ -450,7 +568,7 @@ struct ScanStatusBadge: View {
     var color: Color {
         switch state {
         case .idle, .completed: return .gray
-        case .searching: return VitalMetadataCache.brandBlue
+        case .searching: return VitalInfoCache.brandBlue
         case .warmingUp: return .purple
         case .tracking: return .green
         case .recovering: return .orange

@@ -139,6 +139,8 @@ public actor APIInference: InferenceStrategy {
         let url = baseURL.appendingPathComponent("stream")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // A stream request that takes this long is of no use any more: newer frames are queued behind it.
+        request.timeoutInterval = ConnectionThresholds.streamTimeout
         
         addAuthHeaders(to: &request)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")

@@ -32,6 +32,28 @@ public final class VitalLens: @unchecked Sendable {
         }
     }
 
+    /// A closure triggered once when the connection is too slow for the current frame rate.
+    ///
+    /// Only reported above 15 fps. To react, stop the stream and start a new `VitalLens`
+    /// client with a lower `overrideFps`.
+    public var onSlowConnection: (@Sendable () -> Void)? {
+        didSet {
+            let cb = onSlowConnection
+            Task { await streamProcessor?.setSlowConnectionCallback(cb) }
+        }
+    }
+
+    /// A closure triggered once when the connection is so unstable that the stream cannot continue.
+    ///
+    /// This happens when too many frames queue up behind slow requests, or when requests keep failing.
+    /// Inference stops, so stop the stream and tell the user to try again on a better connection.
+    public var onConnectionUnstable: (@Sendable () -> Void)? {
+        didSet {
+            let cb = onConnectionUnstable
+            Task { await streamProcessor?.setConnectionUnstableCallback(cb) }
+        }
+    }
+
     private let strategy: any InferenceStrategy
     private let customSource: (any CameraStreaming)?
     private let customTransformer: FrameTransformer?
@@ -176,6 +198,8 @@ public final class VitalLens: @unchecked Sendable {
         }
         
         await processor.setFaceStateCallback(self.onFaceStateChanged)
+        await processor.setSlowConnectionCallback(self.onSlowConnection)
+        await processor.setConnectionUnstableCallback(self.onConnectionUnstable)
                 
         var wrapper: SendableUIPreview? = nil
         if let view = preview {

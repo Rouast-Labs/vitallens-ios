@@ -2,6 +2,10 @@ import Foundation
 import CoreGraphics
 import VitalLensCore
 
+/// Seconds at the start of a session that are not used when deriving HRV: the model's output is
+/// unsettled at first. Internal setting, not exposed to users.
+let hrvSkipSeconds: Float = 3
+
 public extension ModelConfig {
     /// Converts the `ModelConfig` into a `SessionConfig` required by the Core engine.
     ///
@@ -15,7 +19,8 @@ public extension ModelConfig {
             inputSize: UInt64(self.inputSize),
             nInputs: UInt64(self.nInputs),
             roiMethod: self.roiMethod,
-            estimateRollingVitals: nil
+            estimateRollingVitals: nil,
+            hrvSkipSeconds: hrvSkipSeconds
         )
     }
 }

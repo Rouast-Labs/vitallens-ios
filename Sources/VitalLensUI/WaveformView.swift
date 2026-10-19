@@ -17,12 +17,13 @@ public struct WaveformContainer: View {
     ///   - vitalId: The identifier used to fetch metadata (like title and color).
     ///   - history: The array of data points to plot.
     ///   - isReady: Whether the data is ready to be displayed. If false, shows a loading indicator.
-    public init(vitalId: String, history: [Double], isReady: Bool) {
+    ///   - useShortTitle: Show the short name (e.g. "PPG") instead of the full name. Defaults to `false`.
+    public init(vitalId: String, history: [Double], isReady: Bool, useShortTitle: Bool = false) {
         self.history = history
         self.isReady = isReady
         
-        let meta = VitalMetadataCache.getMeta(for: vitalId)
-        self.title = meta?.displayName ?? vitalId
+        let meta = VitalInfoCache.getInfo(for: vitalId)
+        self.title = (useShortTitle ? meta?.shortName : nil) ?? meta?.displayName ?? vitalId
         self.chartColor = meta.flatMap { Color(hex: $0.color) } ?? .red
     }
     
