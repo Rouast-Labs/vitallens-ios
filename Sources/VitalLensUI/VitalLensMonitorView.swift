@@ -303,7 +303,7 @@ public struct VitalLensMonitorView: View {
             
             HStack(spacing: 12) {
                 if showWaveforms {
-                    WaveformContainer(vitalId: "ppg_waveform", history: ppgHistory, isReady: isPpgReady)
+                    WaveformContainer(vitalId: "ppg_waveform", history: ppgHistory, isReady: isPpgReady, useShortTitle: true)
                 }
                 
                 GroupedMetricsTile(
@@ -319,7 +319,7 @@ public struct VitalLensMonitorView: View {
             
             HStack(spacing: 12) {
                 if showWaveforms {
-                    WaveformContainer(vitalId: "respiratory_waveform", history: respHistory, isReady: isRespReady)
+                    WaveformContainer(vitalId: "respiratory_waveform", history: respHistory, isReady: isRespReady, useShortTitle: true)
                 }
                 
                 GroupedMetricsTile(
@@ -807,106 +807,73 @@ struct GroupedMetricsTile: View {
     }
     
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        // Plain text on the panel, like the JS Monitor: title, value with its unit, then the
+        // secondary metrics as label-and-value rows underneath.
+        VStack(alignment: .leading, spacing: 2) {
+            Text(pTitle)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
             
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(pTitle)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    
-                    if !pUnit.isEmpty {
-                        Text(pUnit)
-                            .font(.system(size: 8, weight: .regular))
-                            .foregroundStyle(.secondary.opacity(0.6))  
-                    }
-                }
-                
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if isPrimaryReady, let val = primaryValue {
                     Text(String(format: pFormat, val))
-                        .font(.system(size: 32, weight: .bold, design: .rounded)) 
-                        .monospacedDigit()
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.4)
                 } else {
                     Text("--")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.3))
                 }
+                
+                if !pUnit.isEmpty {
+                    Text(pUnit)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 12)
             
             if hasSec1 || hasSec2 {
-                VStack(alignment: .leading, spacing: 8) { 
-                    
+                VStack(alignment: .leading, spacing: 2) {
                     if hasSec1 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(s1Title)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                
-                                if !s1Unit.isEmpty {
-                                    Text(s1Unit)
-                                        .font(.system(size: 7, weight: .regular))
-                                        .foregroundStyle(.secondary.opacity(0.6))
-                                }
-                            }
-                            
-                            if isSecondary1Ready, let val = secondary1Value {
-                                Text(String(format: s1Format, val))
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.6)
-                            } else {
-                                Text("--")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(.secondary.opacity(0.3))
-                            }
-                        }
+                        secondaryRow(title: s1Title, unit: s1Unit, value: secondary1Value, isReady: isSecondary1Ready, format: s1Format)
                     }
-                    
                     if hasSec2 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(s2Title)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                
-                                if !s2Unit.isEmpty {
-                                    Text(s2Unit)
-                                        .font(.system(size: 7, weight: .regular))
-                                        .foregroundStyle(.secondary.opacity(0.6))
-                                }
-                            }
-                            
-                            if isSecondary2Ready, let val = secondary2Value {
-                                Text(String(format: s2Format, val))
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.6)
-                            } else {
-                                Text("--")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(.secondary.opacity(0.3))
-                            }
-                        }
+                        secondaryRow(title: s2Title, unit: s2Unit, value: secondary2Value, isReady: isSecondary2Ready, format: s2Format)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, 8)
+                .padding(.top, 2)
             }
         }
-        .padding(.vertical, 12)
-        .frame(maxHeight: .infinity)
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12) 
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+    
+    /// A secondary metric: its label, then the value and a small unit.
+    private func secondaryRow(title: String, unit: String, value: Double?, isReady: Bool, format: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.secondary)
+            
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                if isReady, let val = value {
+                    Text(String(format: format, val))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.primary)
+                } else {
+                    Text("--")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.3))
+                }
+                
+                if !unit.isEmpty {
+                    Text(unit.lowercased())
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
