@@ -163,6 +163,7 @@ final class APIInferenceTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/octet-stream")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Encoding"), "gzip")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Model"), "vitallens-2.0")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Origin"), "vitallens-ios_\(VitalLensVersion.current)")
             
             guard let stateHeader = request.value(forHTTPHeaderField: "X-State"),
                   let decodedData = Data(base64Encoded: stateHeader) else {
@@ -211,7 +212,7 @@ final class APIInferenceTests: XCTestCase {
                 return self.makeMockResponse(for: request, data: nil)
             }
             
-            XCTAssertEqual(json["origin"] as? String, "vitallens-ios")
+            XCTAssertEqual(json["origin"] as? String, "vitallens-ios_\(VitalLensVersion.current)")
             XCTAssertEqual(json["model"] as? String, "test-model")
             
             let videoB64 = json["video"] as? String

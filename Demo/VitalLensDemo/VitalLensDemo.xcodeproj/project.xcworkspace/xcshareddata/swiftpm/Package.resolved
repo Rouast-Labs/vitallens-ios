@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Rouast-Labs/vitallens-core.git",
       "state" : {
-        "revision" : "99e82656ca2778f907e234a9663aad0dd8258071",
-        "version" : "0.2.5"
+        "revision" : "0b142cd6ffa88da4f59d0e3544d122400d9684cc",
+        "version" : "0.3.4"
       }
     }
   ],

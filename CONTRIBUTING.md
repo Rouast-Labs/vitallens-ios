@@ -77,16 +77,30 @@ Some integration tests make real network calls to the VitalLens API. To run thes
 
 We rely on Git tags for Swift Package Manager versioning. A GitHub Action is configured to automatically create a GitHub Release and generate a changelog whenever a new semantic version tag is pushed.
 
+The SDK also sends its version to the API as part of the origin (`vitallens-ios_<version>`), taken from `VitalLensVersion.current` in `Sources/VitalLensInference/VitalLensVersion.swift`. SwiftPM cannot read the tag at build time, so the constant has to match the tag. The release script sets it for you, and the release workflow fails if the two ever differ.
+
 To cut a new release:
 
-1. **Tag the release:**
+1. **Get your changes into `main`** (merge your `dev` PR on GitHub).
+
+2. **Create the version commit and tag on `main`:**
     ```bash
-    git tag v0.1.0
+    git switch main
+    git pull origin main
+    ./scripts/release.sh 0.2.1
+    ```
+    This sets `VitalLensVersion.current` and the version in the README install snippet, commits them as `0.2.1` and creates the tag `v0.2.1`. Nothing is pushed yet. It refuses to run unless you are on an up-to-date `main` with a clean working tree.
+
+3. **Push the commit and the tag:**
+    ```bash
+    git push origin main --follow-tags
     ```
 
-2. **Push the tag:**
+4. **Sync `dev`:**
     ```bash
-    git push origin v0.1.0
+    git switch dev
+    git merge main
+    git push origin dev
     ```
 
 
