@@ -144,7 +144,7 @@ public actor APIInference: InferenceStrategy {
         
         addAuthHeaders(to: &request)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.setValue("vitallens-ios", forHTTPHeaderField: "X-Origin")
+        request.setValue(VitalLensVersion.apiOrigin, forHTTPHeaderField: "X-Origin")
         request.setValue("gzip", forHTTPHeaderField: "X-Encoding")
         
         if let model = model {
@@ -189,7 +189,7 @@ public actor APIInference: InferenceStrategy {
         
         var payload: [String: Any] = [
             "video": base64Video,
-            "origin": "vitallens-ios"
+            "origin": VitalLensVersion.apiOrigin
         ]
         
         if let state = state, !state.isEmpty {

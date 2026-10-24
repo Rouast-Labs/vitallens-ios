@@ -16,6 +16,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check the version constant matches the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          grep -q "current = \"$VERSION\"" Sources/VitalLensInference/VitalLensVersion.swift || {
+            echo "VitalLensVersion.current does not match tag $GITHUB_REF_NAME"
+            exit 1
+          }
+
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
