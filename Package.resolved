@@ -1,13 +1,13 @@
 {
-  "originHash" : "864065d2820a203ad0c3c3b961c1745ff28669d3eafbfc01454436dd8a997775",
+  "originHash" : "194544e7e982975d4f7b5c87904f76027ddef06564b0c12b780013e5b44139ab",
   "pins" : [
     {
       "identity" : "vitallens-core",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Rouast-Labs/vitallens-core.git",
       "state" : {
-        "revision" : "0b142cd6ffa88da4f59d0e3544d122400d9684cc",
-        "version" : "0.3.4"
+        "revision" : "19d24d05d389112a602c2fa26fadedc3b34e3e7b",
+        "version" : "0.4.0"
       }
     }
   ],
