@@ -18,11 +18,13 @@ final class SessionAdapterTests: XCTestCase {
         XCTAssertEqual(rustConfig.supportedVitals, ["heart_rate", "sbp"])
     }
     
-    func testSessionConfigSkipsTheStartOfASessionForHrv() {
+    func testSessionConfigSkipsTheStartOfALiveSessionForHrv() {
         let config = ModelConfig(nInputs: 4, inputSize: 40, fpsTarget: 30, roiMethod: "face", supportedVitals: ["heart_rate", "hrv_sdnn"])
         
-        // The model's output is unsettled at the start of a session. Internal setting.
+        // The model's output is unsettled at the start of a live session. Internal setting.
         XCTAssertEqual(config.toSessionConfig().hrvSkipSeconds, 3)
+        // Video files use everything
+        XCTAssertEqual(config.toSessionConfig(live: false).hrvSkipSeconds, 0)
     }
     
     // MARK: - Geometry Mapping
@@ -87,6 +89,7 @@ final class SessionAdapterTests: XCTestCase {
         
         XCTAssertEqual(vlResult.message, "override")
         XCTAssertEqual(vlResult.modelUsed, "test_model")
+        XCTAssertEqual(vlResult.coreVersion, VitalLensCore.coreVersion())
         XCTAssertEqual(vlResult.state?.data, "b64")
         XCTAssertEqual(vlResult.heartRate?.value, 60.0)
         XCTAssertEqual(vlResult.ppg?.data.count, 2)

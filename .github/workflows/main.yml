@@ -23,6 +23,9 @@ jobs:
         run: swift test --filter VitalLensInferenceTests
 
       - name: Run iOS Simulator Tests
+        env:
+          TEST_RUNNER_VITALLENS_API_KEY: ${{ secrets.VITALLENS_API_KEY }}
+          TEST_RUNNER_VITALLENS_BASE_URL: ${{ secrets.VITALLENS_BASE_URL }}
         run: |
           xcodebuild test \
             -scheme vitallens-ios-Package \

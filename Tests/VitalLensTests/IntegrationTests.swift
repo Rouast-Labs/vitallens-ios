@@ -46,9 +46,14 @@ final class IntegrationTests: XCTestCase {
                 XCTAssertEqual(firstBox.count, 4, "Bounding box should contain exactly 4 coordinates [minX, minY, maxX, maxY]")
             }
             
+            print("[Integration] Core version: \(result.coreVersion ?? "unknown")")
+            XCTAssertEqual(result.modelUsed, "vitallens-2.0")
+            XCTAssertNotNil(result.coreVersion)
+
+            // HR and HRV reference values from the contact PPG in examples/sample_vitals_2.csv
             let hr = try XCTUnwrap(result.heartRate?.value, "Missing heart rate")
             print("[Integration] ❤️ Heart Rate: \(hr)")
-            XCTAssertEqual(hr, 60.5, accuracy: 2.0)
+            XCTAssertEqual(hr, 60.4, accuracy: 0.5)
             
             let rr = try XCTUnwrap(result.respiratoryRate?.value, "Missing respiratory rate")
             print("[Integration] 🫁 Resp Rate: \(rr)")
@@ -56,11 +61,11 @@ final class IntegrationTests: XCTestCase {
             
             let sdnn = try XCTUnwrap(result.hrvSdnn?.value, "Missing HRV SDNN")
             print("[Integration] 📈 HRV SDNN: \(sdnn)")
-            XCTAssertEqual(sdnn, 65.0, accuracy: 10.0)
+            XCTAssertEqual(sdnn, 62.0, accuracy: 10.0)
             
             let rmssd = try XCTUnwrap(result.hrvRmssd?.value, "Missing HRV RMSSD")
             print("[Integration] 📉 HRV RMSSD: \(rmssd)")
-            XCTAssertEqual(rmssd, 65.0, accuracy: 10.0)
+            XCTAssertEqual(rmssd, 54.0, accuracy: 10.0)
             
             if let ieRatio = result.vitals["ie_ratio"]?.value {
                 print("[Integration] ⚖️ I:E Ratio: \(ieRatio)")
