@@ -2,15 +2,16 @@ import Foundation
 import CoreGraphics
 import VitalLensCore
 
-/// Seconds at the start of a session that are not used when deriving HRV: the model's output is
-/// unsettled at first. Internal setting, not exposed to users.
+/// Seconds at the start of a live session that are not used when deriving HRV: the model's output is
+/// unsettled at first. Video files use everything. Internal setting, not exposed to users.
 let hrvSkipSeconds: Float = 3
 
 public extension ModelConfig {
     /// Converts the `ModelConfig` into a `SessionConfig` required by the Core engine.
     ///
+    /// - Parameter live: Whether the session processes a live stream rather than a video file.
     /// - Returns: A `VitalLensCore.SessionConfig` populated with this model's parameters.
-    func toSessionConfig() -> VitalLensCore.SessionConfig {
+    func toSessionConfig(live: Bool = true) -> VitalLensCore.SessionConfig {
         return VitalLensCore.SessionConfig(
             modelName: self.modelName,
             supportedVitals: self.supportedVitals,
@@ -20,7 +21,7 @@ public extension ModelConfig {
             nInputs: UInt64(self.nInputs),
             roiMethod: self.roiMethod,
             estimateRollingVitals: nil,
-            hrvSkipSeconds: hrvSkipSeconds
+            hrvSkipSeconds: live ? hrvSkipSeconds : 0
         )
     }
 }
@@ -121,6 +122,7 @@ public extension SessionResult {
             time: self.timestamp,
             fps: Double(self.fps),
             modelUsed: modelUsed,
+            coreVersion: VitalLensCore.coreVersion(),
             state: originalState,
             message: message ?? self.message,
             sampleCount: self.timestamp.count,

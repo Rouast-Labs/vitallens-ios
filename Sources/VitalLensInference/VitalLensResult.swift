@@ -26,6 +26,9 @@ public struct VitalLensResult: Codable, Sendable {
     
     /// The identifier of the specific model that generated this result.
     public let modelUsed: String?
+
+    /// The version of vitallens-core that computed the vitals.
+    public let coreVersion: String?
     
     /// The opaque recurrent state to be passed into the next sequential inference request.
     public let state: StateData?
@@ -62,6 +65,7 @@ public struct VitalLensResult: Codable, Sendable {
     ///   - time: The array of timestamps.
     ///   - fps: The frame rate.
     ///   - modelUsed: The model identifier.
+    ///   - coreVersion: The vitallens-core version.
     ///   - state: The opaque recurrent state.
     ///   - message: An optional status message.
     ///   - sampleCount: The number of frames processed.
@@ -74,6 +78,7 @@ public struct VitalLensResult: Codable, Sendable {
         time: [Double],
         fps: Double? = nil,
         modelUsed: String? = nil,
+        coreVersion: String? = nil,
         state: StateData? = nil,
         message: String? = nil,
         sampleCount: Int? = nil,
@@ -86,6 +91,7 @@ public struct VitalLensResult: Codable, Sendable {
         self.time = time
         self.fps = fps
         self.modelUsed = modelUsed
+        self.coreVersion = coreVersion
         self.state = state
         self.message = message
         self.sampleCount = sampleCount
@@ -101,7 +107,7 @@ public struct VitalLensResult: Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case face, waveforms, vitals, time, fps, modelUsed, state, message, sampleCount
+        case face, waveforms, vitals, time, fps, modelUsed, coreVersion, state, message, sampleCount
         case rollingVitals = "rolling_vitals"
     }
     
@@ -115,6 +121,7 @@ public struct VitalLensResult: Codable, Sendable {
         self.fps = try container.decodeIfPresent(Double.self, forKey: DynamicKey(stringValue: "fps")!)
         
         self.modelUsed = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "model_used")!)
+        self.coreVersion = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "core_version")!)
         self.state = try container.decodeIfPresent(StateData.self, forKey: DynamicKey(stringValue: "state")!)
         self.message = try container.decodeIfPresent(String.self, forKey: DynamicKey(stringValue: "message")!)
         self.sampleCount = try container.decodeIfPresent(Int.self, forKey: DynamicKey(stringValue: "n")!)
@@ -149,6 +156,7 @@ public struct VitalLensResult: Codable, Sendable {
         try container.encode(time, forKey: .time)
         try container.encodeIfPresent(fps, forKey: .fps)
         try container.encodeIfPresent(modelUsed, forKey: .modelUsed)
+        try container.encodeIfPresent(coreVersion, forKey: .coreVersion)
         try container.encodeIfPresent(state, forKey: .state)
         try container.encodeIfPresent(message, forKey: .message)
         try container.encodeIfPresent(sampleCount, forKey: .sampleCount)

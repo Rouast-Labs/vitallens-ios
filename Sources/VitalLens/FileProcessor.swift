@@ -108,7 +108,7 @@ actor FileProcessor {
         let nominalFPS = Double(source.nominalFrameRate)
         
         let buffer = FrameBuffer(id: "file", roi: roi, mode: .file, config: config, timestamp: 0.0)
-        let session = VitalLensCore.Session(config: config.toSessionConfig())
+        let session = VitalLensCore.Session(config: config.toSessionConfig(live: false))
         
         var currentState: (any InferenceState)? = nil
         var totalFramesProcessed = 0

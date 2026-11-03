@@ -20,7 +20,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/Rouast-Labs/vitallens-core.git", exact: "0.4.0")
+        .package(url: "https://github.com/Rouast-Labs/vitallens-core.git", exact: "0.4.2")
     ],
     targets: [
         // Inference: Pure Logic (Networking, State). No UI dependencies.
