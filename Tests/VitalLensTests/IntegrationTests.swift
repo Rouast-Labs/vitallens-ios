@@ -50,7 +50,7 @@ final class IntegrationTests: XCTestCase {
             XCTAssertEqual(result.modelUsed, "vitallens-2.0")
             XCTAssertNotNil(result.coreVersion)
 
-            // HR and HRV reference values from the contact PPG in examples/sample_vitals_2.csv
+            // HR and HRV reference values from the contact PPG in vitallens-python's examples/sample_vitals_2.csv
             let hr = try XCTUnwrap(result.heartRate?.value, "Missing heart rate")
             print("[Integration] ❤️ Heart Rate: \(hr)")
             XCTAssertEqual(hr, 60.4, accuracy: 0.5)
