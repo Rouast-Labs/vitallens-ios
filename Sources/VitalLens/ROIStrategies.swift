@@ -2,6 +2,7 @@ import Foundation
 import CoreVideo
 import ImageIO
 import VitalLensInference
+import VitalLensCore
 
 /// A strategy that determines which regions of the video frame should be processed.
 public protocol ROIStrategy: Sendable {
@@ -24,6 +25,8 @@ public protocol ROIStrategy: Sendable {
 
 /// Uses a FaceDetector to track faces and return their ROI.
 /// It throttles the expensive Vision detection calls internally and returns the last known stable ROI in between.
+/// A detection that finds no face keeps the last ROI until no face has been found for the hold time
+/// (vitallens-core's `FaceHold`), so a single missed detection doesn't drop the ROI.
 public actor FaceROIStrategy: ROIStrategy {
     
     private let detector: any FaceDetecting
@@ -34,14 +37,18 @@ public actor FaceROIStrategy: ROIStrategy {
     
     private var isDetecting: Bool = false
     
+    private let faceHold: FaceHold
+    
     /// Initializes a new FaceROIStrategy.
     ///
     /// - Parameters:
     ///   - detector: The face detection implementation to use. Defaults to `FaceDetector()`.
     ///   - interval: The minimum time in seconds between actual face detection runs. Defaults to `0.5`.
-    public init(detector: any FaceDetecting = FaceDetector(), interval: TimeInterval = 0.5) {
+    ///   - holdSeconds: How long to keep the last ROI while detections find no face. Defaults to vitallens-core's `FaceHold` default.
+    public init(detector: any FaceDetecting = FaceDetector(), interval: TimeInterval = 0.5, holdSeconds: Double? = nil) {
         self.detector = detector
         self.detectionInterval = interval
+        self.faceHold = FaceHold(holdSeconds: holdSeconds)
     }
     
     /// Determines the ROI by performing face detection, throttling actual detection calls to save resources.
@@ -68,8 +75,9 @@ public actor FaceROIStrategy: ROIStrategy {
                 let faceRect = await performDetection(in: buffer, orientation: orientation, isMirrored: isMirrored)
                 
                 let finalROI: CGRect?
-                if let face = faceRect {
-                    finalROI = ROICalculator.calculateROI(from: face, method: roiMethod)
+                if let face = self.faceHold.update(face: faceRect?.toRustRect(), timestamp: now.timeIntervalSince1970) {
+                    let held = CGRect(x: CGFloat(face.x), y: CGFloat(face.y), width: CGFloat(face.width), height: CGFloat(face.height))
+                    finalROI = ROICalculator.calculateROI(from: held, method: roiMethod)
                 } else {
                     finalROI = nil
                 }

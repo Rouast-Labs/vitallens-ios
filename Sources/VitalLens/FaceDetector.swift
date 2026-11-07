@@ -55,7 +55,7 @@ public actor FaceDetector: FaceDetecting {
         try handler.perform([faceRequest])
         
         guard let observations = faceRequest.results,
-              let face = observations.first else {
+              let face = observations.max(by: { $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height }) else {
             return nil
         }
         

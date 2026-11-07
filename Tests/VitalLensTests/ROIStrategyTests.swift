@@ -69,11 +69,11 @@ final class ROIStrategyTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
     
-    func testDetermineROI_DropsROIImmediatelyOnFailure() async throws {
+    func testDetermineROI_KeepsROIThroughMissedDetection() async throws {
         let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
         let mockDetector = MockFaceDetector(rects: [validRect, nil, nil])  
         
-        let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1)
+        let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1, holdSeconds: 0.3)
         let buffer = createDummyBuffer()
         
         _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face") 
@@ -87,12 +87,35 @@ final class ROIStrategyTests: XCTestCase {
         try await Task.sleep(nanoseconds: 120_000_000)
         
         let roi2 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
-        XCTAssertNil(roi2, "Should immediately drop the ROI if detection fails")
+        XCTAssertEqual(roi2, expectedRect, "Should keep the ROI through one missed detection")
         
         try await Task.sleep(nanoseconds: 50_000_000)
         
         let count = await mockDetector.callCount
         XCTAssertEqual(count, 3, "Should have triggered detection 3 times")
+    }
+    
+    func testDetermineROI_DropsROIAfterHoldTime() async throws {
+        let validRect = CGRect(x: 0.2, y: 0.2, width: 0.2, height: 0.2)
+        let mockDetector = MockFaceDetector(rects: [validRect])
+        
+        let strategy = FaceROIStrategy(detector: mockDetector, interval: 0.1, holdSeconds: 0.3)
+        let buffer = createDummyBuffer()
+        
+        _ = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        try await Task.sleep(nanoseconds: 120_000_000)
+        let roi1 = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        XCTAssertEqual(roi1, ROICalculator.calculateROI(from: validRect, method: "face"))
+        
+        // Detections every 0.1 s find no face from here on: the ROI goes once 0.3 s have passed
+        var roi: CGRect? = roi1
+        for _ in 0..<40 where roi != nil {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            roi = await strategy.determineROI(in: buffer, orientation: .up, isMirrored: false, roiMethod: "face")
+        }
+        XCTAssertNil(roi, "Should drop the ROI once no face was found for the hold time")
+        let count = await mockDetector.callCount
+        XCTAssertGreaterThan(count, 3, "Should need more than one missed detection")
     }
     
     // MARK: - Helpers
